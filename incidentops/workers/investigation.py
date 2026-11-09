@@ -19,6 +19,7 @@ import sys
 import httpx
 from sqlalchemy.orm import Session, sessionmaker
 
+from incidentops import telemetry
 from incidentops.agent.graph import Budgets
 from incidentops.agent.model import AnthropicModelAdapter
 from incidentops.agent.run_manager import InvestigationRunner
@@ -132,6 +133,7 @@ async def serve(settings: Settings) -> None:  # pragma: no cover - process entry
 
 def main() -> None:  # pragma: no cover - process entry point
     logging.basicConfig(level=logging.INFO, stream=sys.stdout)
+    telemetry.configure("incidentops-investigation-worker")
     asyncio.run(serve(get_settings()))
 
 

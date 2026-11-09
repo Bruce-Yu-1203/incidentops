@@ -19,6 +19,7 @@ from typing import Any
 
 from pydantic import ValidationError
 
+from incidentops import telemetry
 from incidentops.domain.catalog import ServiceCatalog
 from incidentops.domain.schemas import Environment
 from incidentops.evidence.redaction import redact, truncate_utf8
@@ -112,7 +113,15 @@ class ToolGateway:
         self, ctx: RunContext, tool_call_id: str, tool_name: str, raw_args: Any
     ) -> ToolResult:
         started = self._clock()
-        result = await self._invoke(ctx, tool_call_id, tool_name, raw_args, started)
+        with telemetry.tracer().start_as_current_span(f"tool {tool_name}") as span:
+            span.set_attribute("gen_ai.tool.name", tool_name)
+            span.set_attribute("gen_ai.tool.call.id", tool_call_id)
+            span.set_attribute("incidentops.run_id", ctx.run_id)
+            result = await self._invoke(ctx, tool_call_id, tool_name, raw_args, started)
+            span.set_attribute("incidentops.tool.status", result.status.value)
+            if result.evidence_id:
+                span.set_attribute("incidentops.evidence_id", result.evidence_id)
+            trace_id, span_id = telemetry.span_ids(span)
         self._trajectory.record(
             StepRecord(
                 run_id=ctx.run_id,
@@ -128,6 +137,8 @@ class ToolGateway:
                     "evidence_id": result.evidence_id,
                     "error_code": result.error_code,
                 },
+                trace_id=trace_id,
+                span_id=span_id,
             )
         )
         return result

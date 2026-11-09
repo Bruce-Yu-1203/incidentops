@@ -21,6 +21,7 @@ from langgraph.checkpoint.base import BaseCheckpointSaver
 from langgraph.graph import END, START, StateGraph
 from pydantic import ValidationError
 
+from incidentops import telemetry
 from incidentops.agent.model import SUBMIT_DIAGNOSIS, ModelAdapter, ModelError, ModelTurn
 from incidentops.agent.prompt import SYSTEM_PROMPT, submit_diagnosis_tool
 from incidentops.domain.schemas import DiagnosisReport
@@ -124,9 +125,21 @@ def build_graph(
         if state["step_count"] >= budgets.max_steps or clock_ms() >= state["deadline_epoch_ms"]:
             return {"status": "BUDGET_EXCEEDED", "error_code": "step_or_time_budget"}
         started = utcnow()
-        try:
-            turn: ModelTurn = await model.next_turn(SYSTEM_PROMPT, state["messages"], tools)
-        except ModelError as exc:
+        error: ModelError | None = None
+        turn: ModelTurn | None = None
+        with telemetry.tracer().start_as_current_span("chat") as span:
+            span.set_attribute("gen_ai.operation.name", "chat")
+            span.set_attribute("gen_ai.request.model", model.model_id)
+            span.set_attribute("incidentops.run_id", state["run_id"])
+            trace_id, span_id = telemetry.span_ids(span)
+            try:
+                turn = await model.next_turn(SYSTEM_PROMPT, state["messages"], tools)
+            except ModelError as exc:
+                error = exc
+            else:
+                span.set_attribute("gen_ai.usage.input_tokens", turn.usage.input_tokens)
+                span.set_attribute("gen_ai.usage.output_tokens", turn.usage.output_tokens)
+        if turn is None:
             trajectory.record(
                 StepRecord(
                     state["run_id"],
@@ -134,7 +147,9 @@ def build_graph(
                     "ERROR",
                     started,
                     utcnow(),
-                    {"model_id": model.model_id, "error": str(exc)},
+                    {"model_id": model.model_id, "error": str(error)},
+                    trace_id=trace_id,
+                    span_id=span_id,
                 )
             )
             return {"status": "FAILED", "error_code": "model_error"}
@@ -152,6 +167,8 @@ def build_graph(
                     "input_tokens": turn.usage.input_tokens,
                     "output_tokens": turn.usage.output_tokens,
                 },
+                trace_id=trace_id,
+                span_id=span_id,
             )
         )
         messages = [*state["messages"], turn.assistant_message()]
