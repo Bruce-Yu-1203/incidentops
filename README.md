@@ -19,8 +19,15 @@ Phase P0 (contracts and Fault Lab foundation) is implemented: domain state
 machines, contracts and action hashing, service catalog and role identities,
 the Control PostgreSQL schema with compare-and-swap transitions, the
 resettable Fault Lab with a controllable Kafka consumer, a web skeleton and
-CI. Telemetry, alert ingestion, the agent and remediation follow the
-[roadmap](docs/roadmap.md).
+CI.
+
+Phase P1 (real monitoring, alerts and incidents) is implemented: an
+observability stack ([infra/README.md](infra/README.md)) with Prometheus rules
+for lab API latency/5xx and Kafka consumer lag, an authenticated Alertmanager
+webhook with transactional, race-safe incident deduplication per service, and
+incident list/detail views. `make p1-gate` drives a Kafka consumer pause and a
+PostgreSQL lock through real alerts to one active incident per service. The
+read-only agent (P2) and remediation (P3) follow the [roadmap](docs/roadmap.md).
 
 ## Development quick start
 
