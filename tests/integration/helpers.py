@@ -43,3 +43,40 @@ def production_proposal(messages: list[dict[str, Any]]) -> ModelTurn:
     turn = submit(messages)
     turn.tool_calls[0].arguments["proposed_action"]["environment"] = "production"
     return turn
+
+
+class FakeAdapter:
+    """Records calls; behaviour is configured per test."""
+
+    provider = "fake_controller"
+
+    def __init__(self, revision: str | None = "gen-2") -> None:
+        from incidentops.execution.adapters import (
+            ApplyResult,
+            ApplyStatus,
+            LookupResult,
+            LookupStatus,
+        )
+
+        self.revision = revision
+        self.apply_calls: list[str] = []
+        self.apply_result = ApplyResult(
+            ApplyStatus.COMPLETED,
+            {"operation": {"generation_after": "gen-3", "status": "COMPLETED"}},
+        )
+        self.lookup = LookupResult(
+            LookupStatus.FOUND, {"status": "COMPLETED", "generation_after": "gen-3"}
+        )
+        self.crash_on_apply = False
+
+    async def apply(self, envelope: Any) -> Any:
+        self.apply_calls.append(envelope.action_id)
+        if self.crash_on_apply:
+            raise RuntimeError("process killed after remote accept")
+        return self.apply_result
+
+    async def get_operation(self, envelope: Any) -> Any:
+        return self.lookup
+
+    async def inspect_target(self, target_id: str) -> str | None:
+        return self.revision
