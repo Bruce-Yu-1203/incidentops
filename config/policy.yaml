@@ -1,0 +1,16 @@
+# Versioned remediation policy (architecture §9.1). Any change requires a new
+# policy_version. Unknown operations, environments and arguments are DENIED.
+# Write operations can only be DENY or REQUIRES_APPROVAL: the MVP never
+# executes a mutation without a human approval.
+schema_version: 1
+policy_version: p1
+approval_ttl_seconds: 900
+require_separation_of_duties: true
+rules:
+  - action_type: resume_test_consumer
+    environments: [fault-lab]
+    decision: REQUIRES_APPROVAL
+    risk_class: low
+    # Every argument must be listed; values outside the list are denied.
+    allowed_arguments:
+      desired_paused: [false]
