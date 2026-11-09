@@ -46,9 +46,51 @@ export type AlertEventView = {
 
 export type TimelineEntry = { at: string; kind: string; summary: string; reference_id: string };
 
+export type RunSummary = {
+  id: string;
+  incident_id: string;
+  state: string;
+  model_id: string | null;
+  error_code: string | null;
+  step_count: number;
+  tool_call_count: number;
+  input_tokens: number;
+  output_tokens: number;
+  started_at: string | null;
+  finished_at: string | null;
+};
+
+export type Diagnosis = {
+  root_cause_id: string;
+  affected_component: string;
+  confidence_level: string;
+  summary: string;
+  supporting_evidence_ids: string[];
+  contradicting_evidence_ids: string[];
+  unresolved_questions: string[];
+};
+
+export type ProposedAction = {
+  action_type: string;
+  environment: string;
+  target_id: string;
+  arguments: Record<string, unknown>;
+  reason: string;
+  evidence_ids: string[];
+};
+
+export type DiagnosisReport = {
+  diagnosis: Diagnosis;
+  proposed_action: ProposedAction | null;
+  needs_human_review: boolean;
+};
+
 export type IncidentDetail = IncidentSummary & {
+  escalation_reason: string | null;
   alert_events: AlertEventView[];
   timeline: TimelineEntry[];
+  runs: RunSummary[];
+  diagnosis: DiagnosisReport | null;
 };
 
 type Json = Record<string, unknown>;
@@ -84,9 +126,50 @@ function isTimelineEntry(value: unknown): value is TimelineEntry {
   return isObject(value) && ["at", "kind", "summary", "reference_id"].every((k) => isString(value[k]));
 }
 
+const isNullableString = (value: unknown): boolean => value === null || isString(value);
+const isStringArray = (value: unknown): value is string[] =>
+  Array.isArray(value) && value.every(isString);
+
+export function isRunSummary(value: unknown): value is RunSummary {
+  return (
+    isObject(value) &&
+    isString(value.id) &&
+    isString(value.incident_id) &&
+    isString(value.state) &&
+    ["model_id", "error_code", "started_at", "finished_at"].every((k) => isNullableString(value[k])) &&
+    ["step_count", "tool_call_count", "input_tokens", "output_tokens"].every(
+      (k) => typeof value[k] === "number",
+    )
+  );
+}
+
+export function isDiagnosisReport(value: unknown): value is DiagnosisReport {
+  if (!isObject(value) || !isObject(value.diagnosis)) return false;
+  const d = value.diagnosis;
+  const actionOk =
+    value.proposed_action === null ||
+    value.proposed_action === undefined ||
+    (isObject(value.proposed_action) &&
+      ["action_type", "environment", "target_id", "reason"].every((k) =>
+        isString((value.proposed_action as Json)[k]),
+      ) &&
+      isStringArray((value.proposed_action as Json).evidence_ids));
+  return (
+    ["root_cause_id", "affected_component", "confidence_level", "summary"].every((k) =>
+      isString(d[k]),
+    ) &&
+    isStringArray(d.supporting_evidence_ids) &&
+    actionOk
+  );
+}
+
 export function isIncidentDetail(value: unknown): value is IncidentDetail {
   return (
     isIncidentSummary(value) &&
+    isNullableString((value as Json).escalation_reason) &&
+    Array.isArray((value as Json).runs) &&
+    ((value as Json).runs as unknown[]).every(isRunSummary) &&
+    ((value as Json).diagnosis === null || isDiagnosisReport((value as Json).diagnosis)) &&
     Array.isArray((value as Json).alert_events) &&
     ((value as Json).alert_events as unknown[]).every(isAlertEvent) &&
     Array.isArray((value as Json).timeline) &&

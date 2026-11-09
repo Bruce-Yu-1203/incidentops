@@ -9,8 +9,15 @@ from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from incidentops.api.investigations import RunSummary, latest_diagnosis, runs_for_incident
 from incidentops.domain.state_machines import IncidentState
-from incidentops.persistence.models import AlertEventRow, AuditEventRow, IncidentRow
+from incidentops.persistence.models import (
+    AgentStepRow,
+    AlertEventRow,
+    AuditEventRow,
+    IncidentRow,
+    InvestigationRunRow,
+)
 
 
 class IncidentSummary(BaseModel):
@@ -44,8 +51,11 @@ class TimelineEntry(BaseModel):
 
 
 class IncidentDetail(IncidentSummary):
+    escalation_reason: str | None
     alert_events: list[AlertEventView]
     timeline: list[TimelineEntry]
+    runs: list[RunSummary]
+    diagnosis: dict[str, Any] | None
 
 
 def _summary(row: IncidentRow) -> IncidentSummary:
@@ -125,9 +135,27 @@ def get_incident(session: Session, incident_id: str) -> IncidentDetail | None:
         )
         for e in audits
     ]
+    tool_steps = session.scalars(
+        select(AgentStepRow)
+        .join(InvestigationRunRow, InvestigationRunRow.id == AgentStepRow.run_id)
+        .where(InvestigationRunRow.incident_id == incident_id, AgentStepRow.kind == "tool_call")
+        .order_by(AgentStepRow.started_at)
+    ).all()
+    timeline += [
+        TimelineEntry(
+            at=step.started_at,
+            kind="tool",
+            summary=f"{step.metadata_.get('tool')} {step.status}",
+            reference_id=str(step.metadata_.get("evidence_id") or step.id),
+        )
+        for step in tool_steps
+    ]
     timeline.sort(key=lambda entry: entry.at)
     return IncidentDetail(
         **_summary(row).model_dump(),
+        escalation_reason=row.escalation_reason,
         alert_events=[_alert_view(a) for a in alerts],
         timeline=timeline,
+        runs=runs_for_incident(session, incident_id),
+        diagnosis=latest_diagnosis(session, incident_id),
     )

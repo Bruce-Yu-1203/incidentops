@@ -277,3 +277,35 @@ async def test_postgres_checkpointer_records_the_run(
         checkpoint = await saver.aget_tuple({"configurable": {"thread_id": thread_id}})
     assert checkpoint is not None
     assert checkpoint.checkpoint["channel_values"]["status"] == "COMPLETED"
+
+
+async def test_investigation_api_links_incident_run_steps_and_evidence(
+    session_factory: sessionmaker[Session],
+) -> None:
+    incident_id = _ingest(session_factory)
+    runner = _runner(session_factory, ScriptedModelAdapter([lag_and_status(), submit]))
+    await process_one(session_factory, runner, OWNER, 60)
+    client = TestClient(create_app(Settings(_env_file=None), session_factory=session_factory))
+
+    incident = client.get(f"/api/v1/incidents/{incident_id}").json()
+    (run,) = incident["runs"]
+    assert incident["diagnosis"]["diagnosis"]["root_cause_id"] == "consumer_paused"
+    assert [e["kind"] for e in incident["timeline"]].count("tool") == 2
+
+    detail = client.get(f"/api/v1/investigations/{run['id']}").json()
+    assert [s["kind"] for s in detail["steps"]] == [
+        "model_call",
+        "tool_call",
+        "tool_call",
+        "model_call",
+        "diagnosis",
+    ]
+    by_source = {e["source"]: e for e in detail["evidence"]}
+    assert set(by_source) == {"prometheus", "worker_status"}
+    lag_link = by_source["prometheus"]["source_url"]
+    assert lag_link.startswith("http://127.0.0.1:3000/explore?")
+    assert "kafka_consumergroup_lag" in lag_link
+    assert by_source["worker_status"]["source_url"] is None
+    cited = set(detail["diagnosis"]["diagnosis"]["supporting_evidence_ids"])
+    assert cited == {e["id"] for e in detail["evidence"]}
+    assert client.get("/api/v1/investigations/run_missing").status_code == 404

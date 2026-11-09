@@ -33,6 +33,54 @@ async function IncidentView({ params }: { params: Promise<{ id: string }> }) {
         </dd>
       </dl>
 
+      <h2>Diagnosis</h2>
+      {incident.diagnosis ? (
+        <div className="panel">
+          <p>
+            <strong>{incident.diagnosis.diagnosis.root_cause_id}</strong> on{" "}
+            {incident.diagnosis.diagnosis.affected_component} · confidence{" "}
+            {incident.diagnosis.diagnosis.confidence_level} (categorical, not a probability)
+          </p>
+          <p>{incident.diagnosis.diagnosis.summary}</p>
+          <p className="subtitle">
+            Supporting evidence: {incident.diagnosis.diagnosis.supporting_evidence_ids.length} ·
+            contradicting: {incident.diagnosis.diagnosis.contradicting_evidence_ids.length}
+          </p>
+          {incident.diagnosis.proposed_action ? (
+            <p>
+              Proposed (not approved) action:{" "}
+              <code>
+                {incident.diagnosis.proposed_action.action_type} →{" "}
+                {incident.diagnosis.proposed_action.target_id}
+              </code>{" "}
+              — awaiting deterministic policy evaluation.
+            </p>
+          ) : (
+            <p>No action proposed{incident.diagnosis.needs_human_review ? "; human review requested" : ""}.</p>
+          )}
+        </div>
+      ) : (
+        <p>No diagnosis yet.</p>
+      )}
+      {incident.escalation_reason ? (
+        <p className="error">Escalation reason: {incident.escalation_reason}</p>
+      ) : null}
+
+      <h2>Investigations</h2>
+      {incident.runs.length === 0 ? (
+        <p>No investigation runs yet.</p>
+      ) : (
+        <ul>
+          {incident.runs.map((run) => (
+            <li key={run.id}>
+              <Link href={`/investigations/${run.id}`}>{run.id}</Link> ·{" "}
+              <span className="badge">{run.state}</span> · {run.tool_call_count} tool calls
+              {run.error_code ? ` · ${run.error_code}` : ""}
+            </li>
+          ))}
+        </ul>
+      )}
+
       <h2>Observed alerts</h2>
       <table>
         <thead>

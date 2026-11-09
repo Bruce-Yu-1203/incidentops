@@ -16,8 +16,40 @@ const summary = {
   updated_at: "2026-11-09T12:00:00Z",
 };
 
+const run = {
+  id: `run_${"c".repeat(32)}`,
+  incident_id: ID,
+  state: "COMPLETED",
+  model_id: "scripted-test-model",
+  prompt_version: "investigation-v1",
+  error_code: null,
+  step_count: 2,
+  tool_call_count: 2,
+  input_tokens: 0,
+  output_tokens: 0,
+  started_at: "2026-11-09T12:00:00Z",
+  finished_at: "2026-11-09T12:01:00Z",
+};
+
+const report = {
+  diagnosis: {
+    root_cause_id: "consumer_paused",
+    affected_component: "persist-demo-consumer",
+    confidence_level: "high",
+    summary: "Paused.",
+    supporting_evidence_ids: [`ev_${"d".repeat(32)}`],
+    contradicting_evidence_ids: [],
+    unresolved_questions: [],
+  },
+  proposed_action: null,
+  needs_human_review: true,
+};
+
 const detail = {
   ...summary,
+  escalation_reason: null,
+  runs: [run],
+  diagnosis: report,
   alert_events: [
     {
       id: `alert_${"b".repeat(32)}`,
@@ -83,5 +115,16 @@ describe("isIncidentId", () => {
   it("matches only canonical incident ids", () => {
     expect(isIncidentId(ID)).toBe(true);
     expect(isIncidentId("inc_123")).toBe(false);
+  });
+});
+
+describe("isIncidentDetail diagnosis and runs", () => {
+  it("accepts an incident without diagnosis", () => {
+    expect(isIncidentDetail({ ...detail, diagnosis: null, runs: [] })).toBe(true);
+  });
+
+  it("rejects malformed runs and reports", () => {
+    expect(isIncidentDetail({ ...detail, runs: [{ id: 1 }] })).toBe(false);
+    expect(isIncidentDetail({ ...detail, diagnosis: { diagnosis: {} } })).toBe(false);
   });
 });

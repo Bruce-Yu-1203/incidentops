@@ -11,7 +11,9 @@ from sqlalchemy.orm import Session, sessionmaker
 
 from incidentops import __version__
 from incidentops.api import incidents as incident_queries
+from incidentops.api import investigations as run_queries
 from incidentops.config import Profile, Settings, get_settings
+from incidentops.domain.catalog import load_catalog
 from incidentops.domain.state_machines import IncidentState
 from incidentops.ingestion.alertmanager import PayloadRejectedError, normalize
 from incidentops.ingestion.service import ingest_events
@@ -119,6 +121,20 @@ def create_app(
             detail = incident_queries.get_incident(session, incident_id)
         if detail is None:
             raise HTTPException(status.HTTP_404_NOT_FOUND, "incident not found")
+        return detail
+
+    catalog = load_catalog()
+
+    @app.get(
+        "/api/v1/investigations/{run_id}",
+        tags=["investigations"],
+        dependencies=[Depends(require_viewer)],
+    )
+    def get_investigation(run_id: str, factory: Sessions) -> run_queries.RunDetail:
+        with factory() as session:
+            detail = run_queries.get_run(session, run_id, catalog, resolved.grafana_url)
+        if detail is None:
+            raise HTTPException(status.HTTP_404_NOT_FOUND, "investigation not found")
         return detail
 
     return app

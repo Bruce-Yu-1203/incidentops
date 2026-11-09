@@ -48,6 +48,8 @@ class Settings(BaseSettings):
     prometheus_url: str = "http://127.0.0.1:9090"
     loki_url: str = "http://127.0.0.1:3100"
     tempo_url: str = "http://127.0.0.1:3200"
+    # Public Grafana base URL used only to build "open source" links in the UI.
+    grafana_url: str = "http://127.0.0.1:3000"
     # Read-only Fault Lab token used by get_consumer_status. Never a write token.
     lab_read_token: SecretStr | None = None
     # Server-side overrides of catalog management URLs (service_id -> URL), e.g.
