@@ -1,0 +1,11 @@
+# Postconditions checked by the independent verifier after an action succeeds.
+# Thresholds are initial lab values; calibrate against measured baselines and
+# record changes in version history (benchmark.md §3).
+schema_version: 1
+specs:
+  resume_test_consumer:
+    lag_max: 100
+    observation_window_seconds: 60
+    sample_min_count: 5
+    recovery_timeout_seconds: 240
+    poll_interval_seconds: 10
