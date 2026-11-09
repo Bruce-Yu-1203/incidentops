@@ -1,4 +1,5 @@
 # Developer entry points. `make check` is the gate required by constitute.md.
+.PHONY: web-install web-check
 .PHONY: env install lint format typecheck test test-unit check db-up db-down migrate lab-up lab-down lab-reset lab-smoke lab-lock
 
 env:
@@ -24,7 +25,13 @@ test:
 test-unit:
 	uv run pytest tests/unit
 
-check: lint typecheck test
+check: lint typecheck test web-check
+
+web-install:
+	cd apps/web && pnpm install --frozen-lockfile
+
+web-check:
+	cd apps/web && pnpm lint && pnpm typecheck && pnpm test && pnpm build
 
 db-up:
 	docker compose up -d --wait control-postgres
