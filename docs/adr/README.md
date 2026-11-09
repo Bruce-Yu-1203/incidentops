@@ -14,3 +14,4 @@ it with a new ADR that supersedes the old one.
 | [ADR-012](ADR-012-evidence-retention.md) | Evidence retention window for local demos | Accepted |
 | [ADR-013](ADR-013-verification-failed-state.md) | `VERIFICATION_FAILED` is a verification result, not an incident state | Accepted |
 | [ADR-014](ADR-014-repository-layout.md) | Repository layout and import boundaries | Accepted |
+| [ADR-015](ADR-015-action-cancellation.md) | Action cancellation and pre-dispatch revalidation failures | Accepted |
