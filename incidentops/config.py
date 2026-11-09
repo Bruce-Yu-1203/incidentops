@@ -55,6 +55,8 @@ class Settings(BaseSettings):
     # Server-side overrides of catalog management URLs (service_id -> URL), e.g.
     # when the worker runs on the host instead of the lab network.
     endpoint_overrides: dict[str, str] = Field(default_factory=dict)
+    # Executor-only credential for the lab consumer management API (resume).
+    executor_lab_token: SecretStr | None = None
     session_ttl_hours: int = Field(default=12, ge=1, le=72)
     require_separation_of_duties: bool = True
     worker_lease_seconds: int = Field(default=600, ge=30, le=3600)

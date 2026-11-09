@@ -29,9 +29,11 @@ from incidentops.evidence.store import DatabaseEvidenceSink
 from incidentops.ingestion.service import INVESTIGATE_JOB
 from incidentops.persistence import outbox
 from incidentops.persistence.db import make_engine, make_session_factory
+from incidentops.security.identities import Role
 from incidentops.tools.backends import HttpTelemetryBackend
 from incidentops.tools.gateway import ToolGateway
 from incidentops.trajectory.recorder import DatabaseTrajectorySink
+from incidentops.workers.credentials import assert_credential_scope
 
 LOGGER = logging.getLogger("incidentops.workers.investigation")
 MAX_ATTEMPTS = 3
@@ -87,6 +89,7 @@ def budgets_from(settings: Settings) -> Budgets:
 async def serve(settings: Settings) -> None:  # pragma: no cover - process entry point
     from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
 
+    assert_credential_scope(Role.AGENT, settings)
     if not settings.model_id or settings.anthropic_api_key is None:
         raise SystemExit("INCIDENTOPS_MODEL_ID and INCIDENTOPS_ANTHROPIC_API_KEY are required")
     database_url = settings.control_database_url.get_secret_value()

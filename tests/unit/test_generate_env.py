@@ -28,7 +28,9 @@ def test_render_replaces_every_placeholder_with_unique_tokens() -> None:
     assert len(env) >= 8
     # The agent's lab read token must match the token the lab verifies.
     assert env["INCIDENTOPS_LAB_READ_TOKEN"] == env["FAULT_LAB_READ_TOKEN"]
-    others = [v for k, v in env.items() if k != "INCIDENTOPS_LAB_READ_TOKEN"]
+    assert env["INCIDENTOPS_EXECUTOR_LAB_TOKEN"] == env["FAULT_LAB_EXECUTOR_TOKEN"]
+    linked = {"INCIDENTOPS_LAB_READ_TOKEN", "INCIDENTOPS_EXECUTOR_LAB_TOKEN"}
+    others = [v for k, v in env.items() if k not in linked]
     assert len(set(others)) == len(others)
     assert "incidentops:incidentops@localhost:5433" in rendered
 

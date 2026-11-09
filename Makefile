@@ -1,6 +1,6 @@
 # Developer entry points. `make check` is the gate required by constitute.md.
 .PHONY: web-install web-check
-.PHONY: env install lint format typecheck test test-unit check db-up db-down migrate seed-users lab-up lab-down lab-reset lab-smoke lab-lock infra-secrets infra-up infra-down api-run worker-run p1-gate p2-live p2-gate
+.PHONY: env install lint format typecheck test test-unit check db-up db-down migrate seed-users lab-up lab-down lab-reset lab-smoke lab-lock infra-secrets infra-up infra-down api-run worker-run control-run executor-run verifier-run p1-gate p2-live p2-gate
 
 env:
 	uv run python scripts/generate_env.py
@@ -62,7 +62,7 @@ lab-smoke:
 
 # Investigation worker (needs INCIDENTOPS_MODEL_ID and INCIDENTOPS_ANTHROPIC_API_KEY in .env).
 worker-run:
-	set -a && . ./.env && set +a && uv run python -m incidentops.workers.investigation
+	$(LOAD_ENV) && $(STRIP_EXECUTOR) && uv run python -m incidentops.workers.investigation
 
 # Roadmap P2 gate with a real model (needs api-run and worker-run in other terminals).
 p2-gate:
@@ -93,6 +93,21 @@ infra-up: infra-secrets
 infra-down:
 	$(INFRA_COMPOSE) down -v
 
+# Each process receives only its own credentials: foreign variables are
+# stripped here and the process refuses to start if any remain.
+LOAD_ENV = set -a && . ./.env && set +a
+STRIP_EXECUTOR = unset INCIDENTOPS_EXECUTOR_LAB_TOKEN FAULT_LAB_EXECUTOR_TOKEN FAULT_LAB_BENCHMARK_TOKEN
+STRIP_MODEL = unset INCIDENTOPS_ANTHROPIC_API_KEY
+
 # Run the control-plane API on the host for Alertmanager (host.docker.internal:8000).
 api-run:
-	set -a && . ./.env && set +a && uv run alembic upgrade head && uv run uvicorn --factory incidentops.api.app:create_app --host 127.0.0.1 --port 8000
+	$(LOAD_ENV) && $(STRIP_EXECUTOR) && $(STRIP_MODEL) && uv run alembic upgrade head && uv run uvicorn --factory incidentops.api.app:create_app --host 127.0.0.1 --port 8000
+
+control-run:
+	$(LOAD_ENV) && $(STRIP_EXECUTOR) && $(STRIP_MODEL) && uv run python -m incidentops.workers.control
+
+executor-run:
+	$(LOAD_ENV) && $(STRIP_MODEL) && unset INCIDENTOPS_LAB_READ_TOKEN FAULT_LAB_READ_TOKEN FAULT_LAB_BENCHMARK_TOKEN && uv run python -m incidentops.workers.executor
+
+verifier-run:
+	$(LOAD_ENV) && $(STRIP_EXECUTOR) && $(STRIP_MODEL) && uv run python -m incidentops.workers.verifier

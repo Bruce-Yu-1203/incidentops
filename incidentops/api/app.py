@@ -35,6 +35,7 @@ from incidentops.ingestion.service import ingest_events
 from incidentops.persistence.db import make_engine, make_session_factory
 from incidentops.security.identities import IdentityRegistry, Role
 from incidentops.time import utcnow
+from incidentops.workers.credentials import assert_credential_scope
 
 SESSION_COOKIE = "incidentops_session"
 
@@ -93,6 +94,7 @@ def create_app(
     durable work to workers through the outbox.
     """
     resolved = settings or get_settings()
+    assert_credential_scope(Role.API, resolved)
     app = FastAPI(title="IncidentOps Control Plane", version=__version__)
     app.state.settings = resolved
     app.state.session_factory = session_factory
