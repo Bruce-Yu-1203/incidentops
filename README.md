@@ -39,6 +39,28 @@ telemetry with a scripted model. The real-model gate (`make p2-gate`) needs a
 provider key: set `INCIDENTOPS_MODEL_ID` and `INCIDENTOPS_ANTHROPIC_API_KEY` in
 `.env`, then run `make api-run` and `make worker-run`.
 
+Phase P3 (first safe remediation, B-F03) is implemented: a versioned
+deterministic policy, immutable action envelopes bound by `action_hash`,
+local users with sessions and RBAC, hash/version/TTL-checked approvals with
+separation of duties, an isolated executor that revalidates before dispatch
+and reconciles ambiguous outcomes by `action_id`, and an independent verifier
+that alone may resolve an incident. Each process refuses other roles'
+credentials. `make p3-gate` runs the live loop (approve → resume → verified
+RESOLVED, and reject → zero lab mutations).
+
+### Running the full loop locally
+
+```bash
+make lab-up infra-up seed-users
+make api-run        # terminal 1 (API on 127.0.0.1:8000)
+make control-run    # terminal 2 (policy evaluation, approval expiry)
+make executor-run   # terminal 3 (the only remediation credential)
+make verifier-run   # terminal 4 (independent recovery checks)
+make worker-run     # terminal 5 (investigation; set INCIDENTOPS_MODEL_ID,
+                    # or use rules-baseline-v1 for the no-key B0 baseline)
+cd apps/web && INCIDENTOPS_API_URL=http://127.0.0.1:8000 pnpm dev   # UI on :3001
+```
+
 ## Development quick start
 
 Requirements (tested on macOS 15+, Apple silicon): [uv](https://docs.astral.sh/uv/)
