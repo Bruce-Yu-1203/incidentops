@@ -6,6 +6,8 @@ Usage::
     python -m fault_lab.scripts.labctl pause
     python -m fault_lab.scripts.labctl reset
     python -m fault_lab.scripts.labctl smoke
+    python -m fault_lab.scripts.labctl inject-db-lock [--seconds N]
+    python -m fault_lab.scripts.labctl release-db-lock --token TOKEN
 
 ``reset`` restores the healthy baseline; ``smoke`` runs the Phase 0 gate:
 the consumer progresses when unpaused, stays stationary when paused, recovers
@@ -33,6 +35,7 @@ class LabEndpoints:
     api: str = os.environ.get("FAULT_LAB_API_URL", "http://127.0.0.1:18080")
     consumer: str = os.environ.get("FAULT_LAB_CONSUMER_URL", "http://127.0.0.1:18081")
     producer: str = os.environ.get("FAULT_LAB_PRODUCER_URL", "http://127.0.0.1:18082")
+    faults: str = os.environ.get("FAULT_LAB_FAULTS_URL", "http://127.0.0.1:18090")
 
 
 class SmokeFailedError(AssertionError):
@@ -71,7 +74,31 @@ class LabController:
         response.raise_for_status()
         return dict(response.json())
 
+    def inject_db_lock(self, hold_seconds: float) -> dict[str, Any]:
+        response = self._client.post(
+            f"{self.endpoints.faults}/faults/db-lock",
+            headers=self._headers,
+            json={"action_id": _action_id("dblock"), "hold_seconds": hold_seconds},
+        )
+        response.raise_for_status()
+        return dict(response.json())
+
+    def release_db_lock(self, fixture_token: str) -> dict[str, Any]:
+        response = self._client.post(
+            f"{self.endpoints.faults}/faults/db-lock/release",
+            headers=self._headers,
+            json={"fixture_token": fixture_token},
+        )
+        response.raise_for_status()
+        return dict(response.json())
+
+    def reset_faults(self) -> dict[str, Any]:
+        response = self._client.post(f"{self.endpoints.faults}/faults/reset", headers=self._headers)
+        response.raise_for_status()
+        return dict(response.json())
+
     def reset(self) -> dict[str, Any]:
+        self.reset_faults()
         response = self._client.post(
             f"{self.endpoints.consumer}/control/reset",
             headers=self._headers,
@@ -91,6 +118,7 @@ class LabController:
             f"{self.endpoints.api}/readyz",
             f"{self.endpoints.consumer}/healthz",
             f"{self.endpoints.producer}/healthz",
+            f"{self.endpoints.faults}/healthz",
         ]
         pending = list(urls)
         while pending and time.monotonic() < deadline:
@@ -168,7 +196,12 @@ def run_smoke(lab: LabController, client: httpx.Client, other_tokens: dict[str, 
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("command", choices=["status", "pause", "reset", "smoke"])
+    parser.add_argument(
+        "command",
+        choices=["status", "pause", "reset", "smoke", "inject-db-lock", "release-db-lock"],
+    )
+    parser.add_argument("--seconds", type=float, default=180.0, help="db lock hold time")
+    parser.add_argument("--token", help="fixture token to release")
     args = parser.parse_args(argv)
     token = os.environ.get("FAULT_LAB_BENCHMARK_TOKEN")
     if not token:
@@ -181,6 +214,13 @@ def main(argv: list[str] | None = None) -> int:
                 print(lab.status())
             elif args.command == "pause":
                 print(lab.pause())
+            elif args.command == "inject-db-lock":
+                print(lab.inject_db_lock(args.seconds))
+            elif args.command == "release-db-lock":
+                if not args.token:
+                    print("--token is required", file=sys.stderr)
+                    return 2
+                print(lab.release_db_lock(args.token))
             elif args.command == "reset":
                 lab.wait_ready()
                 print(lab.reset())

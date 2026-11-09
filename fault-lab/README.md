@@ -13,6 +13,8 @@ production system and stores no IncidentOps workflow state.
 | `lab-api` | Instrumented demo API (`/healthz`, `/readyz`, `/events/count`, `/metrics`) | 18080 |
 | `lab-consumer` | Controllable consumer `persist-demo-consumer` with management API | 18081 |
 | `demo-producer` | Seeded fixed-rate producer (`LAB_PRODUCER_RATE`, default 20 msg/s) | 18082 |
+| `lab-loadgen` | Seeded HTTP workload on `lab-api /items/{id}` (`LAB_LOAD_RPS`, default 10) | — |
+| `fault-controller` | Benchmark-only fixtures (P1: PostgreSQL lock on `lab_items`); no metrics | 18090 |
 
 All host ports bind to `127.0.0.1`. No service mounts the Docker socket.
 Third-party images and the Python base image are pinned by digest; Python
@@ -31,6 +33,16 @@ dependencies install from the hashed `requirements.lock`.
 Each role has its own bearer token (`FAULT_LAB_BENCHMARK_TOKEN`,
 `FAULT_LAB_EXECUTOR_TOKEN`, `FAULT_LAB_READ_TOKEN`). The investigation agent may
 only ever hold the read token.
+
+## Fault fixtures
+
+| Fixture | Inject | Effect | Release |
+|---|---|---|---|
+| Consumer pause | `labctl pause` | consumer stops; producer continues; group lag grows | `labctl reset` |
+| DB lock | `labctl inject-db-lock --seconds N` (max 600) | `lab_items` locked; `/items/{id}` hits the 5 s statement timeout and returns 503 | `labctl release-db-lock --token <fixture_token>`, `labctl reset`, or expiry |
+
+The lab API sends traces and logs over OTLP to `otel-collector` when the
+observability stack is running; without it the exporter just logs retries.
 
 ## Running
 

@@ -3,10 +3,13 @@
 from __future__ import annotations
 
 import random
+from typing import Any
 
 import pytest
 from fastapi.testclient import TestClient
 from fault_lab.api.app import create_app as create_api
+from fault_lab.loadgen.app import create_app as create_loadgen
+from fault_lab.loadgen.app import item_path
 from fault_lab.producer.app import create_app as create_producer
 from fault_lab.producer.app import make_event
 from fault_lab.scripts.labctl import main as labctl_main
@@ -16,6 +19,15 @@ from fault_lab.scripts.labctl import parse_metric
 class FakeDeps:
     def __init__(self, healthy: bool = True) -> None:
         self.healthy = healthy
+        self.prepared = False
+
+    async def prepare(self) -> None:
+        self.prepared = True
+
+    async def get_item(self, item_id: int) -> dict[str, Any] | None:
+        if not self.healthy:
+            raise TimeoutError("statement timeout")
+        return {"id": item_id, "name": f"item-{item_id}"} if item_id <= 10 else None
 
     async def check_database(self) -> None:
         if not self.healthy:
@@ -31,7 +43,10 @@ class FakeDeps:
 
 
 def test_api_ready_and_instrumented() -> None:
-    client = TestClient(create_api(FakeDeps()))
+    deps = FakeDeps()
+    with TestClient(create_api(deps)) as client:
+        assert deps.prepared
+    client = TestClient(create_api(deps))
     assert client.get("/readyz").json() == {"status": "ready"}
     assert client.get("/events/count").json() == {"count": 7}
     metrics = client.get("/metrics").text
@@ -68,3 +83,33 @@ def test_parse_metric_reads_unlabelled_sample() -> None:
 def test_labctl_requires_benchmark_token(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.delenv("FAULT_LAB_BENCHMARK_TOKEN", raising=False)
     assert labctl_main(["status"]) == 2
+
+
+def test_items_route_reads_database_and_validates_ids() -> None:
+    client = TestClient(create_api(FakeDeps()))
+    assert client.get("/items/3").json() == {"id": 3, "name": "item-3"}
+    assert client.get("/items/11").status_code == 404
+    assert client.get("/items/0").status_code == 422
+    assert client.get("/items/1001").status_code == 422
+    metrics = client.get("/metrics").text
+    assert 'lab_api_http_requests_total{route="/items/{item_id}",status="200"} 1.0' in metrics
+
+
+def test_items_route_maps_database_failure_to_503() -> None:
+    client = TestClient(create_api(FakeDeps(healthy=False)))
+    assert client.get("/items/1").status_code == 503
+    assert 'route="/items/{item_id}",status="503"' in client.get("/metrics").text
+
+
+def test_loadgen_paths_are_seeded_and_in_range() -> None:
+    first = [item_path(random.Random(7)) for _ in range(3)]  # noqa: S311
+    second = [item_path(random.Random(7)) for _ in range(3)]  # noqa: S311
+    assert first == second
+    assert all(1 <= int(p.rsplit("/", 1)[1]) <= 1000 for p in first)
+
+
+def test_loadgen_exposes_metrics() -> None:
+    app = create_loadgen("http://lab-api:8080", rate_per_second=5, seed=1, run_loop=False)
+    with TestClient(app) as client:
+        assert client.get("/healthz").json() == {"status": "ok"}
+        assert client.get("/metrics").status_code == 200

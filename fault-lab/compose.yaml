@@ -81,6 +81,8 @@ services:
       LAB_DATABASE_DSN: postgresql://lab:${LAB_DB_PASSWORD:-lab}@lab-postgres:5432/lab
       LAB_REDIS_URL: redis://lab-redis:6379/0
       PORT: "8080"
+      # Traces and logs go to the collector in infra/compose.yaml when it runs.
+      OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-collector:4318
     depends_on:
       lab-postgres: {condition: service_healthy}
       lab-redis: {condition: service_healthy}
@@ -130,8 +132,44 @@ services:
       timeout: 5s
       retries: 30
 
+  lab-loadgen:
+    <<: *python-service
+    command: ["python", "-m", "fault_lab.loadgen.app"]
+    environment:
+      LAB_LOAD_TARGET: http://lab-api:8080
+      LAB_LOAD_RPS: ${LAB_LOAD_RPS:-10}
+      LAB_LOAD_SEED: ${LAB_LOAD_SEED:-2042}
+      PORT: "8083"
+    depends_on:
+      lab-api: {condition: service_healthy}
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8083/healthz', timeout=2)"]
+      interval: 3s
+      timeout: 5s
+      retries: 30
+
+  # Benchmark controller fixtures. Only the benchmark token is accepted, and the
+  # service exposes no metrics, so fault state never reaches agent telemetry.
+  fault-controller:
+    <<: *python-service
+    command: ["python", "-m", "fault_lab.faults.app"]
+    environment:
+      <<: *lab-tokens
+      LAB_DATABASE_DSN: postgresql://lab:${LAB_DB_PASSWORD:-lab}@lab-postgres:5432/lab
+      PORT: "8090"
+    depends_on:
+      lab-api: {condition: service_healthy}
+    ports: ["127.0.0.1:18090:8090"]
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8090/healthz', timeout=2)"]
+      interval: 3s
+      timeout: 5s
+      retries: 30
+
 networks:
-  lab: {}
+  lab:
+    # Fixed name so the observability stack (infra/compose.yaml) can join it.
+    name: incidentops-lab
 
 volumes:
   consumer-ledger: {}
