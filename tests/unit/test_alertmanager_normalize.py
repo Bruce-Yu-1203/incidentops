@@ -53,7 +53,7 @@ def test_normalizes_firing_alert() -> None:
     assert event.environment.value == "fault-lab"
     assert event.ends_at is None
     assert event.source_event_id == "a1b2c3d4e5f60718:2026-11-09T11:58:00+00:00"
-    assert dedup_key(event) == "fault-lab:persist-demo-consumer:lab_kafka_consumer_lag_high"
+    assert dedup_key(event) == "fault-lab:persist-demo-consumer"
 
 
 def test_resolved_alert_keeps_end_time() -> None:
@@ -131,3 +131,11 @@ def test_oversized_label_values_rejected() -> None:
     body["alerts"][0]["labels"]["component"] = "x" * 513
     with pytest.raises(PayloadRejectedError):
         normalize(body, received_at=NOW)
+
+
+def test_rules_for_same_service_share_dedup_key() -> None:
+    (latency,) = normalize(payload(), received_at=NOW)
+    body = payload(fingerprint="0000111122223333")
+    body["alerts"][0]["labels"]["alertname"] = "lab_consumer_errors_high"
+    (errors,) = normalize(body, received_at=NOW)
+    assert dedup_key(latency) == dedup_key(errors)

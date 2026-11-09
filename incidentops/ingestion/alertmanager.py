@@ -53,8 +53,12 @@ class PayloadRejectedError(ValueError):
 
 
 def dedup_key(event: AlertEvent) -> str:
-    """One active incident per (environment, service, alert rule)."""
-    return f"{event.environment.value}:{event.service_id}:{event.alert_name}"
+    """One active incident per (environment, service) — ADR-017.
+
+    Several alert rules firing for the same service (for example latency and
+    error ratio during one database slowdown) correlate into one incident.
+    """
+    return f"{event.environment.value}:{event.service_id}"
 
 
 def _digest(alert: AlertmanagerAlert) -> str:

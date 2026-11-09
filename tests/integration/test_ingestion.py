@@ -148,6 +148,16 @@ def test_new_incident_after_previous_reaches_terminal_state(
     assert second != first
 
 
+def test_rules_for_same_service_correlate_into_one_incident(
+    session_factory: sessionmaker[Session],
+) -> None:
+    client = _client(session_factory)
+    (incident_id,) = _post(client, payload())["created_incident_ids"]
+    other_rule = payload(fingerprint="9999888877776666")
+    other_rule["alerts"][0]["labels"]["alertname"] = "lab_consumer_errors_high"
+    assert _post(client, other_rule)["updated_incident_ids"] == [incident_id]
+
+
 def test_list_and_detail_endpoints(session_factory: sessionmaker[Session]) -> None:
     client = _client(session_factory)
     (incident_id,) = _post(client, payload())["created_incident_ids"]
