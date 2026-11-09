@@ -238,3 +238,14 @@ def test_prompt_contains_no_benchmark_control_data(secret_token: str) -> None:
     message = initial_message({"id": "inc_x"}, [], load_catalog())
     assert secret_token not in SYSTEM_PROMPT
     assert secret_token not in json.dumps(message)
+
+
+def test_prompt_states_exact_action_argument_contract() -> None:
+    # A live DeepSeek run proposed {"consumer_id": ...}; policy correctly denied it.
+    # The model must be told the exact contract instead of guessing.
+    message = json.dumps(initial_message({"id": "inc_x"}, [], load_catalog()))
+    assert (
+        '\\"action_arguments\\": {\\"resume_test_consumer\\": {\\"desired_paused\\": [false]}}'
+        in message
+    )
+    assert "exactly" in SYSTEM_PROMPT

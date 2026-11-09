@@ -13,8 +13,9 @@ from typing import Any, Final
 from incidentops.domain.catalog import ServiceCatalog
 from incidentops.domain.schemas import DiagnosisReport
 from incidentops.evidence.redaction import redact, truncate_utf8
+from incidentops.policy.engine import PolicyConfig, load_policy
 
-PROMPT_VERSION: Final = "investigation-v1"
+PROMPT_VERSION: Final = "investigation-v2"
 
 # The label space of root causes the diagnosis may use. This is the generic
 # taxonomy, not the answer to any particular case.
@@ -45,7 +46,9 @@ Rules you must follow:
 - Finish by calling `submit_diagnosis` exactly once. Use root_cause_id
   "insufficient_evidence", confidence "low", no proposed_action and
   needs_human_review=true when the evidence is weak or contradictory.
-- Only propose an action that the service catalog lists for that service.
+- Only propose an action that the service catalog lists for that service, with exactly
+  the argument names and values given in its `action_arguments` contract. Any other
+  argument is denied by policy.
 
 Allowed root_cause_id values: {", ".join(ROOT_CAUSE_TAXONOMY)}.
 """
@@ -63,7 +66,18 @@ def submit_diagnosis_tool() -> dict[str, Any]:
     }
 
 
-def catalog_context(catalog: ServiceCatalog) -> list[dict[str, Any]]:
+def action_contracts(policy: PolicyConfig) -> dict[str, dict[str, list[Any]]]:
+    """Exact argument contract per action type, taken from the active policy."""
+    return {
+        rule.action_type: {name: list(values) for name, values in rule.allowed_arguments.items()}
+        for rule in policy.rules
+    }
+
+
+def catalog_context(
+    catalog: ServiceCatalog, policy: PolicyConfig | None = None
+) -> list[dict[str, Any]]:
+    contracts = action_contracts(policy or load_policy())
     return [
         {
             "service_id": s.service_id,
@@ -71,6 +85,7 @@ def catalog_context(catalog: ServiceCatalog) -> list[dict[str, Any]]:
             "environment": s.environment.value,
             "consumer_group": s.kafka.consumer_group if s.kafka else None,
             "allowed_actions": list(s.allowed_actions),
+            "action_arguments": {a: contracts.get(a, {}) for a in s.allowed_actions},
         }
         for s in catalog.services
     ]
