@@ -1,0 +1,81 @@
+# Every PR runs static checks, unit/contract/security tests and integration
+# tests against a real PostgreSQL, with no model calls and no lab credentials.
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  python:
+    runs-on: ubuntu-24.04
+    services:
+      postgres:
+        image: postgres:17.6-alpine
+        env:
+          POSTGRES_USER: incidentops
+          POSTGRES_PASSWORD: incidentops
+          POSTGRES_DB: incidentops_control
+        ports: ["5433:5432"]
+        options: >-
+          --health-cmd "pg_isready -U incidentops"
+          --health-interval 2s --health-timeout 3s --health-retries 30
+    env:
+      INCIDENTOPS_REQUIRE_DB: "1"
+      INCIDENTOPS_TEST_DATABASE_URL: postgresql+psycopg://incidentops:incidentops@localhost:5433/incidentops_test
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+      - name: Install
+        run: uv sync --all-packages --frozen
+      - name: Lint
+        run: |
+          uv run ruff check .
+          uv run ruff format --check .
+      - name: Type check
+        run: uv run mypy
+      - name: Tests
+        run: uv run pytest -m "not lab"
+      - name: Migrations apply to an empty database
+        env:
+          INCIDENTOPS_CONTROL_DATABASE_URL: postgresql+psycopg://incidentops:incidentops@localhost:5433/incidentops_control
+        run: uv run alembic upgrade head
+
+  web:
+    runs-on: ubuntu-24.04
+    defaults:
+      run:
+        working-directory: apps/web
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+          cache-dependency-path: apps/web/pnpm-lock.yaml
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm lint
+      - run: pnpm typecheck
+      - run: pnpm test
+      - run: pnpm build
+
+  compose:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Validate compose files
+        run: |
+          cp .env.example .env
+          docker compose -f compose.yaml config --quiet
+          docker compose -f fault-lab/compose.yaml --env-file .env config --quiet
