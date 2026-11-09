@@ -2,6 +2,34 @@ version = 1
 revision = 3
 requires-python = ">=3.12, <3.14"
 
+[manifest]
+members = [
+    "incidentops",
+    "incidentops-fault-lab",
+]
+
+[[package]]
+name = "aiokafka"
+version = "0.15.0"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/a5/4f/36c64527c239c847a35915e38a4a50b6a7bb0f7e569bfde377d60a2011f3/aiokafka-0.15.0.tar.gz", hash = "sha256:8457e45565544c0888679943a0de2a284526d2ce489ad861f4b740f2f58b5dd0", size = 633412, upload-time = "2026-10-28T17:05:25.935Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/5d/89/0aa7c0deda8a4b607d229b042ed3a32f1bf2c9af9dbddaea3480ef41b65f/aiokafka-0.15.0-cp312-cp312-macosx_10_13_x86_64.whl", hash = "sha256:569d27eb1543819db1d35c0ba7a779a4992575debb3dcb012922efa5568de7ca", size = 370995, upload-time = "2026-10-28T17:04:37.887Z" },
+    { url = "https://files.pythonhosted.org/packages/d6/40/8251071571e9e0ace4a9b186e98064463009079023126dfe847a69482d9a/aiokafka-0.15.0-cp312-cp312-macosx_11_0_arm64.whl", hash = "sha256:e726472daef51682b8e2045aab3cdcd68e4a0569492ddae91b162c39bbbb6682", size = 374198, upload-time = "2026-10-28T17:04:39.6Z" },
+    { url = "https://files.pythonhosted.org/packages/3c/e0/4dda411739c635beb4c4cd89e344c98ea2d0aca1a0cac6678913c665211f/aiokafka-0.15.0-cp312-cp312-manylinux2014_aarch64.manylinux_2_17_aarch64.manylinux_2_28_aarch64.whl", hash = "sha256:7f2f2084b6e1981cfc4a12600753ac2b6340029769bf058c69d58684a3ae7db4", size = 1255775, upload-time = "2026-10-28T17:04:41.239Z" },
+    { url = "https://files.pythonhosted.org/packages/5f/3e/110f8e583af841c2489f770336abda23dcbe8353fbc09be64d75b728c89d/aiokafka-0.15.0-cp312-cp312-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl", hash = "sha256:79a7b0110e377faf1932d91bea1f442d18e769241809a0b25df88552ad82a3b1", size = 1244651, upload-time = "2026-10-28T17:04:44.062Z" },
+    { url = "https://files.pythonhosted.org/packages/f6/c1/66481fe97b15c9cae270141a9efcc5171cca464db360e9fafedea1d99f97/aiokafka-0.15.0-cp312-cp312-win32.whl", hash = "sha256:a4dab06d9d93cf7cf45cae295850273dc4cfcf055194a4b3baefe25d93235813", size = 320329, upload-time = "2026-10-28T17:04:45.55Z" },
+    { url = "https://files.pythonhosted.org/packages/62/6d/73c82e63854d5e714cefc5fd19bfab029ec750e065c592f3a611a1846c2e/aiokafka-0.15.0-cp312-cp312-win_amd64.whl", hash = "sha256:88acb9bdf8aaf2fe47de220ea218fa4646ed1cc8b23eb8337676f2c1b82d3618", size = 337252, upload-time = "2026-10-28T17:04:47.516Z" },
+    { url = "https://files.pythonhosted.org/packages/4b/e3/e482fb144ba6b405b57b94482cf0e48f65b0aba5a69ed2dcdf1d9eab91da/aiokafka-0.15.0-cp312-cp312-win_arm64.whl", hash = "sha256:0dcb23b7d4dbdaed542307e3bd0b7b96b6a8493ca645d56c00c7680c666b74cf", size = 328737, upload-time = "2026-10-28T17:04:49.025Z" },
+    { url = "https://files.pythonhosted.org/packages/9f/a9/e81f08131066c82b567e0ad3610a78804bd37e7a4647600766ccebe0533d/aiokafka-0.15.0-cp313-cp313-macosx_10_13_x86_64.whl", hash = "sha256:9ea881f33371358cf5de399a50607d57f66280d969efe2c75a38a5d7837103f6", size = 368262, upload-time = "2026-10-28T17:04:50.544Z" },
+    { url = "https://files.pythonhosted.org/packages/02/9d/6d998691abde9c343265bdf9b87f1f0464743f2093805c61ac2894943ea2/aiokafka-0.15.0-cp313-cp313-macosx_11_0_arm64.whl", hash = "sha256:29a919268979e6f5dd68221e3df9de9dbf4db31aea24c8e6f1e75733605d9bae", size = 371185, upload-time = "2026-10-28T17:04:52.999Z" },
+    { url = "https://files.pythonhosted.org/packages/62/4c/6cd7f1fdc7888f0d3649e45a6fc9edc174528b6bd8f0e7135c6a5beddfd7/aiokafka-0.15.0-cp313-cp313-manylinux2014_aarch64.manylinux_2_17_aarch64.manylinux_2_28_aarch64.whl", hash = "sha256:08fe870205ce05b5198c05e38a7617e9fe9bf9cb04a2eb67c4defdfcee212277", size = 1236113, upload-time = "2026-10-28T17:04:54.714Z" },
+    { url = "https://files.pythonhosted.org/packages/76/32/79bbe0f37a99dd404a4f5fd6c1080a95b3aa61369f7688f77878bbcf7c73/aiokafka-0.15.0-cp313-cp313-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl", hash = "sha256:d3e34a77da9aa2f2c7db77df240b321964da8a8042a9c35d318e885a57bb42e4", size = 1225417, upload-time = "2026-10-28T17:04:56.172Z" },
+    { url = "https://files.pythonhosted.org/packages/9f/f1/03b527bba6436ba7b353f29a0710be4c7547201137bcf07ea9cd554867b2/aiokafka-0.15.0-cp313-cp313-win32.whl", hash = "sha256:5bd1eae658c1e19c68d903d952ed90fa22a5378be43dc95d0bd0869d158df8b3", size = 319007, upload-time = "2026-10-28T17:04:57.732Z" },
+    { url = "https://files.pythonhosted.org/packages/ce/d7/a0ff769e20b1d83c904c41505babf4ee2481d38c61d1319046aea0214c56/aiokafka-0.15.0-cp313-cp313-win_amd64.whl", hash = "sha256:e4979bc1335c1bd02d1ed71c5fd3d7eff58effc87f55cf081937f7b82594b54a", size = 334400, upload-time = "2026-10-28T17:04:59.145Z" },
+    { url = "https://files.pythonhosted.org/packages/46/14/6124d3c9e14ffbadd7c658576b556e2f63b0d83329f90b9cb7ad603d85fe/aiokafka-0.15.0-cp313-cp313-win_arm64.whl", hash = "sha256:1af146dfe9af17c6f6d275e67bd1e4a7e423e1101d89dc7140d943a00cb6a495", size = 326671, upload-time = "2026-10-28T17:05:00.633Z" },
+]
+
 [[package]]
 name = "alembic"
 version = "1.20.1"
@@ -242,6 +270,7 @@ dependencies = [
 
 [package.dev-dependencies]
 dev = [
+    { name = "incidentops-fault-lab" },
     { name = "mypy" },
     { name = "pytest" },
     { name = "pytest-asyncio" },
@@ -265,12 +294,40 @@ requires-dist = [
 
 [package.metadata.requires-dev]
 dev = [
+    { name = "incidentops-fault-lab", editable = "fault-lab" },
     { name = "mypy", specifier = ">=1.13" },
     { name = "pytest", specifier = ">=8.3" },
     { name = "pytest-asyncio", specifier = ">=0.24" },
     { name = "pytest-cov", specifier = ">=6.0" },
     { name = "ruff", specifier = ">=0.8" },
     { name = "types-pyyaml", specifier = ">=6.0.12.20261103" },
+]
+
+[[package]]
+name = "incidentops-fault-lab"
+version = "0.1.0"
+source = { editable = "fault-lab" }
+dependencies = [
+    { name = "aiokafka" },
+    { name = "fastapi" },
+    { name = "httpx" },
+    { name = "prometheus-client" },
+    { name = "psycopg", extra = ["binary"] },
+    { name = "pydantic" },
+    { name = "redis" },
+    { name = "uvicorn" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "aiokafka", specifier = ">=0.12" },
+    { name = "fastapi", specifier = ">=0.115" },
+    { name = "httpx", specifier = ">=0.28" },
+    { name = "prometheus-client", specifier = ">=0.21" },
+    { name = "psycopg", extras = ["binary"], specifier = ">=3.2" },
+    { name = "pydantic", specifier = ">=2.9" },
+    { name = "redis", specifier = ">=5.2" },
+    { name = "uvicorn", specifier = ">=0.32" },
 ]
 
 [[package]]
@@ -450,6 +507,15 @@ source = { registry = "https://pypi.org/simple" }
 sdist = { url = "https://files.pythonhosted.org/packages/bf/db/7fc19e6f2dc92a966727031389fc2e08b558f0f25eb7403c1119ad4713cd/pluggy-1.7.0.tar.gz", hash = "sha256:d1eaa46ebb595891b860ab086b4d09c8588af65ebd4361b8e8f4bb8920b90ba8", size = 123304, upload-time = "2026-10-15T09:50:58.343Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/40/9e/2b38731e0fc536806f16490e1a12d7f0dc2a1235aa8cc07bcc75416a7daa/pluggy-1.7.0-py3-none-any.whl", hash = "sha256:7dd7b0d8832ba3cb632c306926ded123429211b83641b35dc5c41ad2d34f9bec", size = 27082, upload-time = "2026-10-15T09:50:56.808Z" },
+]
+
+[[package]]
+name = "prometheus-client"
+version = "0.26.0"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/52/73/f1334c29c2af4cd9dba6c7817e61b611bd0215e2eb5565c6064a4de18802/prometheus_client-0.26.0.tar.gz", hash = "sha256:04a91bcf94e2cf74a44a1a874d651a2e853ed354b6e822f3b7487751465d5c2b", size = 92910, upload-time = "2026-07-24T19:36:41.893Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/eb/a3/b69efbf4143b5b9859b977770bbbabcc2796b702fa69dc40271e45cd5a56/prometheus_client-0.26.0-py3-none-any.whl", hash = "sha256:fa93d06737aa02bacd05794768508bb97d2fbee28cb3bca04eaae92f0ca953d6", size = 64494, upload-time = "2026-07-24T19:36:40.854Z" },
 ]
 
 [[package]]
@@ -664,6 +730,15 @@ wheels = [
     { url = "https://files.pythonhosted.org/packages/de/94/980b50a6531b3019e45ddeada0626d45fa85cbe22300844a7983285bed3b/pyyaml-6.0.3-cp313-cp313-win32.whl", hash = "sha256:d0eae10f8159e8fdad514efdc92d74fd8d682c933a6dd088030f3834bc8e6b26", size = 137427, upload-time = "2025-09-25T21:32:32.58Z" },
     { url = "https://files.pythonhosted.org/packages/97/c9/39d5b874e8b28845e4ec2202b5da735d0199dbe5b8fb85f91398814a9a46/pyyaml-6.0.3-cp313-cp313-win_amd64.whl", hash = "sha256:79005a0d97d5ddabfeeea4cf676af11e647e41d81c9a7722a193022accdb6b7c", size = 154090, upload-time = "2025-09-25T21:32:33.659Z" },
     { url = "https://files.pythonhosted.org/packages/73/e8/2bdf3ca2090f68bb3d75b44da7bbc71843b19c9f2b9cb9b0f4ab7a5a4329/pyyaml-6.0.3-cp313-cp313-win_arm64.whl", hash = "sha256:5498cd1645aa724a7c71c8f378eb29ebe23da2fc0d7a08071d89469bf1d2defb", size = 140246, upload-time = "2025-09-25T21:32:34.663Z" },
+]
+
+[[package]]
+name = "redis"
+version = "8.1.0"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/a8/99/604f0b666d4c616d891cf77ebb9db6bb21601344c051aebf1b72b9ff915f/redis-8.1.0.tar.gz", hash = "sha256:6e1a19beef9225c83efd689c7e6b7da2d5215b1f42cd13b7fc3714d0a09c7b25", size = 5254356, upload-time = "2026-07-30T08:51:00.269Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/66/9d/c5731f6e3608663d4d3656fd8d3aecee8b509c3082818f5a13eae925baea/redis-8.1.0-py3-none-any.whl", hash = "sha256:a4fe1aac3d3b3cc791d4b3d5931c5a956045dc951ee74d1c913ee3ac4d2ee9fb", size = 560618, upload-time = "2026-07-30T08:50:58.497Z" },
 ]
 
 [[package]]

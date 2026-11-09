@@ -1,0 +1,137 @@
+# Disposable Fault Lab (data plane). Run from the repository root with:
+#   docker compose -f fault-lab/compose.yaml --env-file .env up -d --build --wait
+# Everything here is monitored and fault-injectable; nothing here stores
+# IncidentOps workflow state.
+name: incidentops-lab
+
+x-lab-tokens: &lab-tokens
+  FAULT_LAB_BENCHMARK_TOKEN: ${FAULT_LAB_BENCHMARK_TOKEN:?set in .env}
+  FAULT_LAB_EXECUTOR_TOKEN: ${FAULT_LAB_EXECUTOR_TOKEN:?set in .env}
+  FAULT_LAB_READ_TOKEN: ${FAULT_LAB_READ_TOKEN:?set in .env}
+
+x-python-service: &python-service
+  build:
+    context: .
+  restart: unless-stopped
+  networks: [lab]
+
+services:
+  lab-postgres:
+    image: postgres:17.6-alpine@sha256:ef257d85f76e48da1c64832459b59fcaba1a4dac97bf5d7450c77753542eee94
+    environment:
+      POSTGRES_USER: lab
+      POSTGRES_PASSWORD: ${LAB_DB_PASSWORD:-lab}
+      POSTGRES_DB: lab
+    networks: [lab]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U lab -d lab"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+
+  lab-redis:
+    image: redis:7.4.12-alpine@sha256:c5d34a98396a4775e223c74e929162c35c5a2182901ba26b50ade939941ce14b
+    command: ["redis-server", "--maxmemory", "64mb", "--maxmemory-policy", "allkeys-lru"]
+    networks: [lab]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+
+  lab-kafka:
+    image: apache/kafka:3.9.1@sha256:4ceccc577f03f51f6af8dbfda55194d0d892f4fa7913ffbded567ce3895622ed
+    environment:
+      KAFKA_NODE_ID: 1
+      KAFKA_PROCESS_ROLES: broker,controller
+      KAFKA_LISTENERS: PLAINTEXT://:9092,CONTROLLER://:9093
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://lab-kafka:9092
+      KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT
+      KAFKA_CONTROLLER_QUORUM_VOTERS: 1@lab-kafka:9093
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
+      KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: 0
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "false"
+      KAFKA_NUM_PARTITIONS: 3
+    networks: [lab]
+    healthcheck:
+      test: ["CMD-SHELL", "/opt/kafka/bin/kafka-broker-api-versions.sh --bootstrap-server localhost:9092 >/dev/null 2>&1"]
+      interval: 5s
+      timeout: 10s
+      retries: 30
+
+  kafka-init:
+    image: apache/kafka:3.9.1@sha256:4ceccc577f03f51f6af8dbfda55194d0d892f4fa7913ffbded567ce3895622ed
+    depends_on:
+      lab-kafka: {condition: service_healthy}
+    networks: [lab]
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - >-
+        /opt/kafka/bin/kafka-topics.sh --bootstrap-server lab-kafka:9092
+        --create --if-not-exists --topic demo.events.v1 --partitions 3 --replication-factor 1
+    restart: "no"
+
+  lab-api:
+    <<: *python-service
+    command: ["python", "-m", "fault_lab.api.app"]
+    environment:
+      LAB_DATABASE_DSN: postgresql://lab:${LAB_DB_PASSWORD:-lab}@lab-postgres:5432/lab
+      LAB_REDIS_URL: redis://lab-redis:6379/0
+      PORT: "8080"
+    depends_on:
+      lab-postgres: {condition: service_healthy}
+      lab-redis: {condition: service_healthy}
+    ports: ["127.0.0.1:18080:8080"]
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8080/readyz', timeout=2)"]
+      interval: 3s
+      timeout: 5s
+      retries: 30
+
+  demo-producer:
+    <<: *python-service
+    command: ["python", "-m", "fault_lab.producer.app"]
+    environment:
+      LAB_KAFKA_BOOTSTRAP: lab-kafka:9092
+      LAB_PRODUCER_RATE: ${LAB_PRODUCER_RATE:-20}
+      LAB_PRODUCER_SEED: ${LAB_PRODUCER_SEED:-1042}
+      PORT: "8082"
+    depends_on:
+      kafka-init: {condition: service_completed_successfully}
+    ports: ["127.0.0.1:18082:8082"]
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8082/healthz', timeout=2)"]
+      interval: 3s
+      timeout: 5s
+      retries: 30
+
+  lab-consumer:
+    <<: *python-service
+    command: ["python", "-m", "fault_lab.consumer.app"]
+    environment:
+      <<: *lab-tokens
+      LAB_CONSUMER_ID: persist-demo-consumer
+      LAB_KAFKA_BOOTSTRAP: lab-kafka:9092
+      LAB_DATABASE_DSN: postgresql://lab:${LAB_DB_PASSWORD:-lab}@lab-postgres:5432/lab
+      LAB_LEDGER_PATH: /data/ledger.sqlite3
+      PORT: "8081"
+    volumes:
+      - consumer-ledger:/data
+    depends_on:
+      kafka-init: {condition: service_completed_successfully}
+      lab-postgres: {condition: service_healthy}
+    ports: ["127.0.0.1:18081:8081"]
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8081/healthz', timeout=2)"]
+      interval: 3s
+      timeout: 5s
+      retries: 30
+
+networks:
+  lab: {}
+
+volumes:
+  consumer-ledger: {}

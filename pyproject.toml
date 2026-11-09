@@ -19,6 +19,7 @@ dependencies = [
 
 [dependency-groups]
 dev = [
+    "incidentops-fault-lab",
     "mypy>=1.13",
     "pytest>=8.3",
     "pytest-asyncio>=0.24",
@@ -26,6 +27,12 @@ dev = [
     "ruff>=0.8",
     "types-pyyaml>=6.0.12.20261103",
 ]
+
+[tool.uv.workspace]
+members = ["fault-lab"]
+
+[tool.uv.sources]
+incidentops-fault-lab = { workspace = true }
 
 [build-system]
 requires = ["hatchling"]
@@ -54,10 +61,15 @@ ignore = []
 python_version = "3.12"
 strict = true
 plugins = ["pydantic.mypy"]
-files = ["incidentops", "tests"]
+files = ["incidentops", "tests", "scripts", "fault-lab/fault_lab", "fault-lab/tests"]
+
+[[tool.mypy.overrides]]
+# aiokafka ships no type information.
+module = ["aiokafka", "aiokafka.*"]
+ignore_missing_imports = true
 
 [tool.pytest.ini_options]
-testpaths = ["tests"]
+testpaths = ["tests", "fault-lab/tests"]
 asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "function"
 addopts = "-ra --strict-markers"
@@ -68,4 +80,5 @@ filterwarnings = [
 ]
 markers = [
     "integration: requires real backing services such as PostgreSQL",
+    "lab: requires the running Fault Lab (make lab-up)",
 ]
