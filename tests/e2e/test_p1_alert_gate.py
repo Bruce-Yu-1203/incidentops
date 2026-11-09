@@ -40,8 +40,10 @@ def env() -> Iterator[tuple[LabController, httpx.Client]]:
     if not token:
         client.close()
         pytest.skip("FAULT_LAB_BENCHMARK_TOKEN not set")
-    with client:
+    try:
         yield LabController(LabEndpoints(), token, client), client
+    finally:
+        client.close()
 
 
 def _active_incidents(client: httpx.Client) -> list[dict[str, Any]]:

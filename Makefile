@@ -59,7 +59,7 @@ lab-smoke:
 
 # Roadmap P1 gate: needs lab-up, infra-up and api-run (about 2-5 minutes).
 p1-gate:
-	set -a && . ./.env && set +a && INCIDENTOPS_REQUIRE_LAB=1 uv run pytest -m lab tests/e2e/test_p1_alert_gate.py
+	set -a && . ./.env && set +a && INCIDENTOPS_REQUIRE_LAB=1 uv run pytest -m lab tests/e2e/test_exporter_contracts.py tests/e2e/test_p1_alert_gate.py
 
 lab-lock:
 	uv export --package incidentops-fault-lab --no-dev --frozen --no-emit-workspace --no-header -q -o fault-lab/requirements.lock

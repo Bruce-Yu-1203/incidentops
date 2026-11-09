@@ -41,6 +41,7 @@ async function IncidentView({ params }: { params: Promise<{ id: string }> }) {
             <th>Status</th>
             <th>Rule</th>
             <th>Summary</th>
+            <th>Observed</th>
           </tr>
         </thead>
         <tbody>
@@ -50,6 +51,7 @@ async function IncidentView({ params }: { params: Promise<{ id: string }> }) {
               <td>{event.status}</td>
               <td>{event.alert_name}</td>
               <td>{event.annotations.summary ?? "—"}</td>
+              <td>{event.annotations.observed_value ?? "—"}</td>
             </tr>
           ))}
         </tbody>
