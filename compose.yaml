@@ -1,0 +1,24 @@
+# Control plane services for local development.
+# The Control PostgreSQL is deliberately separate from the Lab PostgreSQL in
+# fault-lab/compose.yaml so injected lab DB faults cannot affect workflow state.
+name: incidentops-control
+
+services:
+  control-postgres:
+    image: postgres:17.6-alpine
+    environment:
+      POSTGRES_USER: incidentops
+      POSTGRES_PASSWORD: ${CONTROL_DB_PASSWORD:-incidentops}
+      POSTGRES_DB: incidentops_control
+    ports:
+      - "127.0.0.1:5433:5432"
+    volumes:
+      - control-pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U incidentops -d incidentops_control"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+
+volumes:
+  control-pgdata:
