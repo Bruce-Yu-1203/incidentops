@@ -1,0 +1,115 @@
+# Observability plane for the Fault Lab. Start the lab first (it creates the
+# shared `incidentops-lab` network), then:
+#   make infra-up
+# All UIs bind to 127.0.0.1. Nothing here mounts the Docker socket.
+name: incidentops-infra
+
+x-lab-network: &lab-network
+  networks: [lab]
+  restart: unless-stopped
+
+services:
+  prometheus:
+    <<: *lab-network
+    image: prom/prometheus:v3.5.0@sha256:63805ebb8d2b3920190daf1cb14a60871b16fd38bed42b857a3182bc621f4996
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.retention.time=7d
+      - --web.enable-lifecycle
+    volumes:
+      - ./prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./prometheus/rules:/etc/prometheus/rules:ro
+      - prometheus-data:/prometheus
+    ports: ["127.0.0.1:9090:9090"]
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:9090/-/ready"]
+      interval: 5s
+      timeout: 3s
+      retries: 30
+
+  alertmanager:
+    <<: *lab-network
+    image: prom/alertmanager:v0.28.1@sha256:27c475db5fb156cab31d5c18a4251ac7ed567746a2483ff264516437a39b15ba
+    command: ["--config.file=/etc/alertmanager/alertmanager.yml"]
+    volumes:
+      - ./alertmanager/alertmanager.yml:/etc/alertmanager/alertmanager.yml:ro
+      - ./secrets:/etc/alertmanager/secrets:ro
+    extra_hosts:
+      # Reach the IncidentOps API running on the host (Linux needs this mapping).
+      - "host.docker.internal:host-gateway"
+    ports: ["127.0.0.1:9093:9093"]
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:9093/-/ready"]
+      interval: 5s
+      timeout: 3s
+      retries: 30
+
+  otel-collector:
+    <<: *lab-network
+    image: otel/opentelemetry-collector-contrib:0.131.0@sha256:13b685dc9f68fbbb0fce06d3be84e9d70ba5b90085d79dcbd4c4c0d909ee2d6e
+    command: ["--config=/etc/otelcol/collector.yaml"]
+    volumes:
+      - ./otel/collector.yaml:/etc/otelcol/collector.yaml:ro
+    depends_on: [tempo, loki]
+
+  loki:
+    <<: *lab-network
+    image: grafana/loki:3.5.3@sha256:3165cecce301ce5b9b6e3530284b080934a05cd5cafac3d3d82edcb887b45ecd
+    command: ["-config.file=/etc/loki/loki.yaml"]
+    volumes:
+      - ./loki/loki.yaml:/etc/loki/loki.yaml:ro
+      - loki-data:/loki
+    ports: ["127.0.0.1:3100:3100"]
+
+  tempo:
+    <<: *lab-network
+    image: grafana/tempo:2.8.2@sha256:0ef775495967cd5d7a6b2e146b6ea695d624803c8db8349fb8ce4164f719f9b7
+    command: ["-config.file=/etc/tempo/tempo.yaml"]
+    user: "0"
+    volumes:
+      - ./tempo/tempo.yaml:/etc/tempo/tempo.yaml:ro
+      - tempo-data:/var/tempo
+    ports: ["127.0.0.1:3200:3200"]
+
+  grafana:
+    <<: *lab-network
+    image: grafana/grafana:12.0.2@sha256:b5b59bfc7561634c2d7b136c4543d702ebcc94a3da477f21ff26f89ffd4214fa
+    environment:
+      GF_AUTH_ANONYMOUS_ENABLED: "true"
+      GF_AUTH_ANONYMOUS_ORG_ROLE: Viewer
+      GF_AUTH_DISABLE_LOGIN_FORM: "false"
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:-change-me-grafana}
+    volumes:
+      - ./grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./grafana/dashboards:/var/lib/grafana/dashboards:ro
+    ports: ["127.0.0.1:3000:3000"]
+    depends_on: [prometheus, loki, tempo]
+
+  postgres-exporter:
+    <<: *lab-network
+    image: prometheuscommunity/postgres-exporter:v0.17.1@sha256:38606faa38c54787525fb0ff2fd6b41b4cfb75d455c1df294927c5f611699b17
+    environment:
+      # Read-only pg_monitor role created by fault-lab/postgres/init.sql.
+      DATA_SOURCE_NAME: postgresql://lab_monitor:lab_monitor@lab-postgres:5432/lab?sslmode=disable
+
+  redis-exporter:
+    <<: *lab-network
+    image: oliver006/redis_exporter:v1.75.0@sha256:bbc0b673a89296eab36d6c6c2bde8571ee868dc4059306be482c03d7b05aa662
+    environment:
+      REDIS_ADDR: redis://lab-redis:6379
+
+  kafka-exporter:
+    <<: *lab-network
+    image: danielqsj/kafka-exporter:v1.9.0@sha256:4150e46b2e9697ac30e4be8de03ec1704b4bdc7037577b83b8d35a32be298c16
+    command: ["--kafka.server=lab-kafka:9092"]
+    restart: unless-stopped
+
+networks:
+  lab:
+    name: incidentops-lab
+    external: true
+
+volumes:
+  prometheus-data: {}
+  loki-data: {}
+  tempo-data: {}

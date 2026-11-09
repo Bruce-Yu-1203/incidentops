@@ -1,0 +1,58 @@
+# Prometheus for the Fault Lab. Short intervals keep lab alert latency low.
+# The fault controller is intentionally NOT scraped: its state is ground truth.
+global:
+  scrape_interval: 5s
+  evaluation_interval: 5s
+  external_labels:
+    environment: fault-lab
+
+rule_files:
+  - /etc/prometheus/rules/*.yml
+
+alerting:
+  alertmanagers:
+    - static_configs:
+        - targets: ["alertmanager:9093"]
+
+scrape_configs:
+  - job_name: prometheus
+    static_configs:
+      - targets: ["localhost:9090"]
+
+  - job_name: lab-api
+    static_configs:
+      - targets: ["lab-api:8080"]
+        labels: {service_id: lab-api}
+
+  - job_name: lab-consumer
+    static_configs:
+      - targets: ["lab-consumer:8081"]
+        labels: {service_id: persist-demo-consumer}
+
+  - job_name: demo-producer
+    static_configs:
+      - targets: ["demo-producer:8082"]
+        labels: {service_id: demo-producer}
+
+  - job_name: lab-loadgen
+    static_configs:
+      - targets: ["lab-loadgen:8083"]
+
+  - job_name: postgres-exporter
+    static_configs:
+      - targets: ["postgres-exporter:9187"]
+        labels: {service_id: lab-postgres}
+
+  - job_name: redis-exporter
+    static_configs:
+      - targets: ["redis-exporter:9121"]
+        labels: {service_id: lab-redis}
+
+  - job_name: kafka-exporter
+    static_configs:
+      - targets: ["kafka-exporter:9308"]
+        labels: {service_id: lab-kafka}
+
+  - job_name: otel-collector
+    static_configs:
+      - targets: ["otel-collector:8888"]

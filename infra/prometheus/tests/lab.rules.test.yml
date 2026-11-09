@@ -1,0 +1,105 @@
+# promtool unit tests for infra/prometheus/rules/lab.rules.yml
+rule_files:
+  - ../rules/lab.rules.yml
+
+evaluation_interval: 5s
+
+tests:
+  - name: kafka lag above threshold for 30s fires
+    interval: 5s
+    input_series:
+      - series: 'kafka_consumergroup_lag{consumergroup="persist-demo-consumer", topic="demo.events.v1", partition="0"}'
+        values: "0 100+100x20"
+      - series: 'kafka_consumergroup_lag{consumergroup="persist-demo-consumer", topic="demo.events.v1", partition="1"}'
+        values: "0x21"
+    alert_rule_test:
+      - eval_time: 10s
+        alertname: lab_kafka_consumer_lag_high
+        exp_alerts: []
+      - eval_time: 90s
+        alertname: lab_kafka_consumer_lag_high
+        exp_alerts:
+          - exp_labels:
+              consumergroup: persist-demo-consumer
+              severity: warning
+              service_id: persist-demo-consumer
+              environment: fault-lab
+              component: kafka-consumer
+            exp_annotations:
+              summary: "persist-demo-consumer group lag above 200 messages"
+              observed_value: "1800"
+
+  - name: other consumer groups do not fire
+    interval: 5s
+    input_series:
+      - series: 'kafka_consumergroup_lag{consumergroup="someone-else", topic="t", partition="0"}'
+        values: "5000x30"
+    alert_rule_test:
+      - eval_time: 120s
+        alertname: lab_kafka_consumer_lag_high
+        exp_alerts: []
+
+  - name: slow item requests fire the latency alert
+    interval: 5s
+    input_series:
+      # All requests land in the 5s bucket: P95 is far above 500ms.
+      - series: 'lab_api_http_request_duration_seconds_bucket{route="/items/{item_id}", le="0.5"}'
+        values: "0x30"
+      - series: 'lab_api_http_request_duration_seconds_bucket{route="/items/{item_id}", le="5.0"}'
+        values: "0+50x30"
+      - series: 'lab_api_http_request_duration_seconds_bucket{route="/items/{item_id}", le="+Inf"}'
+        values: "0+50x30"
+    alert_rule_test:
+      - eval_time: 120s
+        alertname: lab_api_latency_p95_high
+        exp_alerts:
+          - exp_labels:
+              severity: warning
+              service_id: lab-api
+              environment: fault-lab
+              component: http-api
+            exp_annotations:
+              summary: "lab-api /items P95 latency above 500ms"
+              observed_value: "4.775s"
+
+  - name: fast item requests stay quiet
+    interval: 5s
+    input_series:
+      - series: 'lab_api_http_request_duration_seconds_bucket{route="/items/{item_id}", le="0.01"}'
+        values: "0+50x30"
+      - series: 'lab_api_http_request_duration_seconds_bucket{route="/items/{item_id}", le="+Inf"}'
+        values: "0+50x30"
+    alert_rule_test:
+      - eval_time: 120s
+        alertname: lab_api_latency_p95_high
+        exp_alerts: []
+
+  - name: high 5xx ratio fires the error alert
+    interval: 5s
+    input_series:
+      - series: 'lab_api_http_requests_total{route="/items/{item_id}", status="200"}'
+        values: "0+10x30"
+      - series: 'lab_api_http_requests_total{route="/items/{item_id}", status="503"}'
+        values: "0+10x30"
+    alert_rule_test:
+      - eval_time: 120s
+        alertname: lab_api_error_ratio_high
+        exp_alerts:
+          - exp_labels:
+              severity: critical
+              service_id: lab-api
+              environment: fault-lab
+              component: http-api
+            exp_annotations:
+              summary: "lab-api /items 5xx ratio above 5%"
+              observed_value: "50%"
+
+  - name: no traffic does not fire the error alert
+    interval: 5s
+    input_series:
+      - series: 'lab_api_http_requests_total{route="/items/{item_id}", status="200"}'
+        values: "0x30"
+    alert_rule_test:
+      - eval_time: 120s
+        alertname: lab_api_error_ratio_high
+        exp_alerts: []

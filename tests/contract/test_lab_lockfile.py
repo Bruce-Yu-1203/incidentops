@@ -14,7 +14,7 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 @pytest.mark.skipif(shutil.which("uv") is None, reason="uv is not installed")
 def test_requirements_lock_is_up_to_date() -> None:
     exported = subprocess.run(
-        [  # noqa: S607 - uv is resolved from PATH on developer machines and CI
+        [
             "uv",
             "export",
             "--package",

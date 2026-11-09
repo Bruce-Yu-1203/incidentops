@@ -1,6 +1,6 @@
 # Developer entry points. `make check` is the gate required by constitute.md.
 .PHONY: web-install web-check
-.PHONY: env install lint format typecheck test test-unit check db-up db-down migrate lab-up lab-down lab-reset lab-smoke lab-lock
+.PHONY: env install lint format typecheck test test-unit check db-up db-down migrate lab-up lab-down lab-reset lab-smoke lab-lock infra-secrets infra-up infra-down api-run p1-gate
 
 env:
 	uv run python scripts/generate_env.py
@@ -20,7 +20,7 @@ typecheck:
 	uv run mypy
 
 test:
-	INCIDENTOPS_REQUIRE_DB=1 uv run pytest -m "not lab"
+	INCIDENTOPS_REQUIRE_DB=1 INCIDENTOPS_REQUIRE_DOCKER=1 uv run pytest -m "not lab"
 
 test-unit:
 	uv run pytest tests/unit
@@ -55,7 +55,29 @@ lab-reset:
 	set -a && . ./.env && set +a && uv run python -m fault_lab.scripts.labctl reset
 
 lab-smoke:
-	set -a && . ./.env && set +a && INCIDENTOPS_REQUIRE_LAB=1 uv run pytest -m lab tests/e2e
+	set -a && . ./.env && set +a && INCIDENTOPS_REQUIRE_LAB=1 uv run pytest -m lab tests/e2e/test_fault_lab_gate.py
+
+# Roadmap P1 gate: needs lab-up, infra-up and api-run (about 2-5 minutes).
+p1-gate:
+	set -a && . ./.env && set +a && INCIDENTOPS_REQUIRE_LAB=1 uv run pytest -m lab tests/e2e/test_p1_alert_gate.py
 
 lab-lock:
 	uv export --package incidentops-fault-lab --no-dev --frozen --no-emit-workspace --no-header -q -o fault-lab/requirements.lock
+
+INFRA_COMPOSE = docker compose -f infra/compose.yaml --env-file .env
+
+# Alertmanager reads its webhook bearer token from a file, never from git.
+infra-secrets:
+	@mkdir -p infra/secrets
+	@set -a && . ./.env && set +a && printf '%s' "$$INCIDENTOPS_ALERTMANAGER_TOKEN" > infra/secrets/webhook_token
+	@chmod 600 infra/secrets/webhook_token
+
+infra-up: infra-secrets
+	$(INFRA_COMPOSE) up -d --wait
+
+infra-down:
+	$(INFRA_COMPOSE) down -v
+
+# Run the control-plane API on the host for Alertmanager (host.docker.internal:8000).
+api-run:
+	set -a && . ./.env && set +a && uv run alembic upgrade head && uv run uvicorn --factory incidentops.api.app:create_app --host 127.0.0.1 --port 8000

@@ -30,6 +30,7 @@ jobs:
           --health-interval 2s --health-timeout 3s --health-retries 30
     env:
       INCIDENTOPS_REQUIRE_DB: "1"
+      INCIDENTOPS_REQUIRE_DOCKER: "1"
       INCIDENTOPS_TEST_DATABASE_URL: postgresql+psycopg://incidentops:incidentops@localhost:5433/incidentops_test
     steps:
       - uses: actions/checkout@v4
@@ -79,3 +80,4 @@ jobs:
           cp .env.example .env
           docker compose -f compose.yaml config --quiet
           docker compose -f fault-lab/compose.yaml --env-file .env config --quiet
+          docker compose -f infra/compose.yaml --env-file .env config --quiet

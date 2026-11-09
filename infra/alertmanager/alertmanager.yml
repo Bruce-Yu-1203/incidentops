@@ -1,0 +1,20 @@
+# Alertmanager routes every lab alert to the IncidentOps webhook. The bearer
+# token is read from a file generated from .env (`make infra-secrets`), so the
+# secret never lives in this committed file.
+route:
+  receiver: incidentops
+  group_by: ["service_id", "alertname"]
+  group_wait: 5s
+  group_interval: 30s
+  repeat_interval: 5m
+
+receivers:
+  - name: incidentops
+    webhook_configs:
+      - url: http://host.docker.internal:8000/api/v1/alerts/alertmanager
+        send_resolved: true
+        max_alerts: 200
+        http_config:
+          authorization:
+            type: Bearer
+            credentials_file: /etc/alertmanager/secrets/webhook_token

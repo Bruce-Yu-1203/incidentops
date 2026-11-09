@@ -22,6 +22,8 @@ services:
       POSTGRES_USER: lab
       POSTGRES_PASSWORD: ${LAB_DB_PASSWORD:-lab}
       POSTGRES_DB: lab
+    volumes:
+      - ./postgres/init.sql:/docker-entrypoint-initdb.d/10-monitoring.sql:ro
     networks: [lab]
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U lab -d lab"]
