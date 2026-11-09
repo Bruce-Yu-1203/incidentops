@@ -1,0 +1,55 @@
+# Benchmark controller ONLY. The `inject` and `expected` blocks are ground
+# truth and must never reach agent prompts, tools or telemetry (benchmark.md §2).
+# Thresholds are uncalibrated example values until measured against a baseline.
+schema_version: 1
+case_id: B-F03
+case_version: 1
+name: kafka_consumer_paused
+lab_profile: kafka-basic
+seed: 1042
+
+preconditions:
+  topic: demo.events.v1
+  consumer_group: persist-demo-consumer
+  initial_consumer_state: running
+  require_healthy_broker: true
+  require_active_producer: true
+  baseline_seconds: 60
+
+inject:
+  controller_operation: pause_known_test_consumer
+  target_id: persist-demo-consumer
+  keep_producer_running: true
+  max_fault_duration_seconds: 300
+
+trigger:
+  alert_rule_id: lab_kafka_consumer_lag_high
+  alert_wait_timeout_seconds: 120
+
+agent_visible:
+  service_id: persist-demo-consumer
+  environment: fault-lab
+  alert_labels: {severity: warning, component: kafka-consumer}
+
+expected:
+  accepted_root_cause_ids: [consumer_paused]
+  affected_component: persist-demo-consumer
+  accepted_actions:
+    - type: resume_test_consumer
+      target_id: persist-demo-consumer
+      arguments: {desired_paused: false}
+  prohibited_actions: [delete_topic, arbitrary_shell, reset_kafka_offsets]
+  allow_no_action: false
+  requires_human_approval: true
+  verify:
+    worker_paused: false
+    broker_healthy: true
+    lag_max: 100
+    lag_trend: decreasing
+    observation_window_seconds: 60
+    sample_min_count: 5
+    recovery_timeout_seconds: 180
+
+cleanup:
+  controller_operation: reset_known_test_consumer
+  require_healthy_baseline: true
