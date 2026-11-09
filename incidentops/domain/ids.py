@@ -7,7 +7,23 @@ import uuid
 from typing import Final
 
 PREFIXES: Final = frozenset(
-    {"inc", "alert", "run", "step", "ev", "diag", "act", "apr", "dec", "op", "ver", "aud", "job"}
+    {
+        "inc",
+        "alert",
+        "run",
+        "step",
+        "ev",
+        "diag",
+        "act",
+        "apr",
+        "dec",
+        "op",
+        "ver",
+        "aud",
+        "job",
+        "usr",
+        "ses",
+    }
 )
 _ID_PATTERN: Final = re.compile(r"^(?P<prefix>[a-z]+)_[0-9a-f]{32}$")
 

@@ -1,6 +1,6 @@
 # Developer entry points. `make check` is the gate required by constitute.md.
 .PHONY: web-install web-check
-.PHONY: env install lint format typecheck test test-unit check db-up db-down migrate lab-up lab-down lab-reset lab-smoke lab-lock infra-secrets infra-up infra-down api-run worker-run p1-gate p2-live p2-gate
+.PHONY: env install lint format typecheck test test-unit check db-up db-down migrate seed-users lab-up lab-down lab-reset lab-smoke lab-lock infra-secrets infra-up infra-down api-run worker-run p1-gate p2-live p2-gate
 
 env:
 	uv run python scripts/generate_env.py
@@ -41,6 +41,9 @@ db-down:
 
 migrate:
 	uv run alembic upgrade head
+
+seed-users:
+	set -a && . ./.env && set +a && uv run alembic upgrade head && uv run python -m incidentops.cli seed-demo-users
 
 LAB_COMPOSE = docker compose -f fault-lab/compose.yaml --env-file .env
 

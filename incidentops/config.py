@@ -55,6 +55,8 @@ class Settings(BaseSettings):
     # Server-side overrides of catalog management URLs (service_id -> URL), e.g.
     # when the worker runs on the host instead of the lab network.
     endpoint_overrides: dict[str, str] = Field(default_factory=dict)
+    session_ttl_hours: int = Field(default=12, ge=1, le=72)
+    require_separation_of_duties: bool = True
     worker_lease_seconds: int = Field(default=600, ge=30, le=3600)
     max_agent_steps: int = Field(default=20, ge=1, le=100)
     max_tool_calls: int = Field(default=40, ge=1, le=200)

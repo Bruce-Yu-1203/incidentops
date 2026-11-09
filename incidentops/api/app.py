@@ -3,15 +3,30 @@
 # No ``from __future__ import annotations``: FastAPI resolves the locally
 # defined dependency aliases at runtime.
 
+from datetime import timedelta
 from typing import Annotated, Any
 
-from fastapi import Depends, FastAPI, Header, HTTPException, Query, Request, status
-from pydantic import BaseModel
+from fastapi import (
+    Cookie,
+    Depends,
+    FastAPI,
+    Header,
+    HTTPException,
+    Query,
+    Request,
+    Response,
+    status,
+)
+from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session, sessionmaker
 
 from incidentops import __version__
+from incidentops.actions import approvals
+from incidentops.api import actions as action_queries
 from incidentops.api import incidents as incident_queries
 from incidentops.api import investigations as run_queries
+from incidentops.auth import service as auth
+from incidentops.auth.service import READ_ROLES, AuthenticatedUser
 from incidentops.config import Profile, Settings, get_settings
 from incidentops.domain.catalog import load_catalog
 from incidentops.domain.state_machines import IncidentState
@@ -20,6 +35,45 @@ from incidentops.ingestion.service import ingest_events
 from incidentops.persistence.db import make_engine, make_session_factory
 from incidentops.security.identities import IdentityRegistry, Role
 from incidentops.time import utcnow
+
+SESSION_COOKIE = "incidentops_session"
+
+
+class LoginRequest(BaseModel):
+    username: str = Field(min_length=1, max_length=64)
+    password: str = Field(min_length=1, max_length=256)
+
+
+class UserView(BaseModel):
+    username: str
+    role: str
+
+
+class ApproveRequest(BaseModel):
+    action_hash: str = Field(pattern=r"^sha256:[0-9a-f]{64}$")
+    expected_version: int = Field(ge=1)
+    reason: str | None = Field(default=None, max_length=2000)
+
+
+class DecisionRequest(BaseModel):
+    expected_version: int = Field(ge=1)
+    reason: str | None = Field(default=None, max_length=2000)
+
+
+class DecisionResponse(BaseModel):
+    outcome: str
+    action_state: str | None
+
+
+_HTTP_FOR_OUTCOME = {
+    approvals.Outcome.FORBIDDEN: status.HTTP_403_FORBIDDEN,
+    approvals.Outcome.SEPARATION_OF_DUTIES: status.HTTP_403_FORBIDDEN,
+    approvals.Outcome.NOT_FOUND: status.HTTP_404_NOT_FOUND,
+    approvals.Outcome.STATE_CONFLICT: status.HTTP_409_CONFLICT,
+    approvals.Outcome.VERSION_CONFLICT: status.HTTP_409_CONFLICT,
+    approvals.Outcome.HASH_MISMATCH: status.HTTP_409_CONFLICT,
+    approvals.Outcome.EXPIRED: status.HTTP_409_CONFLICT,
+}
 
 
 class IngestResponse(BaseModel):
@@ -67,9 +121,32 @@ def create_app(
             raise HTTPException(status.HTTP_401_UNAUTHORIZED, "invalid webhook credentials")
         return Role.ALERTMANAGER
 
-    def require_viewer() -> None:
-        # ADR-016: until session auth lands in P3, incident reads are open only
-        # in the local dev profile and refused everywhere else.
+    def current_user(
+        request: Request,
+        session_cookie: Annotated[str | None, Cookie(alias=SESSION_COOKIE)] = None,
+        authorization: Annotated[str | None, Header()] = None,
+    ) -> AuthenticatedUser | None:
+        token = session_cookie
+        if authorization and authorization.startswith("Session "):
+            token = authorization.removeprefix("Session ")
+        if not token:
+            return None
+        with sessions(request)() as session:
+            return auth.resolve(session, token)
+
+    MaybeUser = Annotated[AuthenticatedUser | None, Depends(current_user)]  # noqa: N806
+
+    def require_user(user: MaybeUser) -> AuthenticatedUser:
+        if user is None:
+            raise HTTPException(status.HTTP_401_UNAUTHORIZED, "authentication required")
+        return user
+
+    User = Annotated[AuthenticatedUser, Depends(require_user)]  # noqa: N806
+
+    def require_viewer(user: MaybeUser) -> None:
+        if user is not None and user.role in READ_ROLES:
+            return
+        # ADR-016: anonymous reads remain possible only in the local dev profile.
         if resolved.profile is not Profile.DEV:
             raise HTTPException(status.HTTP_401_UNAUTHORIZED, "authentication required")
 
@@ -124,6 +201,109 @@ def create_app(
         return detail
 
     catalog = load_catalog()
+
+    @app.post("/api/v1/auth/login", tags=["auth"])
+    def login_endpoint(body: LoginRequest, response: Response, factory: Sessions) -> UserView:
+        with factory.begin() as session:
+            result = auth.login(
+                session, body.username, body.password, timedelta(hours=resolved.session_ttl_hours)
+            )
+        if result is None:
+            raise HTTPException(status.HTTP_401_UNAUTHORIZED, "invalid credentials")
+        token, user = result
+        response.set_cookie(
+            SESSION_COOKIE,
+            token,
+            max_age=resolved.session_ttl_hours * 3600,
+            httponly=True,
+            samesite="strict",
+            secure=resolved.profile is not Profile.DEV,
+        )
+        # The token is also returned so the server-rendered UI can forward it.
+        response.headers["X-Session-Token"] = token
+        return UserView(username=user.username, role=user.role.value)
+
+    @app.post("/api/v1/auth/logout", tags=["auth"], status_code=status.HTTP_204_NO_CONTENT)
+    def logout_endpoint(
+        response: Response,
+        factory: Sessions,
+        session_cookie: Annotated[str | None, Cookie(alias=SESSION_COOKIE)] = None,
+        authorization: Annotated[str | None, Header()] = None,
+    ) -> None:
+        token = session_cookie
+        if authorization and authorization.startswith("Session "):
+            token = authorization.removeprefix("Session ")
+        if token:
+            with factory.begin() as session:
+                auth.logout(session, token)
+        response.delete_cookie(SESSION_COOKIE)
+
+    @app.get("/api/v1/auth/me", tags=["auth"])
+    def me(user: User) -> UserView:
+        return UserView(username=user.username, role=user.role.value)
+
+    @app.get(
+        "/api/v1/actions/{action_id}", tags=["actions"], dependencies=[Depends(require_viewer)]
+    )
+    def get_action(action_id: str, factory: Sessions) -> action_queries.ActionDetail:
+        with factory() as session:
+            detail = action_queries.get_action(session, action_id)
+        if detail is None:
+            raise HTTPException(status.HTTP_404_NOT_FOUND, "action not found")
+        return detail
+
+    def _decision_response(result: approvals.DecisionResult) -> DecisionResponse:
+        if not result.ok:
+            code = _HTTP_FOR_OUTCOME.get(result.outcome, status.HTTP_409_CONFLICT)
+            raise HTTPException(
+                code, {"outcome": result.outcome.value, "state": result.action_state}
+            )
+        return DecisionResponse(outcome=result.outcome.value, action_state=result.action_state)
+
+    @app.post("/api/v1/actions/{action_id}/approve", tags=["actions"])
+    def approve_action(
+        action_id: str, body: ApproveRequest, user: User, factory: Sessions
+    ) -> DecisionResponse:
+        # Expiry transitions must persist even though the request fails, so the
+        # transaction commits whatever the decision function wrote.
+        with factory.begin() as session:
+            result = approvals.approve(
+                session,
+                action_id,
+                user,
+                body.action_hash,
+                body.expected_version,
+                utcnow(),
+                reason=body.reason,
+                separation_of_duties=resolved.require_separation_of_duties,
+            )
+            if not result.ok:
+                approvals.record_refusal(session, action_id, user, "approve", result)
+        return _decision_response(result)
+
+    @app.post("/api/v1/actions/{action_id}/reject", tags=["actions"])
+    def reject_action(
+        action_id: str, body: DecisionRequest, user: User, factory: Sessions
+    ) -> DecisionResponse:
+        with factory.begin() as session:
+            result = approvals.reject(
+                session, action_id, user, body.expected_version, reason=body.reason
+            )
+            if not result.ok:
+                approvals.record_refusal(session, action_id, user, "reject", result)
+        return _decision_response(result)
+
+    @app.post("/api/v1/actions/{action_id}/cancel", tags=["actions"])
+    def cancel_action(
+        action_id: str, body: DecisionRequest, user: User, factory: Sessions
+    ) -> DecisionResponse:
+        with factory.begin() as session:
+            result = approvals.cancel(
+                session, action_id, user, body.expected_version, reason=body.reason
+            )
+            if not result.ok:
+                approvals.record_refusal(session, action_id, user, "cancel", result)
+        return _decision_response(result)
 
     @app.get(
         "/api/v1/investigations/{run_id}",

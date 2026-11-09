@@ -9,6 +9,7 @@ from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from incidentops.api.actions import ActionSummary, actions_for_incident
 from incidentops.api.investigations import RunSummary, latest_diagnosis, runs_for_incident
 from incidentops.domain.state_machines import IncidentState
 from incidentops.persistence.models import (
@@ -56,6 +57,7 @@ class IncidentDetail(IncidentSummary):
     timeline: list[TimelineEntry]
     runs: list[RunSummary]
     diagnosis: dict[str, Any] | None
+    actions: list[ActionSummary]
 
 
 def _summary(row: IncidentRow) -> IncidentSummary:
@@ -158,4 +160,5 @@ def get_incident(session: Session, incident_id: str) -> IncidentDetail | None:
         timeline=timeline,
         runs=runs_for_incident(session, incident_id),
         diagnosis=latest_diagnosis(session, incident_id),
+        actions=actions_for_incident(session, incident_id),
     )

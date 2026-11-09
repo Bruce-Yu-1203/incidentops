@@ -351,6 +351,38 @@ class PolicyVersionRow(Base):
     )
 
 
+class UserRow(Base):
+    """Human identities (ADR-011). Passwords are stored only as scrypt hashes."""
+
+    __tablename__ = "users"
+
+    id: Mapped[str] = mapped_column(ID, primary_key=True)
+    username: Mapped[str] = mapped_column(String(64), nullable=False, unique=True)
+    password_hash: Mapped[str] = mapped_column(String(256), nullable=False)
+    role: Mapped[str] = mapped_column(String(32), nullable=False)
+    active: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default="true")
+    created_at: Mapped[datetime] = _now()
+
+    __table_args__ = (
+        CheckConstraint(
+            "role IN ('viewer', 'operator', 'approver', 'administrator')", name="role_valid"
+        ),
+    )
+
+
+class SessionRow(Base):
+    """Opaque session tokens, stored only as SHA-256 digests."""
+
+    __tablename__ = "sessions"
+
+    id: Mapped[str] = mapped_column(ID, primary_key=True)
+    token_hash: Mapped[str] = mapped_column(String(64), nullable=False, unique=True)
+    user_id: Mapped[str] = mapped_column(ForeignKey("users.id"), nullable=False)
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    revoked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    created_at: Mapped[datetime] = _now()
+
+
 # Tables owned by LangGraph's PostgreSQL checkpointer, which manages its own
 # schema via ``AsyncPostgresSaver.setup()``. Alembic must neither create nor drop them.
 EXTERNALLY_MANAGED_TABLES = frozenset(
