@@ -26,12 +26,10 @@ class Settings(BaseSettings):
     startup instead of running with unexpected privileges.
     """
 
-    model_config = SettingsConfigDict(
-        env_prefix="INCIDENTOPS_",
-        env_file=".env",
-        env_file_encoding="utf-8",
-        extra="ignore",
-    )
+    # Settings come only from the process environment, never from an implicit
+    # .env read: the make targets source .env and strip other roles'
+    # credentials before starting each process (see workers/credentials.py).
+    model_config = SettingsConfigDict(env_prefix="INCIDENTOPS_", extra="ignore")
 
     profile: Profile = Profile.DEV
     control_database_url: SecretStr = Field(

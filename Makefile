@@ -40,7 +40,7 @@ db-down:
 	docker compose down
 
 migrate:
-	uv run alembic upgrade head
+	set -a && . ./.env && set +a && uv run alembic upgrade head
 
 seed-users:
 	set -a && . ./.env && set +a && uv run alembic upgrade head && uv run python -m incidentops.cli seed-demo-users
