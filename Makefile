@@ -1,6 +1,6 @@
 # Developer entry points. `make check` is the gate required by constitute.md.
 .PHONY: web-install web-check
-.PHONY: env install lint format typecheck test test-unit check db-up db-down migrate lab-up lab-down lab-reset lab-smoke lab-lock infra-secrets infra-up infra-down api-run p1-gate
+.PHONY: env install lint format typecheck test test-unit check db-up db-down migrate lab-up lab-down lab-reset lab-smoke lab-lock infra-secrets infra-up infra-down api-run p1-gate p2-live
 
 env:
 	uv run python scripts/generate_env.py
@@ -58,6 +58,10 @@ lab-smoke:
 	set -a && . ./.env && set +a && INCIDENTOPS_REQUIRE_LAB=1 uv run pytest -m lab tests/e2e/test_fault_lab_gate.py
 
 # Roadmap P1 gate: needs lab-up, infra-up and api-run (about 2-5 minutes).
+# P2 live check: real read tools against lab telemetry (scripted model, no key needed).
+p2-live:
+	set -a && . ./.env && set +a && INCIDENTOPS_REQUIRE_LAB=1 uv run pytest -m lab tests/e2e/test_p2_live_tools.py
+
 p1-gate:
 	set -a && . ./.env && set +a && INCIDENTOPS_REQUIRE_LAB=1 uv run pytest -m lab tests/e2e/test_exporter_contracts.py tests/e2e/test_p1_alert_gate.py
 

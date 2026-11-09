@@ -11,7 +11,7 @@ replace them.
 | OTel Collector | Receives OTLP from the lab API; traces → Tempo, logs → Loki | (lab network only) |
 | Loki / Tempo | Log and trace storage | http://127.0.0.1:3100 · http://127.0.0.1:3200 |
 | Grafana | Dashboards ("IncidentOps Fault Lab"); anonymous viewer access | http://127.0.0.1:3000 |
-| postgres / redis / kafka exporters | Lab PostgreSQL (`pg_monitor` role), Redis and consumer-group lag | (lab network only) |
+| postgres / redis / kafka exporters | Lab PostgreSQL (`pg_monitor` role with 1 s lock and 3 s statement timeouts; `stat_user_tables` disabled so lock fixtures cannot blind it), Redis and consumer-group lag | (lab network only) |
 
 The fault controller is never scraped: fault state is benchmark ground truth.
 Container CPU/memory (cAdvisor) is deferred because it needs Docker socket

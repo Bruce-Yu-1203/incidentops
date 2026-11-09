@@ -88,6 +88,9 @@ services:
   postgres-exporter:
     <<: *lab-network
     image: prometheuscommunity/postgres-exporter:v0.17.1@sha256:38606faa38c54787525fb0ff2fd6b41b4cfb75d455c1df294927c5f611699b17
+    # stat_user_tables calls pg_total_relation_size, which waits on relation
+    # locks; it is disabled so a lock fixture cannot blind PostgreSQL telemetry.
+    command: ["--no-collector.stat_user_tables"]
     environment:
       # Read-only pg_monitor role created by fault-lab/postgres/init.sql.
       DATA_SOURCE_NAME: postgresql://lab_monitor:lab_monitor@lab-postgres:5432/lab?sslmode=disable
