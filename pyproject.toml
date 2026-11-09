@@ -7,8 +7,11 @@ requires-python = ">=3.12,<3.14"
 license = { text = "MIT" }
 dependencies = [
     "alembic>=1.14",
+    "anthropic>=0.60",
     "fastapi>=0.115",
     "httpx>=0.28",
+    "langgraph>=0.6",
+    "langgraph-checkpoint-postgres>=2.0",
     "psycopg[binary]>=3.2",
     "pydantic>=2.9",
     "pydantic-settings>=2.6",
