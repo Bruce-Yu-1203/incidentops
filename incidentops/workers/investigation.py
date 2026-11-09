@@ -20,8 +20,9 @@ import httpx
 from sqlalchemy.orm import Session, sessionmaker
 
 from incidentops import telemetry
+from incidentops.agent.baseline import BASELINE_MODEL_ID, RulesBaselineAdapter
 from incidentops.agent.graph import Budgets
-from incidentops.agent.model import AnthropicModelAdapter
+from incidentops.agent.model import AnthropicModelAdapter, ModelAdapter
 from incidentops.agent.run_manager import InvestigationRunner
 from incidentops.config import Settings, get_settings
 from incidentops.domain.catalog import load_catalog
@@ -78,6 +79,15 @@ async def process_one(
     return True
 
 
+def build_model(settings: Settings) -> ModelAdapter:
+    """Select the configured adapter; the rules baseline needs no provider key."""
+    if settings.model_id == BASELINE_MODEL_ID:
+        return RulesBaselineAdapter()
+    if not settings.model_id or settings.anthropic_api_key is None:
+        raise SystemExit("INCIDENTOPS_MODEL_ID and INCIDENTOPS_ANTHROPIC_API_KEY are required")
+    return AnthropicModelAdapter(settings.anthropic_api_key.get_secret_value(), settings.model_id)
+
+
 def budgets_from(settings: Settings) -> Budgets:
     return Budgets(
         max_steps=settings.max_agent_steps,
@@ -90,8 +100,7 @@ async def serve(settings: Settings) -> None:  # pragma: no cover - process entry
     from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
 
     assert_credential_scope(Role.AGENT, settings)
-    if not settings.model_id or settings.anthropic_api_key is None:
-        raise SystemExit("INCIDENTOPS_MODEL_ID and INCIDENTOPS_ANTHROPIC_API_KEY are required")
+    model = build_model(settings)
     database_url = settings.control_database_url.get_secret_value()
     factory = make_session_factory(make_engine(database_url))
     owner = f"investigation-{socket.gethostname()}-{os.getpid()}"
@@ -119,14 +128,14 @@ async def serve(settings: Settings) -> None:  # pragma: no cover - process entry
         runner = InvestigationRunner(
             factory,
             catalog,
-            AnthropicModelAdapter(settings.anthropic_api_key.get_secret_value(), settings.model_id),
+            model,
             ToolGateway(catalog, backend, evidence, trajectory),
             evidence,
             trajectory,
             budgets_from(settings),
             checkpointer=saver,
         )
-        LOGGER.info("investigation worker %s started (model %s)", owner, settings.model_id)
+        LOGGER.info("investigation worker %s started (model %s)", owner, model.model_id)
         while not stop.is_set():
             handled = await process_one(factory, runner, owner, settings.worker_lease_seconds)
             if not handled:

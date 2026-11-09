@@ -22,6 +22,7 @@ class FakeBackend:
         self.queries: list[str] = []
         self.lag = [(NOW.timestamp() - 60, 100.0), (NOW.timestamp(), 1300.0)]
         self.paused = True
+        self.brokers = 1.0
         self.delay = 0.0
         self.fail = False
 
@@ -38,6 +39,10 @@ class FakeBackend:
         self.queries.append(query)
         if "kafka_consumergroup_lag" in query:
             return [Series({"partition": "0"}, self.lag)]
+        if "kafka_brokers" in query:
+            return [
+                Series({}, [(NOW.timestamp() - 60, self.brokers), (NOW.timestamp(), self.brokers)])
+            ]
         return [Series({}, [(NOW.timestamp() - 60, 0.01), (NOW.timestamp(), 0.02)])]
 
     async def prometheus_instant(self, query: str) -> list[Series]:
