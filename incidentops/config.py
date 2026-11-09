@@ -43,6 +43,8 @@ class Settings(BaseSettings):
     # every run records an explicitly configured model (ADR-008).
     model_id: str | None = None
     anthropic_api_key: SecretStr | None = None
+    # Optional Anthropic-compatible endpoint (proxy or third-party provider, ADR-019).
+    anthropic_base_url: str | None = None
     prometheus_url: str = "http://127.0.0.1:9090"
     loki_url: str = "http://127.0.0.1:3100"
     tempo_url: str = "http://127.0.0.1:3200"
@@ -61,6 +63,17 @@ class Settings(BaseSettings):
     max_agent_steps: int = Field(default=20, ge=1, le=100)
     max_tool_calls: int = Field(default=40, ge=1, le=200)
     investigation_timeout_seconds: int = Field(default=300, ge=10, le=3600)
+
+    @field_validator("anthropic_base_url")
+    @classmethod
+    def _require_https_endpoint(cls, value: str | None) -> str | None:
+        # The API key is sent to this URL, so plain HTTP is refused except loopback.
+        if value is None or value == "":
+            return None
+        local = value.startswith(("http://127.0.0.1", "http://localhost"))
+        if not (value.startswith("https://") or local):
+            raise ValueError("anthropic_base_url must use https (or loopback http)")
+        return value.rstrip("/")
 
     @field_validator("control_database_url")
     @classmethod

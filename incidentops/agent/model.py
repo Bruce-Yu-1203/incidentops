@@ -113,10 +113,12 @@ class AnthropicModelAdapter:
         model_id: str,
         max_output_tokens: int = 2048,
         timeout_seconds: float = 60.0,
+        base_url: str | None = None,
     ) -> None:
         import anthropic
 
-        self._client = anthropic.AsyncAnthropic(api_key=api_key, max_retries=2)
+        # base_url=None keeps the SDK default (api.anthropic.com).
+        self._client = anthropic.AsyncAnthropic(api_key=api_key, base_url=base_url, max_retries=2)
         self._model_id = model_id
         self._max_tokens = max_output_tokens
         self._timeout = timeout_seconds
@@ -124,6 +126,10 @@ class AnthropicModelAdapter:
     @property
     def model_id(self) -> str:
         return self._model_id
+
+    @property
+    def base_url(self) -> str:
+        return str(self._client.base_url)
 
     async def next_turn(
         self, system: str, messages: list[dict[str, Any]], tools: list[dict[str, Any]]

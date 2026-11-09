@@ -85,7 +85,11 @@ def build_model(settings: Settings) -> ModelAdapter:
         return RulesBaselineAdapter()
     if not settings.model_id or settings.anthropic_api_key is None:
         raise SystemExit("INCIDENTOPS_MODEL_ID and INCIDENTOPS_ANTHROPIC_API_KEY are required")
-    return AnthropicModelAdapter(settings.anthropic_api_key.get_secret_value(), settings.model_id)
+    return AnthropicModelAdapter(
+        settings.anthropic_api_key.get_secret_value(),
+        settings.model_id,
+        base_url=settings.anthropic_base_url,
+    )
 
 
 def budgets_from(settings: Settings) -> Budgets:

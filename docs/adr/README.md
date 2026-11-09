@@ -18,3 +18,4 @@ it with a new ADR that supersedes the old one.
 | [ADR-016](ADR-016-dev-only-open-incident-reads.md) | Incident read API is open only in the dev profile until P3 | Accepted (temporary) |
 | [ADR-017](ADR-017-incident-dedup-key.md) | Incident dedup key is environment + service | Accepted |
 | [ADR-018](ADR-018-container-metrics-deferred.md) | Defer container CPU/memory metrics (cAdvisor) to P5 | Accepted |
+| [ADR-019](ADR-019-anthropic-compatible-endpoints.md) | Anthropic-compatible model endpoints | Accepted |
