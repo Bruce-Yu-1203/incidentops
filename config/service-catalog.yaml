@@ -1,0 +1,41 @@
+# Versioned registry of every target IncidentOps may observe or act on.
+# Network destinations live here (server-side), never in model arguments.
+schema_version: 1
+catalog_version: c1
+services:
+  - service_id: persist-demo-consumer
+    kind: kafka_consumer
+    environment: fault-lab
+    description: Controllable Kafka test consumer that persists demo events.
+    management_url: http://lab-consumer:8081
+    kafka:
+      topic: demo.events.v1
+      consumer_group: persist-demo-consumer
+    allowed_actions: [resume_test_consumer]
+  - service_id: demo-producer
+    kind: kafka_producer
+    environment: fault-lab
+    description: Fixed-rate producer feeding demo.events.v1.
+    kafka:
+      topic: demo.events.v1
+    allowed_actions: []
+  - service_id: lab-api
+    kind: http_api
+    environment: fault-lab
+    description: Instrumented demo API backed by lab PostgreSQL and Redis.
+    allowed_actions: []
+  - service_id: lab-postgres
+    kind: postgres
+    environment: fault-lab
+    description: Lab PostgreSQL (monitored, fault-injectable).
+    allowed_actions: []
+  - service_id: lab-redis
+    kind: redis
+    environment: fault-lab
+    description: Lab Redis cache.
+    allowed_actions: []
+  - service_id: lab-kafka
+    kind: kafka_broker
+    environment: fault-lab
+    description: Single-node KRaft Kafka broker.
+    allowed_actions: []
