@@ -41,6 +41,23 @@ class Settings(BaseSettings):
     )
     alertmanager_token: SecretStr | None = None
 
+    # Investigation agent (read-only identity). The model ID has no default so
+    # every run records an explicitly configured model (ADR-008).
+    model_id: str | None = None
+    anthropic_api_key: SecretStr | None = None
+    prometheus_url: str = "http://127.0.0.1:9090"
+    loki_url: str = "http://127.0.0.1:3100"
+    tempo_url: str = "http://127.0.0.1:3200"
+    # Read-only Fault Lab token used by get_consumer_status. Never a write token.
+    lab_read_token: SecretStr | None = None
+    # Server-side overrides of catalog management URLs (service_id -> URL), e.g.
+    # when the worker runs on the host instead of the lab network.
+    endpoint_overrides: dict[str, str] = Field(default_factory=dict)
+    worker_lease_seconds: int = Field(default=600, ge=30, le=3600)
+    max_agent_steps: int = Field(default=20, ge=1, le=100)
+    max_tool_calls: int = Field(default=40, ge=1, le=200)
+    investigation_timeout_seconds: int = Field(default=300, ge=10, le=3600)
+
     @field_validator("control_database_url")
     @classmethod
     def _require_postgres(cls, value: SecretStr) -> SecretStr:

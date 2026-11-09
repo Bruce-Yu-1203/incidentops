@@ -1,7 +1,9 @@
 """Create a local ``.env`` from ``.env.example`` with fresh random tokens.
 
-Every ``change-me-*`` placeholder becomes a distinct random token, so no two
-identities share a credential. Existing ``.env`` files are never overwritten.
+Every distinct ``change-me-*`` placeholder becomes its own random token, so no
+two identities share a credential. Repeating the same placeholder links two
+variables to one value (for example a client and the server that verifies it).
+Existing ``.env`` files are never overwritten.
 """
 
 from __future__ import annotations
@@ -11,12 +13,17 @@ import secrets
 import sys
 from pathlib import Path
 
-PLACEHOLDER = re.compile(r"change-me-[a-z]+")
+PLACEHOLDER = re.compile(r"change-me-[a-z-]+")
 
 
 def render(template: str) -> str:
     """Replace each placeholder with a unique random hex token."""
-    rendered = PLACEHOLDER.sub(lambda _: secrets.token_hex(16), template)
+    values: dict[str, str] = {}
+
+    def token(match: re.Match[str]) -> str:
+        return values.setdefault(match.group(0), secrets.token_hex(16))
+
+    rendered = PLACEHOLDER.sub(token, template)
     # The local control database password is fixed by compose.yaml defaults.
     return rendered.replace(
         "incidentops:" + rendered.split("incidentops:", 1)[1].split("@", 1)[0] + "@",

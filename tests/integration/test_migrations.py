@@ -8,7 +8,7 @@ from alembic.autogenerate import compare_metadata
 from alembic.migration import MigrationContext
 from sqlalchemy import Engine, create_engine, inspect
 
-from incidentops.persistence.models import Base
+from incidentops.persistence.models import Base, include_object
 from tests.integration.conftest import alembic_config
 
 pytestmark = pytest.mark.integration
@@ -16,7 +16,8 @@ pytestmark = pytest.mark.integration
 
 def test_models_match_migrations(engine: Engine) -> None:
     with engine.connect() as conn:
-        diff = compare_metadata(MigrationContext.configure(conn), Base.metadata)
+        context = MigrationContext.configure(conn, opts={"include_object": include_object})
+        diff = compare_metadata(context, Base.metadata)
     assert diff == [], f"schema drift between models and migrations: {diff}"
 
 

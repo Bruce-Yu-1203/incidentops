@@ -122,10 +122,20 @@ class InvestigationRunRow(Base):
     model_id: Mapped[str | None] = mapped_column(String(128))
     prompt_version: Mapped[str | None] = mapped_column(String(64))
     error_code: Mapped[str | None] = mapped_column(String(64))
+    # Observed usage, recorded for benchmark cost/latency reporting.
+    step_count: Mapped[int] = mapped_column(Integer, nullable=False, server_default="0")
+    tool_call_count: Mapped[int] = mapped_column(Integer, nullable=False, server_default="0")
+    input_tokens: Mapped[int] = mapped_column(Integer, nullable=False, server_default="0")
+    output_tokens: Mapped[int] = mapped_column(Integer, nullable=False, server_default="0")
+    started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     created_at: Mapped[datetime] = _now()
     updated_at: Mapped[datetime] = _now()
 
-    __table_args__ = (_state_check(RUN_MACHINE),)
+    __table_args__ = (
+        _state_check(RUN_MACHINE),
+        Index("ix_investigation_runs_incident", "incident_id", "created_at"),
+    )
 
 
 class AgentStepRow(Base):
@@ -142,6 +152,8 @@ class AgentStepRow(Base):
     span_id: Mapped[str | None] = mapped_column(String(16))
     metadata_: Mapped[dict[str, Any]] = mapped_column("metadata", JSONB, nullable=False)
 
+    __table_args__ = (Index("ix_agent_steps_run", "run_id", "started_at"),)
+
 
 class EvidenceRow(Base):
     __tablename__ = "evidence"
@@ -157,11 +169,13 @@ class EvidenceRow(Base):
     digest: Mapped[str] = mapped_column(HASH, nullable=False)
     summary: Mapped[str] = mapped_column(Text, nullable=False)
     snapshot: Mapped[str] = mapped_column(Text, nullable=False)
+    created_at: Mapped[datetime] = _now()
     truncated: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default="false")
 
     __table_args__ = (
         CheckConstraint("window_end >= window_start", name="window_ordered"),
         CheckConstraint("octet_length(snapshot) <= 16384", name="snapshot_budget"),
+        Index("ix_evidence_run", "run_id"),
     )
 
 
@@ -335,3 +349,19 @@ class PolicyVersionRow(Base):
             postgresql_where=text("active"),
         ),
     )
+
+
+# Tables owned by LangGraph's PostgreSQL checkpointer, which manages its own
+# schema via ``AsyncPostgresSaver.setup()``. Alembic must neither create nor drop them.
+EXTERNALLY_MANAGED_TABLES = frozenset(
+    {"checkpoints", "checkpoint_blobs", "checkpoint_writes", "checkpoint_migrations"}
+)
+
+
+def include_object(
+    obj: object, name: str | None, type_: str, reflected: bool, compare_to: object
+) -> bool:
+    """Alembic filter that ignores externally managed tables and their indexes."""
+    table = getattr(obj, "table", None)
+    table_name = name if type_ == "table" else getattr(table, "name", None)
+    return table_name not in EXTERNALLY_MANAGED_TABLES

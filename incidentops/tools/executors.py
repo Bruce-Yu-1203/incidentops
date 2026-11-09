@@ -224,7 +224,7 @@ async def get_consumer_status(
     service = _service(catalog, args.worker_id)
     if service.management_url is None:
         raise ScopeError(f"{service.service_id} has no status endpoint")
-    raw = await backend.consumer_status(str(service.management_url))
+    raw = await backend.consumer_status(service.service_id, str(service.management_url))
     # Keep only the documented status fields.
     status = {k: raw.get(k) for k in ("consumer_id", "paused", "generation")}
     return ToolOutput(

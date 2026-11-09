@@ -50,7 +50,7 @@ class TelemetryBackend(Protocol):
         self, traceql: str, start: datetime, end: datetime, limit: int
     ) -> list[TraceSummary]: ...
 
-    async def consumer_status(self, management_url: str) -> dict[str, Any]: ...
+    async def consumer_status(self, service_id: str, management_url: str) -> dict[str, Any]: ...
 
 
 class BackendError(RuntimeError):
@@ -78,12 +78,14 @@ class HttpTelemetryBackend:
         loki_url: str,
         tempo_url: str,
         lab_read_token: str | None,
+        endpoint_overrides: dict[str, str] | None = None,
     ) -> None:
         self._client = client
         self._prometheus = prometheus_url.rstrip("/")
         self._loki = loki_url.rstrip("/")
         self._tempo = tempo_url.rstrip("/")
         self._read_token = lab_read_token
+        self._overrides = dict(endpoint_overrides or {})
 
     async def _get(self, url: str, params: dict[str, Any], **kwargs: Any) -> dict[str, Any]:
         response = await self._client.get(url, params=params, **kwargs)
@@ -155,11 +157,12 @@ class HttpTelemetryBackend:
             for t in body.get("traces", [])
         ]
 
-    async def consumer_status(self, management_url: str) -> dict[str, Any]:
+    async def consumer_status(self, service_id: str, management_url: str) -> dict[str, Any]:
         if not self._read_token:
             raise BackendError("lab read token not configured")
+        base = self._overrides.get(service_id, management_url)
         return await self._get(
-            f"{management_url.rstrip('/')}/control/status",
+            f"{base.rstrip('/')}/control/status",
             {},
             headers={"Authorization": f"Bearer {self._read_token}"},
         )

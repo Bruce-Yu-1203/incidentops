@@ -61,7 +61,7 @@ class FakeBackend:
         self.queries.append(traceql)
         return [TraceSummary("ab" * 16, "lab-api", "GET /items/{item_id}", 0, 5012)]
 
-    async def consumer_status(self, management_url: str) -> dict[str, Any]:
+    async def consumer_status(self, service_id: str, management_url: str) -> dict[str, Any]:
         await self._maybe_slow()
         self.queries.append(management_url)
         return {
