@@ -27,7 +27,17 @@ for lab API latency/5xx and Kafka consumer lag, an authenticated Alertmanager
 webhook with transactional, race-safe incident deduplication per service, and
 incident list/detail views. `make p1-gate` drives a Kafka consumer pause and a
 PostgreSQL lock through real alerts to one active incident per service. The
-read-only agent (P2) and remediation (P3) follow the [roadmap](docs/roadmap.md).
+remediation (P3) follows the [roadmap](docs/roadmap.md).
+
+Phase P2 (read-only investigation) is implemented: six registered read tools
+behind a fail-closed gateway with server-side query templates, budgets and
+timeouts; redacted, digested evidence with provenance; a bounded LangGraph
+agent with a schema-validated `submit_diagnosis`, PostgreSQL checkpoints and
+OTel-correlated trajectory steps; a leased outbox worker; and investigation
+views in the API and UI. `make p2-live` checks the tools against live lab
+telemetry with a scripted model. The real-model gate (`make p2-gate`) needs a
+provider key: set `INCIDENTOPS_MODEL_ID` and `INCIDENTOPS_ANTHROPIC_API_KEY` in
+`.env`, then run `make api-run` and `make worker-run`.
 
 ## Development quick start
 
