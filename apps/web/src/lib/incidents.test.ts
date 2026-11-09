@@ -48,6 +48,7 @@ const report = {
 const detail = {
   ...summary,
   escalation_reason: null,
+  actions: [],
   runs: [run],
   diagnosis: report,
   alert_events: [

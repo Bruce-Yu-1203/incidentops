@@ -3,12 +3,13 @@ import { connection } from "next/server";
 import { Suspense } from "react";
 
 import { apiBaseUrl } from "@/lib/api";
+import { sessionFetch } from "@/lib/session";
 import { fetchIncident } from "@/lib/incidents";
 
 async function IncidentView({ params }: { params: Promise<{ id: string }> }) {
   await connection();
   const { id } = await params;
-  const result = await fetchIncident(apiBaseUrl(), id);
+  const result = await fetchIncident(apiBaseUrl(), id, await sessionFetch());
   if (!result.ok) {
     return <p className="error">Could not load incident: {result.error}</p>;
   }
@@ -65,6 +66,22 @@ async function IncidentView({ params }: { params: Promise<{ id: string }> }) {
       {incident.escalation_reason ? (
         <p className="error">Escalation reason: {incident.escalation_reason}</p>
       ) : null}
+
+      <h2>Actions</h2>
+      {incident.actions.length === 0 ? (
+        <p>No actions.</p>
+      ) : (
+        <ul>
+          {incident.actions.map((action) => (
+            <li key={action.id}>
+              <Link href={`/actions/${action.id}`}>
+                {action.action_type} → {action.target_id}
+              </Link>{" "}
+              · <span className="badge">{action.state}</span>
+            </li>
+          ))}
+        </ul>
+      )}
 
       <h2>Investigations</h2>
       {incident.runs.length === 0 ? (

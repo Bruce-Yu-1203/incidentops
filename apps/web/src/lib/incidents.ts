@@ -85,7 +85,22 @@ export type DiagnosisReport = {
   needs_human_review: boolean;
 };
 
+export type ActionSummary = {
+  id: string;
+  action_type: string;
+  target_id: string;
+  state: string;
+  version: number;
+  expires_at: string;
+};
+
+const isActionSummary = (value: unknown): value is ActionSummary =>
+  isObject(value) &&
+  ["id", "action_type", "target_id", "state", "expires_at"].every((k) => isString(value[k])) &&
+  typeof value.version === "number";
+
 export type IncidentDetail = IncidentSummary & {
+  actions: ActionSummary[];
   escalation_reason: string | null;
   alert_events: AlertEventView[];
   timeline: TimelineEntry[];
@@ -167,6 +182,8 @@ export function isIncidentDetail(value: unknown): value is IncidentDetail {
   return (
     isIncidentSummary(value) &&
     isNullableString((value as Json).escalation_reason) &&
+    Array.isArray((value as Json).actions) &&
+    ((value as Json).actions as unknown[]).every(isActionSummary) &&
     Array.isArray((value as Json).runs) &&
     ((value as Json).runs as unknown[]).every(isRunSummary) &&
     ((value as Json).diagnosis === null || isDiagnosisReport((value as Json).diagnosis)) &&

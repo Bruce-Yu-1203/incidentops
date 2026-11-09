@@ -3,6 +3,7 @@ import { connection } from "next/server";
 import { Suspense } from "react";
 
 import { apiBaseUrl, fetchHealth } from "@/lib/api";
+import { sessionFetch } from "@/lib/session";
 import { fetchIncidents } from "@/lib/incidents";
 
 // Both panels read live control-plane state, so they render at request time.
@@ -22,7 +23,7 @@ async function ApiStatus() {
 
 async function IncidentList() {
   await connection();
-  const result = await fetchIncidents(apiBaseUrl());
+  const result = await fetchIncidents(apiBaseUrl(), await sessionFetch());
   if (!result.ok) {
     return <p className="error">Could not load incidents: {result.error}</p>;
   }

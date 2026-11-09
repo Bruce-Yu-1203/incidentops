@@ -3,6 +3,7 @@ import { connection } from "next/server";
 import { Suspense } from "react";
 
 import { apiBaseUrl } from "@/lib/api";
+import { sessionFetch } from "@/lib/session";
 import { fetchRun, safeSourceUrl } from "@/lib/investigations";
 
 function describeStep(metadata: Record<string, unknown>): string {
@@ -21,7 +22,7 @@ function describeStep(metadata: Record<string, unknown>): string {
 async function RunView({ params }: { params: Promise<{ id: string }> }) {
   await connection();
   const { id } = await params;
-  const result = await fetchRun(apiBaseUrl(), id);
+  const result = await fetchRun(apiBaseUrl(), id, await sessionFetch());
   if (!result.ok) return <p className="error">Could not load investigation: {result.error}</p>;
   const run = result.data;
   return (
