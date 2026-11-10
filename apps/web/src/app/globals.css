@@ -213,3 +213,83 @@ button.link {
 .ok {
   color: var(--ok);
 }
+
+.stepper {
+  overflow-x: auto;
+  margin: 12px 0;
+}
+
+.stepper ol {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  min-width: max-content;
+}
+
+.step {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 104px;
+  font-size: 11px;
+  font-weight: 600;
+  position: relative;
+}
+
+/* The connector runs from each dot to the next step. */
+.step:not(:last-child)::after {
+  content: "";
+  position: absolute;
+  top: 10px;
+  left: 22px;
+  right: 0;
+  height: 2px;
+  background: var(--border);
+}
+
+.step-done:not(:last-child)::after {
+  background: var(--tone-fg);
+}
+
+.step-dot {
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 2px solid var(--border);
+  box-sizing: border-box;
+  background: var(--surface);
+}
+
+.step-done .step-dot {
+  background: var(--tone-fg);
+  border-color: var(--tone-fg);
+  color: var(--surface);
+}
+
+.step-current .step-dot {
+  border: 2px solid var(--tone-fg);
+  background: var(--tone-bg);
+  color: var(--tone-fg);
+}
+
+.step-current .step-label {
+  color: var(--tone-fg);
+}
+
+.step-upcoming .step-label,
+.step-skipped .step-label {
+  color: var(--muted);
+}
+
+.step-skipped .step-label {
+  text-decoration: line-through;
+}
+
+.step-exits {
+  font-size: 12px;
+  margin: 8px 0 0;
+}

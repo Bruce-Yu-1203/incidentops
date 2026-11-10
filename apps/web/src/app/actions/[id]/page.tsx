@@ -4,8 +4,10 @@ import { Suspense } from "react";
 
 import { fetchAction } from "@/lib/actions";
 import { StateBadge } from "@/components/state-badge";
+import { Stepper } from "@/components/stepper";
 import { apiBaseUrl } from "@/lib/api";
 import { fetchMe } from "@/lib/auth";
+import { actionLifecycle } from "@/lib/lifecycle";
 import { sessionFetch } from "@/lib/session";
 
 import { approveAction, cancelAction, rejectAction } from "./decisions";
@@ -47,6 +49,14 @@ async function ActionView({
       <h1>
         {String(envelope.action_type)} → {String(envelope.target_id)}
       </h1>
+      <Stepper
+        label="Action lifecycle"
+        lifecycle={actionLifecycle(
+          action.state,
+          action.verifications.at(-1)?.outcome ?? null,
+          action.decisions.some((d) => d.decision.toUpperCase().startsWith("APPROVE")),
+        )}
+      />
       {done ? <p className="ok">Decision recorded: {done}</p> : null}
       {error ? <p className="error">Decision refused: {error}</p> : null}
 

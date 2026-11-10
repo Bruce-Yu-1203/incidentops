@@ -3,9 +3,11 @@ import { connection } from "next/server";
 import { Suspense } from "react";
 
 import { StateBadge } from "@/components/state-badge";
+import { Stepper } from "@/components/stepper";
 import { apiBaseUrl } from "@/lib/api";
 import { sessionFetch } from "@/lib/session";
 import { fetchIncident } from "@/lib/incidents";
+import { incidentLifecycle, visitedStates } from "@/lib/lifecycle";
 
 async function IncidentView({ params }: { params: Promise<{ id: string }> }) {
   await connection();
@@ -18,6 +20,13 @@ async function IncidentView({ params }: { params: Promise<{ id: string }> }) {
   return (
     <>
       <h1>{incident.dedup_key}</h1>
+      <Stepper
+        label="Incident lifecycle"
+        lifecycle={incidentLifecycle(
+          incident.state,
+          visitedStates(incident.timeline.filter((e) => e.kind === "audit").map((e) => e.summary)),
+        )}
+      />
       <dl className="facts">
         <dt>State</dt>
         <dd>
