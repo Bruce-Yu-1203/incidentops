@@ -799,3 +799,119 @@ button.small {
     opacity: 0.35;
   }
 }
+
+/* Evidence graph: supporting records, the diagnosis, contradicting records. */
+.graph {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(170px, 220px) minmax(0, 1fr);
+  gap: 32px;
+  align-items: center;
+}
+
+.graph-col {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.graph-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.graph-node {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 8px 10px;
+  border-radius: 8px;
+  border: 1px solid var(--tone-fg);
+  background: var(--tone-bg);
+  font-size: 13px;
+}
+
+.graph-col:first-child .graph-node::after,
+.graph-col:last-child .graph-node::before {
+  content: "";
+  position: absolute;
+  top: 50%;
+  width: 32px;
+  height: 2px;
+  background: var(--tone-fg);
+}
+
+.graph-col:first-child .graph-node::after {
+  right: -33px;
+}
+
+.graph-col:last-child .graph-node::before {
+  left: -33px;
+}
+
+.graph-center {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+  gap: 4px;
+  padding: 16px 12px;
+  border-radius: 12px;
+  border: 2px solid var(--foreground);
+  background: var(--surface);
+}
+
+@media (max-width: 760px) {
+  .graph {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 16px;
+  }
+
+  .graph-center {
+    order: -1;
+  }
+
+  .graph-node::before,
+  .graph-node::after {
+    display: none;
+  }
+}
+
+.trajectory {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.traj-row {
+  display: flex;
+  gap: 12px;
+  align-items: flex-start;
+  padding: 8px 10px;
+  border-radius: 8px;
+}
+
+.traj-blocked {
+  background: var(--tone-bg);
+  border: 1px solid color-mix(in srgb, var(--tone-fg) 40%, transparent);
+}
+
+.traj-duration {
+  margin-left: auto;
+  white-space: nowrap;
+}
+
+.args {
+  overflow-wrap: anywhere;
+}
+
+.anchor-row:target {
+  background: var(--tone-attention-bg);
+}
