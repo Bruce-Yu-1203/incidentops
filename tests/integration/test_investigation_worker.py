@@ -118,7 +118,7 @@ async def test_full_investigation_persists_diagnosis_evidence_and_trajectory(
         assert (run.state, run.model_id, run.prompt_version) == (
             "COMPLETED",
             "scripted-test-model",
-            "investigation-v2",
+            "investigation-v3",
         )
         assert (run.step_count, run.tool_call_count) == (2, 2)
         diagnosis = session.scalars(select(DiagnosisRow)).one()

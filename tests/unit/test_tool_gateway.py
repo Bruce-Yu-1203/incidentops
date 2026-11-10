@@ -239,3 +239,16 @@ def test_manifest_exposes_no_endpoints_or_write_tools() -> None:
     names = {tool["name"] for tool in gateway.manifest()}
     assert names == set(TOOL_SPECS)
     assert not {n for n in names if any(w in n for w in ("resume", "pause", "restart", "shell"))}
+
+
+def test_manifest_lists_templates_and_applicable_services() -> None:
+    # A live DeepSeek run guessed template names (cpu_usage, broker_health) and
+    # called search_logs on the consumer; all were denied. The manifest now
+    # states the valid choices explicitly.
+    gateway, _, _, _ = make_gateway()
+    tools = {t["name"]: t for t in gateway.manifest()}
+    query = tools["query_metrics"]
+    assert "kafka_broker_count" in query["input_schema"]["properties"]["template_id"]["enum"]
+    assert "producer_send_rate (messages/s; services: demo-producer)" in query["description"]
+    assert tools["search_logs"]["description"].endswith("Applies to: lab-api.")
+    assert "persist-demo-consumer" in tools["get_consumer_status"]["description"]

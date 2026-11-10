@@ -29,6 +29,7 @@ from incidentops.time import utcnow
 from incidentops.tools.backends import TelemetryBackend
 from incidentops.tools.executors import EXECUTORS, Executor, ScopeError
 from incidentops.tools.specs import TOOL_SPECS, ToolSpec
+from incidentops.tools.templates import TEMPLATES
 from incidentops.trajectory.recorder import StepKind, StepRecord, TrajectorySink
 
 DEFAULT_MAX_TOOL_CALLS = 40  # NFR-005
@@ -103,11 +104,36 @@ class ToolGateway:
         self._clock = clock
 
     def manifest(self) -> list[dict[str, Any]]:
-        """Tool definitions for the model: names, descriptions and input schemas only."""
-        return [
-            {"name": s.name, "description": s.description, "input_schema": s.model_schema()}
-            for s in self._specs.values()
-        ]
+        """Tool definitions for the model: names, descriptions and input schemas only.
+
+        Each description names the registered services the tool applies to, and
+        ``query_metrics`` lists its templates as an enum, so the model does not
+        have to guess identifiers that the gateway would then deny.
+        """
+        tools: list[dict[str, Any]] = []
+        for spec in self._specs.values():
+            schema = spec.model_schema()
+            applicable = sorted(
+                s.service_id for s in self._catalog.services if s.kind in spec.service_kinds
+            )
+            description = f"{spec.description} Applies to: {', '.join(applicable)}."
+            if spec.name == "query_metrics":
+                schema["properties"]["template_id"]["enum"] = sorted(TEMPLATES)
+                lines = [
+                    f"{t.template_id} ({t.unit}; services: "
+                    + ", ".join(
+                        sorted(
+                            s.service_id
+                            for s in self._catalog.services
+                            if s.kind in t.service_kinds
+                        )
+                    )
+                    + f") - {t.description}"
+                    for t in TEMPLATES.values()
+                ]
+                description += " Templates: " + "; ".join(lines) + "."
+            tools.append({"name": spec.name, "description": description, "input_schema": schema})
+        return tools
 
     async def invoke(
         self, ctx: RunContext, tool_call_id: str, tool_name: str, raw_args: Any
