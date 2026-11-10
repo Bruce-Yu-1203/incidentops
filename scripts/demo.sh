@@ -70,14 +70,20 @@ up() {
   echo "==> infrastructure (log: .run/logs/infrastructure.log)"
   make db-up lab-up infra-up >"$LOG_DIR/infrastructure.log" 2>&1
   make seed-users >>"$LOG_DIR/infrastructure.log" 2>&1
-  [[ -d apps/web/node_modules ]] || make web-install >>"$LOG_DIR/infrastructure.log" 2>&1
+  if [[ "${SKIP_WEB:-0}" != "1" && ! -d apps/web/node_modules ]]; then
+    make web-install >>"$LOG_DIR/infrastructure.log" 2>&1
+  fi
   echo "==> processes"
   start_process api
   wait_for http://127.0.0.1:8000/healthz 90
-  for name in control executor verifier worker web; do
+  for name in control executor verifier worker; do
     start_process "$name"
   done
-  wait_for http://127.0.0.1:3001 120 || true
+  # SKIP_WEB=1 (e.g. in CI) runs the backend only.
+  if [[ "${SKIP_WEB:-0}" != "1" ]]; then
+    start_process web
+    wait_for http://127.0.0.1:3001 120 || true
+  fi
   cat <<'MSG'
 
 IncidentOps is up.

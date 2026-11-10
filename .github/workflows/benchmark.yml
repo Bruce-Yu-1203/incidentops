@@ -1,0 +1,48 @@
+# Live benchmark (manual only). Starts the full lab on a GitHub-hosted runner,
+# runs the rules-only baseline (no model calls, no repository secrets: all lab
+# tokens are generated fresh for the run) and uploads the report. Not run on
+# pull requests because it takes tens of minutes.
+name: benchmark
+
+on:
+  workflow_dispatch:
+    inputs:
+      cases:
+        description: "Comma-separated case IDs (empty = all seven)"
+        required: false
+        default: "B-F03"
+      trials:
+        description: "Trials per case"
+        required: false
+        default: "1"
+
+permissions:
+  contents: read
+
+jobs:
+  benchmark:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 300
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+      - name: Install
+        run: uv sync --all-packages --frozen
+      - name: Start lab, telemetry, API and workers (rules baseline)
+        env:
+          SKIP_WEB: "1"
+        run: scripts/demo.sh up
+      - name: Run benchmark
+        run: make benchmark CASES="${{ inputs.cases }}" TRIALS="${{ inputs.trials }}" VARIANT=B0_RULES
+      - name: Collect logs
+        if: always()
+        run: scripts/demo.sh status || true
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: benchmark-results
+          path: |
+            results/
+            .run/logs/

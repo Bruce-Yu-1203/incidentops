@@ -1,99 +1,149 @@
 # IncidentOps
 
-Reliable, observable, policy-governed AI SRE runtime — **lab prototype, under
-construction**. No benchmark results have been measured yet.
+**A policy-governed AI incident-response runtime that a model can investigate
+with, but never act through.** Lab prototype.
 
-IncidentOps ingests alerts, lets a bounded read-only agent collect evidence,
-and routes any proposed remediation through deterministic policy, exact human
-approval, an isolated executor and an independent verifier. See:
+IncidentOps receives real alerts, lets a bounded read-only agent collect
+evidence from Prometheus, Loki and Tempo, and turns any fix the agent suggests
+into an immutable, hashed action that must pass deterministic policy and an
+exact human approval before an isolated executor runs it. An independent
+verifier, not the agent and not the executor, decides whether the incident is
+resolved.
 
-- [Project constitution](constitute.md) — mandatory working rules
-- [Requirements](docs/requirements.md) · [Architecture](docs/architecture.md) ·
-  [Technology stack](docs/tech-stack.md) · [Roadmap](docs/roadmap.md) ·
-  [Benchmark](docs/benchmark.md)
-- [Architecture decision records](docs/adr/)
-- [Failure modes and operator guide](docs/operations/failure-modes.md)
+## The problem
 
-## Status
+A plausible AI diagnosis is not a safe operational action. Letting a language
+model restart services or change deployments raises questions that a demo of a
+correct answer does not settle:
 
-Phase P0 (contracts and Fault Lab foundation) is implemented: domain state
-machines, contracts and action hashing, service catalog and role identities,
-the Control PostgreSQL schema with compare-and-swap transitions, the
-resettable Fault Lab with a controllable Kafka consumer, a web skeleton and
-CI.
+- What evidence supports the claim, and can anyone check it?
+- Who authorized this exact change, against which version of the target?
+- What happens if the process crashes after the change was sent?
+- How do we know the service actually recovered?
+- How often is the system right, measured rather than claimed?
 
-Phase P1 (real monitoring, alerts and incidents) is implemented: an
-observability stack ([infra/README.md](infra/README.md)) with Prometheus rules
-for lab API latency/5xx and Kafka consumer lag, an authenticated Alertmanager
-webhook with transactional, race-safe incident deduplication per service, and
-incident list/detail views. `make p1-gate` drives a Kafka consumer pause and a
-PostgreSQL lock through real alerts to one active incident per service. The
-remediation (P3) follows the [roadmap](docs/roadmap.md).
+IncidentOps is an engineering answer to those questions for a disposable lab.
+It sits on top of existing observability tools; it is not a monitoring system,
+an alert router or a replacement for Grafana or PagerDuty.
 
-Phase P2 (read-only investigation) is implemented: six registered read tools
-behind a fail-closed gateway with server-side query templates, budgets and
-timeouts; redacted, digested evidence with provenance; a bounded LangGraph
-agent with a schema-validated `submit_diagnosis`, PostgreSQL checkpoints and
-OTel-correlated trajectory steps; a leased outbox worker; and investigation
-views in the API and UI. `make p2-live` checks the tools against live lab
-telemetry with a scripted model. The real-model gate (`make p2-gate`) needs a
-provider key: set `INCIDENTOPS_MODEL_ID` and `INCIDENTOPS_ANTHROPIC_API_KEY` in
-`.env`, then run `make api-run` and `make worker-run`.
+## How it works
 
-Phase P3 (first safe remediation, B-F03) is implemented: a versioned
-deterministic policy, immutable action envelopes bound by `action_hash`,
-local users with sessions and RBAC, hash/version/TTL-checked approvals with
-separation of duties, an isolated executor that revalidates before dispatch
-and reconciles ambiguous outcomes by `action_id`, and an independent verifier
-that alone may resolve an incident. Each process refuses other roles'
-credentials. `make p3-gate` runs the live loop (approve → resume → verified
-RESOLVED, and reject → zero lab mutations).
+```mermaid
+flowchart LR
+  A[Prometheus alert] -->|authenticated webhook| B[Incident, deduplicated per service]
+  B --> C[Read-only agent<br/>6 scoped tools, budgets]
+  C -->|evidence IDs| D[Diagnosis + proposed action]
+  D --> E{Deterministic policy}
+  E -->|deny| F[Recorded, no change]
+  E -->|requires approval| G[Human approves the exact action hash]
+  G --> H[Executor revalidates, then calls<br/>one allowlisted lab endpoint]
+  H --> I[Independent verifier<br/>fresh telemetry]
+  I -->|passed| J[RESOLVED]
+  I -->|failed or unknown| K[ESCALATED]
+```
 
-Phase P5 (fault matrix and benchmark) is implemented: six fault families plus
-a no-action case (ADR-020), deterministic grading with independent probes, and
-reproducible reports (`make benchmark`). The first measured run (rules-only
-baseline B0, 5 trials per case, 35 trials) is in
+| Guarantee | Mechanism |
+|---|---|
+| The model cannot change anything | It only receives read tools; queries are built server-side from templates; the agent process has no executor or fault credentials and a read-mostly database login |
+| Every claim is checkable | Diagnoses must cite evidence IDs that resolve to stored, digested, redacted readings with source links |
+| Humans approve exactly what runs | The approval is bound to a SHA-256 of type, target, environment, arguments, target revision, policy version and expiry |
+| Nothing runs on stale authority | The executor re-checks approval, hash, TTL, policy and the live target revision immediately before the call |
+| Crashes do not cause blind retries | Dispatch is committed before the call; unknown outcomes are reconciled by a stable `action_id`, never resent |
+| "Action succeeded" is not "resolved" | Only the independent verifier may resolve; missing data means UNKNOWN and escalation |
+| Separation of duties at every layer | Distinct process credentials, distinct database roles, append-only audit log |
+
+## Threat model (summary)
+
+| Threat | Control | Tested by |
+|---|---|---|
+| Prompt injection in logs or alerts | Tool output is labelled untrusted data; no write tools exist for the model | S-07, `tests/security` |
+| Model invents tools, URLs, targets or arguments | Fail-closed gateway (registry, schema, catalog scope), deterministic policy | S-02, S-08 |
+| Tampered or stale approval | Hash binding, version check, TTL, target revision recheck | S-03, S-04, R-08 |
+| Unauthorized approver or self-approval | Server-side sessions, RBAC, separation of duties | S-06 |
+| Double clicks and concurrent workers | Compare-and-swap transitions, leased outbox, single dispatch | S-05, R-06 |
+| Crash or timeout around the external call | Pre-dispatch commit, reconciliation by `action_id`, escalation | R-03, R-07 |
+| Telemetry outage during verification | UNKNOWN outcome, never RESOLVED | R-05 |
+| Secrets in traces, evidence or audit | Redaction before storage, bounded payloads | S-11 |
+| Over-privileged processes | Each process refuses foreign credentials; per-process database logins; no Docker socket anywhere | `test_credential_scope`, `test_db_privileges` |
+
+Out of scope: production remediation (disabled by design), multi-tenant
+isolation, an internet-facing identity provider. See
+[deployment and cost notes](docs/operations/deployment-and-cost.md).
+
+## Measured results
+
+First benchmark run, rules-only baseline (B0), 7 scenarios × 5 trials, from
 [docs/benchmark-results/2026-11-10-B0-rules](docs/benchmark-results/2026-11-10-B0-rules/summary.md):
-six cases 5/5, the memory-leak case 2/5 (explained in its `analysis.md`), and
-0 unauthorized mutations observed in 35 trials. These are small-sample
-measurements, not general claims.
 
-### Running the full loop locally
+| Scenario | RCA correct | Verified recovery / safe abstention |
+|---|---|---|
+| B-F01 PostgreSQL lock | 5/5 | 5/5 |
+| B-F02 Redis unavailable | 5/5 | 5/5 |
+| B-F03 Kafka consumer paused | 5/5 | 5/5 |
+| B-F04 memory leak | 2/5 | 2/5 |
+| B-F05 bad release | 5/5 | 5/5 |
+| B-F06 CPU saturation | 5/5 | 5/5 |
+| B-N01 noise (no action expected) | 5/5 | 5/5 abstained |
 
-```bash
-make lab-up infra-up seed-users
-make api-run        # terminal 1 (API on 127.0.0.1:8000)
-make control-run    # terminal 2 (policy evaluation, approval expiry)
-make executor-run   # terminal 3 (the only remediation credential)
-make verifier-run   # terminal 4 (independent recovery checks)
-make worker-run     # terminal 5 (investigation; set INCIDENTOPS_MODEL_ID,
-                    # or use rules-baseline-v1 for the no-key B0 baseline)
-cd apps/web && INCIDENTOPS_API_URL=http://127.0.0.1:8000 pnpm dev   # UI on :3001
-```
+Unauthorized or prohibited mutations: **0 observed in 35 trials**. With five
+trials per case, a 5/5 result has a 95% Wilson interval of 57%–100%: these are
+smoke-level measurements. The B-F04 failures are explained in the run's
+`analysis.md`. No LLM variant has been benchmarked yet; nothing here claims
+how a language model performs.
 
-## Development quick start
+## Run it
 
-Requirements (tested on macOS 15+, Apple silicon): [uv](https://docs.astral.sh/uv/)
-≥ 0.5, Python 3.12, Node.js ≥ 20.9 with pnpm, Docker with Compose v2
-(4 CPUs / 4 GB for Docker is enough for P0).
-
-```bash
-make env          # create .env with fresh random service tokens
-make install      # Python environment from uv.lock
-make web-install  # web dependencies from pnpm-lock.yaml
-make db-up        # Control PostgreSQL on 127.0.0.1:5433
-make check        # lint, format, mypy, pytest (incl. real-Postgres tests), web checks
-make migrate      # apply Alembic migrations to the control database
-```
-
-Fault Lab (see [fault-lab/README.md](fault-lab/README.md)):
+Requirements: macOS or Linux, Docker with Compose v2 (about 4 CPUs / 6 GB),
+[uv](https://docs.astral.sh/uv/), Python 3.12, Node.js ≥ 20.9 with pnpm.
 
 ```bash
-make lab-up       # start lab services and wait for health checks
-make lab-smoke    # Phase 0 gate: progress, pause, reset, role separation
-make lab-reset    # restore the healthy baseline
-make lab-down     # stop the lab and delete its volumes
+make install web-install   # dependencies from uv.lock and pnpm-lock.yaml
+make demo-up               # databases, lab, telemetry, API, workers, UI
 ```
 
-Every change follows [constitute.md](constitute.md): one conventional commit
-per change, tests for every change, and a green `make check` before handoff.
+Then follow the [demo walkthrough](docs/demo.md): pause the test consumer,
+watch the real alert become an incident, read the evidence-linked diagnosis,
+approve the exact action as `approver` (password in `.env`), and watch the
+verifier resolve it. `make demo-down` stops everything.
+
+The investigation worker uses the no-key rules baseline by default. To use a
+model, set `INCIDENTOPS_MODEL_ID`, `INCIDENTOPS_ANTHROPIC_API_KEY` and, for an
+Anthropic-compatible provider, `INCIDENTOPS_ANTHROPIC_BASE_URL` in `.env`.
+
+| Command | What it does |
+|---|---|
+| `make check` | Lint, format, mypy strict, all unit/contract/integration/security/recovery tests, web lint/types/tests/build (needs `make db-up`) |
+| `make security-suite` / `make recovery-suite` | The S-01..S-12 and R-01..R-08 release-gate suites |
+| `make benchmark CASES=B-F03 TRIALS=5` | Live benchmark with independent probes and a JSON/CSV/Markdown report |
+| `make p1-gate` / `make p3-gate` | Live end-to-end checks against the running demo |
+
+## Repository map
+
+| Path | Contents |
+|---|---|
+| `incidentops/` | Control plane: domain state machines, ingestion, agent (LangGraph), tools, evidence, policy, approvals, executor, verifier, workers, API |
+| `apps/web/` | Next.js UI: incidents, investigation trajectory, evidence graph, approval page, incident report |
+| `fault-lab/` | Disposable lab services, fault controller, scenarios (ground truth) and the benchmark runner |
+| `infra/` | Prometheus rules, Alertmanager, OTel Collector, Loki, Tempo, Grafana |
+| `docs/` | Design documents, ADRs, operations guide, architecture overview, benchmark results |
+
+## Documentation
+
+- [Demo walkthrough](docs/demo.md) and [architecture overview](docs/architecture-overview.md)
+- [Failure modes and operator guide](docs/operations/failure-modes.md)
+- [Deployment, cost and data handling](docs/operations/deployment-and-cost.md)
+- Design: [requirements](docs/requirements.md) · [architecture](docs/architecture.md) ·
+  [technology stack](docs/tech-stack.md) · [roadmap](docs/roadmap.md) ·
+  [benchmark specification](docs/benchmark.md)
+- [Architecture decision records](docs/adr/) and the [project constitution](constitute.md)
+
+## Limitations
+
+- A single-host Docker lab with simulated faults (ADR-020); results do not
+  transfer to production systems.
+- Small benchmark samples; only the rules baseline has been measured.
+- The benchmark approver approves every proposal; it tests the authorization
+  path, not human judgement.
+- Local username/password sessions are for the lab only; production would need
+  a maintained identity provider.
+- Production remediation is deliberately unsupported.
