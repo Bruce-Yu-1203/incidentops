@@ -2,6 +2,7 @@ import Link from "next/link";
 import { connection } from "next/server";
 import { Suspense } from "react";
 
+import { StateBadge } from "@/components/state-badge";
 import { apiBaseUrl, fetchHealth } from "@/lib/api";
 import { sessionFetch } from "@/lib/session";
 import { fetchIncidents } from "@/lib/incidents";
@@ -51,7 +52,7 @@ async function IncidentList() {
             </td>
             <td>{incident.severity}</td>
             <td>
-              <span className="badge">{incident.state}</span>
+              <StateBadge machine="incident" state={incident.state} />
             </td>
           </tr>
         ))}

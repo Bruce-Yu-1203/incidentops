@@ -1,18 +1,49 @@
 :root {
-  --background: #ffffff;
-  --foreground: #171717;
-  --muted: #5f6368;
-  --danger: #b3261e;
-  --ok: #1e7e34;
+  --background: #f6f7f9;
+  --surface: #ffffff;
+  --foreground: #14171f;
+  --muted: #5b6270;
+  --border: #e3e6eb;
+  --danger: #b42318;
+  --ok: #166534;
+
+  /* One tone per meaning; each pair passes 4.5:1 text contrast. */
+  --tone-neutral-fg: #4b5563;
+  --tone-neutral-bg: #eef0f3;
+  --tone-progress-fg: #1d4ed8;
+  --tone-progress-bg: #e6eefb;
+  --tone-attention-fg: #6d28d9;
+  --tone-attention-bg: #f1eafe;
+  --tone-success-fg: #166534;
+  --tone-success-bg: #e3f4e8;
+  --tone-danger-fg: #b42318;
+  --tone-danger-bg: #fde8e6;
+  --tone-unknown-fg: #92400e;
+  --tone-unknown-bg: #fef3c7;
 }
 
 @media (prefers-color-scheme: dark) {
   :root {
     --background: #0f1115;
+    --surface: #171a21;
     --foreground: #ececec;
-    --muted: #9aa0a6;
+    --muted: #a0a7b2;
+    --border: #2b303a;
     --danger: #f2b8b5;
     --ok: #8fd19e;
+
+    --tone-neutral-fg: #c3c8d0;
+    --tone-neutral-bg: #262a33;
+    --tone-progress-fg: #a9c3ff;
+    --tone-progress-bg: #1b2a4a;
+    --tone-attention-fg: #d4bcff;
+    --tone-attention-bg: #2e2149;
+    --tone-success-fg: #8fd19e;
+    --tone-success-bg: #163222;
+    --tone-danger-fg: #f6b3ac;
+    --tone-danger-bg: #43191a;
+    --tone-unknown-fg: #f7cf7c;
+    --tone-unknown-bg: #3d2c0c;
   }
 }
 
@@ -56,11 +87,46 @@ td {
 }
 
 .badge {
-  display: inline-block;
-  padding: 1px 8px;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 1px 9px;
   border-radius: 999px;
   font-size: 12px;
-  border: 1px solid color-mix(in srgb, var(--foreground) 30%, transparent);
+  font-weight: 600;
+  white-space: nowrap;
+  color: var(--tone-fg, var(--tone-neutral-fg));
+  background: var(--tone-bg, var(--tone-neutral-bg));
+}
+
+.tone-neutral {
+  --tone-fg: var(--tone-neutral-fg);
+  --tone-bg: var(--tone-neutral-bg);
+}
+
+.tone-progress {
+  --tone-fg: var(--tone-progress-fg);
+  --tone-bg: var(--tone-progress-bg);
+}
+
+.tone-attention {
+  --tone-fg: var(--tone-attention-fg);
+  --tone-bg: var(--tone-attention-bg);
+}
+
+.tone-success {
+  --tone-fg: var(--tone-success-fg);
+  --tone-bg: var(--tone-success-bg);
+}
+
+.tone-danger {
+  --tone-fg: var(--tone-danger-fg);
+  --tone-bg: var(--tone-danger-bg);
+}
+
+.tone-unknown {
+  --tone-fg: var(--tone-unknown-fg);
+  --tone-bg: var(--tone-unknown-bg);
 }
 
 .facts {
@@ -82,8 +148,9 @@ a {
 }
 
 .panel {
-  border: 1px solid color-mix(in srgb, var(--foreground) 15%, transparent);
-  border-radius: 8px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 10px;
   padding: 12px 16px;
 }
 

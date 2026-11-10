@@ -2,6 +2,7 @@ import Link from "next/link";
 import { connection } from "next/server";
 import { Suspense } from "react";
 
+import { StateBadge } from "@/components/state-badge";
 import { apiBaseUrl } from "@/lib/api";
 import { sessionFetch } from "@/lib/session";
 import { fetchIncident } from "@/lib/incidents";
@@ -20,7 +21,7 @@ async function IncidentView({ params }: { params: Promise<{ id: string }> }) {
       <dl className="facts">
         <dt>State</dt>
         <dd>
-          <span className="badge">{incident.state}</span> (version {incident.version})
+          <StateBadge machine="incident" state={incident.state} /> (version {incident.version})
         </dd>
         <dt>Service</dt>
         <dd>
@@ -77,7 +78,7 @@ async function IncidentView({ params }: { params: Promise<{ id: string }> }) {
               <Link href={`/actions/${action.id}`}>
                 {action.action_type} → {action.target_id}
               </Link>{" "}
-              · <span className="badge">{action.state}</span>
+              · <StateBadge machine="action" state={action.state} />
             </li>
           ))}
         </ul>
@@ -91,7 +92,7 @@ async function IncidentView({ params }: { params: Promise<{ id: string }> }) {
           {incident.runs.map((run) => (
             <li key={run.id}>
               <Link href={`/investigations/${run.id}`}>{run.id}</Link> ·{" "}
-              <span className="badge">{run.state}</span> · {run.tool_call_count} tool calls
+              <StateBadge machine="run" state={run.state} /> · {run.tool_call_count} tool calls
               {run.error_code ? ` · ${run.error_code}` : ""}
             </li>
           ))}

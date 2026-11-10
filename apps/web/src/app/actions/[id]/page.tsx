@@ -3,6 +3,7 @@ import { connection } from "next/server";
 import { Suspense } from "react";
 
 import { fetchAction } from "@/lib/actions";
+import { StateBadge } from "@/components/state-badge";
 import { apiBaseUrl } from "@/lib/api";
 import { fetchMe } from "@/lib/auth";
 import { sessionFetch } from "@/lib/session";
@@ -57,7 +58,7 @@ async function ActionView({
       <dl className="facts">
         <dt>State</dt>
         <dd>
-          <span className="badge">{action.state}</span> (version {action.version})
+          <StateBadge machine="action" state={action.state} /> (version {action.version})
           {action.reason_code ? ` · ${action.reason_code}` : ""}
         </dd>
         <dt>Environment</dt>
@@ -144,7 +145,7 @@ async function ActionView({
           {action.operations.map((o) => (
             <li key={o.provider}>
               {o.provider} · operation {o.provider_operation_id} ·{" "}
-              <span className="badge">{o.status}</span>
+              <StateBadge machine="step" state={o.status} />
             </li>
           ))}
         </ul>
@@ -160,7 +161,7 @@ async function ActionView({
         action.verifications.map((v) => (
           <div key={v.id} className="panel">
             <p>
-              <span className="badge">{v.outcome}</span>
+              <StateBadge machine="verification" state={v.outcome} />
             </p>
             <ul>
               {v.checks.map((c) => (

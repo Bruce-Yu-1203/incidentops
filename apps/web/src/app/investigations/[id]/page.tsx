@@ -2,6 +2,7 @@ import Link from "next/link";
 import { connection } from "next/server";
 import { Suspense } from "react";
 
+import { StateBadge } from "@/components/state-badge";
 import { apiBaseUrl } from "@/lib/api";
 import { sessionFetch } from "@/lib/session";
 import { fetchRun, safeSourceUrl } from "@/lib/investigations";
@@ -34,7 +35,7 @@ async function RunView({ params }: { params: Promise<{ id: string }> }) {
       <dl className="facts">
         <dt>State</dt>
         <dd>
-          <span className="badge">{run.state}</span>
+          <StateBadge machine="run" state={run.state} />
           {run.error_code ? ` (${run.error_code})` : ""}
         </dd>
         <dt>Model</dt>
@@ -52,7 +53,7 @@ async function RunView({ params }: { params: Promise<{ id: string }> }) {
         {run.steps.map((step) => (
           <li key={step.id}>
             <time dateTime={step.started_at}>{new Date(step.started_at).toLocaleTimeString()}</time>{" "}
-            · <strong>{step.kind}</strong> · <span className="badge">{step.status}</span> ·{" "}
+            · <strong>{step.kind}</strong> · <StateBadge machine="step" state={step.status} /> ·{" "}
             {describeStep(step.metadata)}
           </li>
         ))}
