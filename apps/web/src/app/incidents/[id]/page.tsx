@@ -60,7 +60,8 @@ function DiagnosisPanel({ incident }: { incident: IncidentDetail }) {
     <section className="panel stack" aria-labelledby="diagnosis-heading">
       <div className="row-between">
         <h2 id="diagnosis-heading">
-          Diagnosis <span className="subtitle heading-note">· a hypothesis, not a confirmed cause</span>
+          Diagnosis{" "}
+          <span className="subtitle heading-note">· a hypothesis, not a confirmed cause</span>
         </h2>
         <span className="confidence" aria-label={`Confidence ${d.confidence_level} (categorical)`}>
           <span className="subtitle">Confidence</span>
@@ -104,7 +105,9 @@ function DiagnosisPanel({ incident }: { incident: IncidentDetail }) {
           </ul>
         </div>
       ) : null}
-      {report.needs_human_review ? <p className="error">The agent asked for human review.</p> : null}
+      {report.needs_human_review ? (
+        <p className="error">The agent asked for human review.</p>
+      ) : null}
       {run ? (
         <Link href={`/investigations/${run.id}`}>
           View investigation trajectory ({run.step_count} steps, {run.tool_call_count} tool calls) →
@@ -118,7 +121,10 @@ function ActionsPanel({ incident }: { incident: IncidentDetail }) {
   const proposed = incident.diagnosis?.proposed_action ?? null;
   const pending = incident.actions.find((a) => a.state === "PENDING_APPROVAL");
   return (
-    <section className={pending ? "panel stack panel-attention" : "panel stack"} aria-labelledby="actions-heading">
+    <section
+      className={pending ? "panel stack panel-attention" : "panel stack"}
+      aria-labelledby="actions-heading"
+    >
       <h2 id="actions-heading">Actions</h2>
       {incident.actions.length === 0 ? (
         proposed ? (
@@ -143,7 +149,9 @@ function ActionsPanel({ incident }: { incident: IncidentDetail }) {
               {action.state === "PENDING_APPROVAL" ? (
                 <span className="subtitle">
                   expires{" "}
-                  <time dateTime={action.expires_at}>{new Date(action.expires_at).toLocaleTimeString()}</time>
+                  <time dateTime={action.expires_at}>
+                    {new Date(action.expires_at).toLocaleTimeString()}
+                  </time>
                 </span>
               ) : null}
             </li>
@@ -176,7 +184,8 @@ async function IncidentView({ params }: { params: Promise<{ id: string }> }) {
             <h1 id="incident-title">{incident.dedup_key}</h1>
             <span className="subtitle">
               {incident.service_id} · {incident.environment} · {incident.severity} · opened{" "}
-              {formatAge(incident.created_at, now)} ago · <code>{incident.id}</code> · v{incident.version}
+              {formatAge(incident.created_at, now)} ago · <code>{incident.id}</code> · v
+              {incident.version}
             </span>
           </div>
           <StateBadge machine="incident" state={incident.state} />
@@ -185,7 +194,9 @@ async function IncidentView({ params }: { params: Promise<{ id: string }> }) {
           label="Incident lifecycle"
           lifecycle={incidentLifecycle(
             incident.state,
-            visitedStates(incident.timeline.filter((e) => e.kind === "audit").map((e) => e.summary)),
+            visitedStates(
+              incident.timeline.filter((e) => e.kind === "audit").map((e) => e.summary),
+            ),
           )}
         />
         {incident.escalation_reason ? (

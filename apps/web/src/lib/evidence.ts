@@ -16,7 +16,9 @@ export function evidenceHref(runId: string | null, evidenceId: string): string |
 
 /** Short, still-recognisable form of a long record id: prefix plus last six characters. */
 export function shortId(id: string): string {
-  const [prefix, rest] = id.includes("_") ? [id.slice(0, id.indexOf("_") + 1), id.slice(id.indexOf("_") + 1)] : ["", id];
+  const [prefix, rest] = id.includes("_")
+    ? [id.slice(0, id.indexOf("_") + 1), id.slice(id.indexOf("_") + 1)]
+    : ["", id];
   return rest.length <= 8 ? id : `${prefix}…${rest.slice(-6)}`;
 }
 

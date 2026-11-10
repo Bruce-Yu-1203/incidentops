@@ -23,7 +23,9 @@ export function Stepper({ lifecycle, label }: { lifecycle: Lifecycle; label: str
         ))}
       </ol>
       {lifecycle.exits.length > 0 ? (
-        <p className="subtitle step-exits">Possible exits from here: {lifecycle.exits.join(" · ")}</p>
+        <p className="subtitle step-exits">
+          Possible exits from here: {lifecycle.exits.join(" · ")}
+        </p>
       ) : null}
     </div>
   );

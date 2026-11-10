@@ -34,10 +34,30 @@ async function ApiStatus() {
 }
 
 const BUCKETS: { bucket: AttentionBucket; title: string; hint: string; tone: Tone }[] = [
-  { bucket: "awaiting_approval", title: "Awaiting approval", hint: "An approver must decide", tone: "attention" },
-  { bucket: "escalated", title: "Escalated", hint: "Automation stopped; a human owns it", tone: "danger" },
-  { bucket: "in_progress", title: "In progress", hint: "Investigating, executing or verifying", tone: "progress" },
-  { bucket: "failed", title: "Platform failure", hint: "IncidentOps itself failed", tone: "danger" },
+  {
+    bucket: "awaiting_approval",
+    title: "Awaiting approval",
+    hint: "An approver must decide",
+    tone: "attention",
+  },
+  {
+    bucket: "escalated",
+    title: "Escalated",
+    hint: "Automation stopped; a human owns it",
+    tone: "danger",
+  },
+  {
+    bucket: "in_progress",
+    title: "In progress",
+    hint: "Investigating, executing or verifying",
+    tone: "progress",
+  },
+  {
+    bucket: "failed",
+    title: "Platform failure",
+    hint: "IncidentOps itself failed",
+    tone: "danger",
+  },
 ];
 
 function NeedsAttention({ incidents, now }: { incidents: IncidentSummary[]; now: Date }) {
@@ -148,7 +168,10 @@ async function IncidentList({ searchParams }: { searchParams: Promise<{ view?: s
                     <td>{incident.service_id}</td>
                     <td>{incident.severity}</td>
                     <td>
-                      <time dateTime={incident.created_at} title={new Date(incident.created_at).toLocaleString()}>
+                      <time
+                        dateTime={incident.created_at}
+                        title={new Date(incident.created_at).toLocaleString()}
+                      >
                         {formatAge(incident.created_at, now)}
                       </time>
                     </td>

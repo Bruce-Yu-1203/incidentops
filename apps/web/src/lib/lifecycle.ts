@@ -141,7 +141,10 @@ export function actionLifecycle(
   } else {
     steps.push({
       label: VERIFY_STEP,
-      status: steps.some((s) => s.status === "skipped") || isTerminal("action", state) ? "skipped" : "upcoming",
+      status:
+        steps.some((s) => s.status === "skipped") || isTerminal("action", state)
+          ? "skipped"
+          : "upcoming",
       tone: "neutral",
     });
   }
@@ -151,7 +154,5 @@ export function actionLifecycle(
 /** Incident states recorded in audit timeline summaries such as "incident_created: RECEIVED". */
 export function visitedStates(summaries: readonly string[]): string[] {
   const known = new Set<string>([...INCIDENT_MAIN_PATH, "INSUFFICIENT_EVIDENCE", "DIAGNOSED_ONLY"]);
-  return summaries
-    .map((s) => s.split(":").pop()?.trim() ?? "")
-    .filter((s) => known.has(s));
+  return summaries.map((s) => s.split(":").pop()?.trim() ?? "").filter((s) => known.has(s));
 }

@@ -3,7 +3,11 @@ import { describe, expect, it } from "vitest";
 import { filterIncidents, formatAge, groupAttention, parseView } from "./attention";
 import type { IncidentSummary } from "./incidents";
 
-const incident = (id: string, state: IncidentSummary["state"], created_at: string): IncidentSummary => ({
+const incident = (
+  id: string,
+  state: IncidentSummary["state"],
+  created_at: string,
+): IncidentSummary => ({
   id,
   dedup_key: `key-${id}`,
   service_id: "lab-consumer",

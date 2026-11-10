@@ -2,7 +2,13 @@ import type { Outcome } from "@/lib/outcomes";
 
 import { ToneIcon } from "./state-badge";
 
-export function OutcomeBanner({ outcome, children }: { outcome: Outcome; children?: React.ReactNode }) {
+export function OutcomeBanner({
+  outcome,
+  children,
+}: {
+  outcome: Outcome;
+  children?: React.ReactNode;
+}) {
   return (
     <section
       className={`outcome tone-${outcome.tone}`}
