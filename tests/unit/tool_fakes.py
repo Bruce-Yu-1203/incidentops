@@ -24,6 +24,9 @@ class FakeBackend:
         self.paused = True
         self.brokers = 1.0
         self.revisions: dict[str, str] = {}
+        # PromQL fragment -> series values, to shape specific readings in tests.
+        self.overrides: dict[str, list[float]] = {}
+        self.db_locked = True
         self.deployments: dict[str, Any] = {
             "service_id": "lab-api",
             "current_release": "rel-1",
@@ -46,6 +49,9 @@ class FakeBackend:
         self.queries.append(query)
         if "kafka_consumergroup_lag" in query:
             return [Series({"partition": "0"}, self.lag)]
+        for fragment, values in self.overrides.items():
+            if fragment in query:
+                return [Series({}, [(NOW.timestamp() - 60 + i, v) for i, v in enumerate(values)])]
         if "kafka_brokers" in query:
             return [
                 Series({}, [(NOW.timestamp() - 60, self.brokers), (NOW.timestamp(), self.brokers)])
@@ -56,7 +62,8 @@ class FakeBackend:
         await self._maybe_slow()
         self.queries.append(query)
         if "pg_locks_count" in query:
-            return [Series({"mode": "accessexclusivelock"}, [(NOW.timestamp(), 1.0)])]
+            mode = "accessexclusivelock" if self.db_locked else "accesssharelock"
+            return [Series({"mode": mode}, [(NOW.timestamp(), 1.0)])]
         return [Series({}, [(NOW.timestamp(), 1.0)])]
 
     async def loki_query(

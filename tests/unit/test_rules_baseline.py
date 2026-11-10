@@ -61,7 +61,92 @@ async def test_non_matching_signals_do_not_propose_resume(
 async def test_api_incident_with_exclusive_lock() -> None:
     report = (await _run("lab-api", FakeBackend()))["report"]
     assert report["diagnosis"]["root_cause_id"] == "postgres_lock_contention"
-    assert report.get("proposed_action") is None
+    assert report["proposed_action"]["action_type"] == "release_lab_db_blocker"
+    assert report["proposed_action"]["target_id"] == "lab-postgres"
+
+
+def _api_backend(**overrides: list[float]) -> FakeBackend:
+    backend = FakeBackend()
+    backend.db_locked = False
+    backend.overrides = {
+        "redis_up": [1, 1, 1],
+        "process_cpu_seconds_total": [0.05, 0.05],
+        "process_resident_memory_bytes": [1.0e8, 1.0e8],
+        "lab_api_http_requests_total": [0.0, 0.0],
+    }
+    backend.overrides.update(overrides)
+    return backend
+
+
+def _deployed(backend: FakeBackend) -> FakeBackend:
+    backend.deployments = {
+        "service_id": "lab-api",
+        "current_release": "rel-2",
+        "pinned_healthy_release": "rel-1",
+        "history": [{"release_id": "rel-2", "deployed_at": "2026-11-10T12:00:00Z"}],
+    }
+    return backend
+
+
+@pytest.mark.parametrize(
+    ("service", "backend", "root_cause", "action", "target"),
+    [
+        (
+            "lab-redis",
+            _api_backend(redis_up=[1, 0, 0]),
+            "redis_unavailable",
+            "restart_lab_dependency",
+            "lab-redis",
+        ),
+        (
+            "lab-api",
+            _api_backend(redis_up=[1, 0, 0]),
+            "redis_unavailable",
+            "restart_lab_dependency",
+            "lab-redis",
+        ),
+        (
+            "lab-api",
+            _api_backend(process_cpu_seconds_total=[0.1, 0.9]),
+            "cpu_saturation",
+            "stop_lab_cpu_load",
+            "lab-cpu-load",
+        ),
+        (
+            "lab-api",
+            _deployed(_api_backend(process_resident_memory_bytes=[1.0e8, 3.0e8])),
+            "application_memory_leak",
+            "rollback_demo_api",
+            "lab-api",
+        ),
+        (
+            "lab-api",
+            _deployed(_api_backend(lab_api_http_requests_total=[0.3, 0.3])),
+            "bad_deployment",
+            "rollback_demo_api",
+            "lab-api",
+        ),
+        (
+            "lab-api",
+            _api_backend(lab_api_http_requests_total=[0.2, 0.08]),
+            "insufficient_evidence",
+            None,
+            None,
+        ),  # B-N01: errors without a cause
+    ],
+)
+async def test_api_family_rules(
+    service: str, backend: FakeBackend, root_cause: str, action: str | None, target: str | None
+) -> None:
+    report = (await _run(service, backend))["report"]
+    assert report["diagnosis"]["root_cause_id"] == root_cause
+    proposed = report.get("proposed_action")
+    if action is None:
+        assert proposed is None
+    else:
+        assert (proposed["action_type"], proposed["target_id"]) == (action, target)
+        if action == "rollback_demo_api":
+            assert proposed["arguments"] == {"target_release": "rel-1"}
 
 
 def test_baseline_identifies_itself() -> None:

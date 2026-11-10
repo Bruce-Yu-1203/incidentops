@@ -78,8 +78,8 @@ class RulesBaselineAdapter:
         evidence = [r["evidence_id"] for r in results.values() if r.get("evidence_id")]
         if service == self._group:
             return self._consumer_rules(results, evidence)
-        if service == "lab-api":
-            return self._api_rules(results, evidence)
+        if service in {"lab-api", "lab-redis"}:
+            return self._api_rules(results, evidence, service)
         return _report("insufficient_evidence", service, "low", "No rules for service.", evidence)
 
     def _first_reads(self, service: str) -> ModelTurn:
@@ -112,19 +112,25 @@ class RulesBaselineAdapter:
                     ),
                 ]
             )
-        if service == "lab-api":
+        if service in {"lab-api", "lab-redis"}:
+            # The API and its dependencies are read together: one fault on a
+            # dependency usually surfaces as API symptoms too.
+            def metric(call_id: str, template: str, target: str) -> ToolCall:
+                return ToolCall(
+                    call_id,
+                    "query_metrics",
+                    {"template_id": template, "service_id": target, "lookback_minutes": 5},
+                )
+
             return ModelTurn(
                 tool_calls=[
-                    ToolCall(
-                        "errors",
-                        "query_metrics",
-                        {
-                            "template_id": "api_error_ratio",
-                            "service_id": "lab-api",
-                            "lookback_minutes": 5,
-                        },
-                    ),
+                    metric("errors", "api_error_ratio", "lab-api"),
+                    metric("latency", "api_latency_p95", "lab-api"),
+                    metric("cpu", "api_cpu_cores", "lab-api"),
+                    metric("memory", "api_memory_bytes", "lab-api"),
+                    metric("redis", "redis_up", "lab-redis"),
                     ToolCall("pg", "get_postgres_health", {"service_id": "lab-postgres"}),
+                    ToolCall("deploys", "get_recent_deployments", {"service_id": "lab-api"}),
                 ]
             )
         return ModelTurn(tool_calls=[])
@@ -167,20 +173,137 @@ class RulesBaselineAdapter:
             evidence,
         )
 
-    def _api_rules(self, results: dict[str, dict[str, Any]], evidence: list[str]) -> ModelTurn:
+    def _api_rules(
+        self, results: dict[str, dict[str, Any]], evidence: list[str], service: str
+    ) -> ModelTurn:
+        """Fixed precedence: dependency faults first, then resources, then releases."""
         pg = results.get("pg", {}).get("summary", "")
+        redis_last = _last(results.get("redis", {}).get("summary", ""))
+        cpu_last = _last(results.get("cpu", {}).get("summary", ""))
+        errors_last = _last(results.get("errors", {}).get("summary", ""))
+        memory = results.get("memory", {}).get("summary", "")
+        memory_growth = (_last(memory) or 0.0) - (_first(memory) or 0.0)
+        deploys = _data(results.get("deploys", {}))
+        new_release = bool(
+            deploys
+            and deploys.get("current_release")
+            and deploys.get("current_release") != deploys.get("pinned_healthy_release")
+        )
+        pinned = str(deploys.get("pinned_healthy_release") or "rel-1")
+
         if "accessexclusivelock" in pg:
             return _report(
                 "postgres_lock_contention",
                 "lab-postgres",
                 "medium",
-                "An exclusive lock is held while API errors rise.",
+                "An exclusive lock is held on the lab database while API requests fail.",
                 evidence,
+                _action(
+                    "release_lab_db_blocker",
+                    "lab-postgres",
+                    {},
+                    "Release the known blocking lab transaction.",
+                ),
+            )
+        if redis_last == 0.0:
+            return _report(
+                "redis_unavailable",
+                "lab-redis",
+                "high",
+                "The lab Redis exporter reports Redis down while cache-backed requests fail.",
+                evidence,
+                _action(
+                    "restart_lab_dependency",
+                    "lab-redis",
+                    {},
+                    "Restart the registered lab Redis dependency.",
+                ),
+            )
+        if cpu_last is not None and cpu_last > CPU_SATURATED_CORES:
+            return _report(
+                "cpu_saturation",
+                "lab-api",
+                "medium",
+                f"lab-api uses {cpu_last:.2f} CPU cores.",
+                evidence,
+                _action(
+                    "stop_lab_cpu_load",
+                    "lab-cpu-load",
+                    {},
+                    "Stop the registered background load generator.",
+                ),
+            )
+        if new_release and memory_growth > MEMORY_GROWTH_BYTES:
+            return _report(
+                "application_memory_leak",
+                "lab-api",
+                "medium",
+                f"Memory grew {memory_growth / 1e6:.0f} MB after release "
+                f"{deploys.get('current_release')}.",
+                evidence,
+                _action(
+                    "rollback_demo_api",
+                    "lab-api",
+                    {"target_release": pinned},
+                    "Roll back to the pinned healthy release.",
+                ),
+            )
+        if new_release and errors_last is not None and errors_last > ERROR_RATIO:
+            return _report(
+                "bad_deployment",
+                "lab-api",
+                "medium",
+                f"Errors at {errors_last:.0%} after release {deploys.get('current_release')}.",
+                evidence,
+                _action(
+                    "rollback_demo_api",
+                    "lab-api",
+                    {"target_release": pinned},
+                    "Roll back to the pinned healthy release.",
+                ),
             )
         return _report(
             "insufficient_evidence",
-            "lab-api",
+            service,
             "low",
-            "API symptoms without a matching dependency signal.",
+            "Symptoms without a matching dependency, resource or release signal.",
             evidence,
         )
+
+
+CPU_SATURATED_CORES: Final = 0.6
+MEMORY_GROWTH_BYTES: Final = 30_000_000
+ERROR_RATIO: Final = 0.05
+_LAST = re.compile(r"last=([-0-9.e+]+)")
+_FIRST = re.compile(r"first=([-0-9.e+]+)")
+
+
+def _last(summary: str) -> float | None:
+    match = _LAST.search(summary)
+    return float(match.group(1)) if match else None
+
+
+def _first(summary: str) -> float | None:
+    match = _FIRST.search(summary)
+    return float(match.group(1)) if match else None
+
+
+def _data(result: dict[str, Any]) -> dict[str, Any]:
+    raw = result.get("untrusted_data")
+    try:
+        value = json.loads(raw) if isinstance(raw, str) else None
+    except json.JSONDecodeError:
+        return {}
+    return value if isinstance(value, dict) else {}
+
+
+def _action(
+    action_type: str, target_id: str, arguments: dict[str, Any], reason: str
+) -> dict[str, Any]:
+    return {
+        "action_type": action_type,
+        "environment": "fault-lab",
+        "target_id": target_id,
+        "arguments": arguments,
+        "reason": reason,
+    }
