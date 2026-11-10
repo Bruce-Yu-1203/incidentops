@@ -4,12 +4,14 @@ import { Suspense } from "react";
 
 import { StateBadge } from "@/components/state-badge";
 import { Stepper } from "@/components/stepper";
+import { Timeline } from "@/components/timeline";
 import { apiBaseUrl } from "@/lib/api";
 import { formatAge } from "@/lib/attention";
 import { CONFIDENCE_LEVELS, diagnosisRun, evidenceHref, shortId } from "@/lib/evidence";
 import { fetchIncident, type IncidentDetail } from "@/lib/incidents";
 import { incidentLifecycle, visitedStates } from "@/lib/lifecycle";
 import { sessionFetch } from "@/lib/session";
+import { buildTimeline } from "@/lib/timeline";
 
 function EvidenceChips({
   ids,
@@ -246,14 +248,7 @@ async function IncidentView({ params }: { params: Promise<{ id: string }> }) {
 
         <aside className="col-side panel stack" aria-labelledby="timeline-heading">
           <h2 id="timeline-heading">Timeline</h2>
-          <ol className="timeline">
-            {incident.timeline.map((entry) => (
-              <li key={`${entry.kind}-${entry.reference_id}`}>
-                <time dateTime={entry.at}>{new Date(entry.at).toLocaleString()}</time> ·{" "}
-                <strong>{entry.kind}</strong> · {entry.summary}
-              </li>
-            ))}
-          </ol>
+          <Timeline items={buildTimeline(incident.timeline)} />
         </aside>
       </div>
     </>

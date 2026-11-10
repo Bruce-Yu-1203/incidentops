@@ -676,3 +676,56 @@ code {
   border: none;
   border-radius: 0;
 }
+
+.vtimeline {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.vtimeline li {
+  display: flex;
+  gap: 12px;
+  position: relative;
+  padding-bottom: 14px;
+}
+
+/* Rail between consecutive icons. */
+.vtimeline li:not(:last-child)::before {
+  content: "";
+  position: absolute;
+  left: 12px;
+  top: 28px;
+  bottom: 2px;
+  width: 2px;
+  background: var(--border);
+}
+
+.vt-icon {
+  flex: none;
+  width: 26px;
+  height: 26px;
+  border-radius: 50%;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--tone-fg);
+  background: var(--tone-bg);
+}
+
+.vt-body {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  font-size: 13px;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.vt-title {
+  font-weight: 600;
+}
+
+.vt-time {
+  font-size: 12px;
+}
