@@ -2,6 +2,7 @@ import Link from "next/link";
 import { connection } from "next/server";
 import { Suspense } from "react";
 
+import { AutoRefresh } from "@/components/auto-refresh";
 import { StateBadge } from "@/components/state-badge";
 import { Stepper } from "@/components/stepper";
 import { Timeline } from "@/components/timeline";
@@ -10,6 +11,7 @@ import { formatAge } from "@/lib/attention";
 import { CONFIDENCE_LEVELS, diagnosisRun, evidenceHref, shortId } from "@/lib/evidence";
 import { fetchIncident, type IncidentDetail } from "@/lib/incidents";
 import { incidentLifecycle, visitedStates } from "@/lib/lifecycle";
+import { incidentIsLive } from "@/lib/refresh";
 import { sessionFetch } from "@/lib/session";
 import { buildTimeline } from "@/lib/timeline";
 
@@ -178,6 +180,7 @@ async function IncidentView({ params }: { params: Promise<{ id: string }> }) {
   const now = new Date();
   return (
     <>
+      <AutoRefresh active={incidentIsLive(incident, incident.actions)} />
       <section className="panel stack" aria-labelledby="incident-title">
         <div className="row-between">
           <div className="stack-sm">

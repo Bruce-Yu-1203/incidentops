@@ -2,6 +2,7 @@ import Link from "next/link";
 import { connection } from "next/server";
 import { Suspense } from "react";
 
+import { AutoRefresh } from "@/components/auto-refresh";
 import { ProgressBar } from "@/components/progress-bar";
 import { StateBadge, ToneIcon } from "@/components/state-badge";
 import { apiBaseUrl, fetchHealth } from "@/lib/api";
@@ -15,6 +16,7 @@ import {
 } from "@/lib/attention";
 import { fetchIncidents, type IncidentSummary } from "@/lib/incidents";
 import { incidentLifecycle } from "@/lib/lifecycle";
+import { listIsLive } from "@/lib/refresh";
 import { sessionFetch } from "@/lib/session";
 import type { Tone } from "@/lib/states";
 
@@ -119,6 +121,7 @@ async function IncidentList({ searchParams }: { searchParams: Promise<{ view?: s
   const shown = filterIncidents(result.data, view);
   return (
     <>
+      <AutoRefresh active={listIsLive(result.data)} />
       <NeedsAttention incidents={result.data} now={now} />
       <section aria-labelledby="incidents-heading" className="stack">
         <div className="row-between">

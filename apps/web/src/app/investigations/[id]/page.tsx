@@ -2,8 +2,10 @@ import Link from "next/link";
 import { connection } from "next/server";
 import { Suspense } from "react";
 
+import { AutoRefresh } from "@/components/auto-refresh";
 import { StateBadge } from "@/components/state-badge";
 import { apiBaseUrl } from "@/lib/api";
+import { runIsLive } from "@/lib/refresh";
 import { sessionFetch } from "@/lib/session";
 import { fetchRun, safeSourceUrl } from "@/lib/investigations";
 
@@ -28,6 +30,7 @@ async function RunView({ params }: { params: Promise<{ id: string }> }) {
   const run = result.data;
   return (
     <>
+      <AutoRefresh active={runIsLive(run)} />
       <h1>Investigation {run.id}</h1>
       <p>
         <Link href={`/incidents/${run.incident_id}`}>← Incident</Link>

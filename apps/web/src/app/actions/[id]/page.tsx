@@ -2,6 +2,7 @@ import Link from "next/link";
 import { connection } from "next/server";
 import { Suspense } from "react";
 
+import { AutoRefresh } from "@/components/auto-refresh";
 import { CopyButton } from "@/components/copy-button";
 import { Countdown } from "@/components/countdown";
 import { OutcomeBanner } from "@/components/outcome-banner";
@@ -14,6 +15,7 @@ import { shortHash } from "@/lib/countdown";
 import { shortId } from "@/lib/evidence";
 import { actionLifecycle } from "@/lib/lifecycle";
 import { actionOutcome, sortChecks } from "@/lib/outcomes";
+import { actionIsLive } from "@/lib/refresh";
 import { sessionFetch } from "@/lib/session";
 
 import { approveAction, cancelAction, rejectAction } from "./decisions";
@@ -56,6 +58,7 @@ async function ActionView({
 
   return (
     <>
+      <AutoRefresh active={actionIsLive(action)} />
       <p className="crumb">
         <Link href={`/incidents/${action.incident_id}`}>← Incident</Link>
       </p>
