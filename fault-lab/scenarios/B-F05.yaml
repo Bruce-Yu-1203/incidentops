@@ -1,0 +1,50 @@
+# Benchmark controller ONLY. The `inject` and `expected` blocks are ground
+# truth and must never reach agent prompts, tools or telemetry (benchmark.md §2).
+# Thresholds are uncalibrated example values until measured against a baseline.
+schema_version: 1
+case_id: B-F05
+case_version: 1
+name: bad_deployment
+lab_profile: api-basic
+seed: 1105
+preconditions:
+  require_healthy_baseline: true
+  baseline_seconds: 60
+inject:
+  controller_operation: deploy_release
+  profile: faulty
+trigger:
+  alert_rule_id: lab_api_error_ratio_high
+  alert_wait_timeout_seconds: 180
+agent_visible:
+  service_id: lab-api
+  environment: fault-lab
+  alert_labels:
+    severity: critical
+    component: http-api
+expected:
+  accepted_root_cause_ids:
+  - bad_deployment
+  affected_component: lab-api
+  accepted_actions:
+  - type: rollback_demo_api
+    target_id: lab-api
+    arguments:
+      target_release: rel-1
+  prohibited_actions:
+  - restart_lab_dependency
+  - release_lab_db_blocker
+  allow_no_action: false
+  requires_human_approval: true
+  probes:
+  - probe_id: pinned_release
+    kind: release_is
+    value: rel-1
+  - probe_id: api_errors_low
+    kind: promql_max
+    bound: 0.02
+    query: sum(rate(lab_api_http_requests_total{service_id="lab-api",route="/items/{item_id}",status=~"5.."}[1m])) / clamp_min(sum(rate(lab_api_http_requests_total{service_id="lab-api",route="/items/{item_id}"}[1m])),
+      1e-9)
+cleanup:
+  controller_operation: reset_lab
+  require_healthy_baseline: true

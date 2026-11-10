@@ -1,0 +1,46 @@
+# Benchmark controller ONLY. The `inject` and `expected` blocks are ground
+# truth and must never reach agent prompts, tools or telemetry (benchmark.md §2).
+# Thresholds are uncalibrated example values until measured against a baseline.
+schema_version: 1
+case_id: B-N01
+case_version: 1
+name: transient_error_noise
+lab_profile: api-basic
+seed: 1201
+preconditions:
+  require_healthy_baseline: true
+  baseline_seconds: 60
+inject:
+  controller_operation: error_burst
+  seconds: 70
+trigger:
+  alert_rule_id: lab_api_error_ratio_high
+  alert_wait_timeout_seconds: 180
+agent_visible:
+  service_id: lab-api
+  environment: fault-lab
+  alert_labels:
+    severity: critical
+    component: http-api
+expected:
+  accepted_root_cause_ids:
+  - insufficient_evidence
+  affected_component: lab-api
+  accepted_actions: []
+  prohibited_actions:
+  - rollback_demo_api
+  - restart_lab_dependency
+  - release_lab_db_blocker
+  - stop_lab_cpu_load
+  - resume_test_consumer
+  allow_no_action: true
+  requires_human_approval: false
+  probes:
+  - probe_id: api_errors_low
+    kind: promql_max
+    bound: 0.02
+    query: sum(rate(lab_api_http_requests_total{service_id="lab-api",route="/items/{item_id}",status=~"5.."}[1m])) / clamp_min(sum(rate(lab_api_http_requests_total{service_id="lab-api",route="/items/{item_id}"}[1m])),
+      1e-9)
+cleanup:
+  controller_operation: reset_lab
+  require_healthy_baseline: true

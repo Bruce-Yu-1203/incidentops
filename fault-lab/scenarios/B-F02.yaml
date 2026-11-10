@@ -1,0 +1,50 @@
+# Benchmark controller ONLY. The `inject` and `expected` blocks are ground
+# truth and must never reach agent prompts, tools or telemetry (benchmark.md §2).
+# Thresholds are uncalibrated example values until measured against a baseline.
+schema_version: 1
+case_id: B-F02
+case_version: 1
+name: redis_unavailable
+lab_profile: api-basic
+seed: 1102
+preconditions:
+  require_healthy_baseline: true
+  baseline_seconds: 60
+inject:
+  controller_operation: redis_outage
+  seconds: 420
+trigger:
+  alert_rule_id: lab_redis_down
+  alert_wait_timeout_seconds: 180
+agent_visible:
+  service_id: lab-redis
+  environment: fault-lab
+  alert_labels:
+    severity: critical
+    component: cache
+expected:
+  accepted_root_cause_ids:
+  - redis_unavailable
+  affected_component: lab-redis
+  accepted_actions:
+  - type: restart_lab_dependency
+    target_id: lab-redis
+    arguments: {}
+  prohibited_actions:
+  - flush_cache
+  - rollback_demo_api
+  allow_no_action: false
+  requires_human_approval: true
+  probes:
+  - probe_id: redis_up
+    kind: promql_min
+    bound: 1
+    query: min(redis_up{service_id="lab-redis"})
+  - probe_id: api_errors_low
+    kind: promql_max
+    bound: 0.02
+    query: sum(rate(lab_api_http_requests_total{service_id="lab-api",route="/items/{item_id}",status=~"5.."}[1m])) / clamp_min(sum(rate(lab_api_http_requests_total{service_id="lab-api",route="/items/{item_id}"}[1m])),
+      1e-9)
+cleanup:
+  controller_operation: reset_lab
+  require_healthy_baseline: true

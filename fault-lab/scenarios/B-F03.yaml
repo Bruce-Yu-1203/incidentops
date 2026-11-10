@@ -17,7 +17,7 @@ preconditions:
   baseline_seconds: 60
 
 inject:
-  controller_operation: pause_known_test_consumer
+  controller_operation: pause_consumer
   target_id: persist-demo-consumer
   keep_producer_running: true
   max_fault_duration_seconds: 300
@@ -49,6 +49,12 @@ expected:
     observation_window_seconds: 60
     sample_min_count: 5
     recovery_timeout_seconds: 180
+  probes:
+    - {probe_id: consumer_running, kind: consumer_running}
+    - probe_id: lag_bounded
+      kind: promql_max
+      query: 'sum(kafka_consumergroup_lag{consumergroup="persist-demo-consumer"})'
+      bound: 100
 
 cleanup:
   controller_operation: reset_known_test_consumer

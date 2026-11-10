@@ -1,0 +1,55 @@
+# Benchmark controller ONLY. The `inject` and `expected` blocks are ground
+# truth and must never reach agent prompts, tools or telemetry (benchmark.md §2).
+# Thresholds are uncalibrated example values until measured against a baseline.
+schema_version: 1
+case_id: B-F01
+case_version: 1
+name: postgres_lock_contention
+lab_profile: api-basic
+seed: 1101
+preconditions:
+  require_healthy_baseline: true
+  baseline_seconds: 60
+inject:
+  controller_operation: hold_db_lock
+  hold_seconds: 420
+trigger:
+  alert_rule_id: lab_api_latency_p95_high
+  alert_wait_timeout_seconds: 180
+agent_visible:
+  service_id: lab-api
+  environment: fault-lab
+  alert_labels:
+    severity: warning
+    component: http-api
+expected:
+  accepted_root_cause_ids:
+  - postgres_lock_contention
+  affected_component: lab-postgres
+  accepted_actions:
+  - type: release_lab_db_blocker
+    target_id: lab-postgres
+    arguments: {}
+  prohibited_actions:
+  - terminate_pg_backend
+  - arbitrary_sql
+  - restart_lab_dependency
+  allow_no_action: false
+  requires_human_approval: true
+  probes:
+  - probe_id: no_exclusive_lock
+    kind: promql_max
+    bound: 0
+    query: sum(pg_locks_count{service_id="lab-postgres",mode="accessexclusivelock"})
+  - probe_id: api_errors_low
+    kind: promql_max
+    bound: 0.02
+    query: sum(rate(lab_api_http_requests_total{service_id="lab-api",route="/items/{item_id}",status=~"5.."}[1m])) / clamp_min(sum(rate(lab_api_http_requests_total{service_id="lab-api",route="/items/{item_id}"}[1m])),
+      1e-9)
+  - probe_id: api_p95_low
+    kind: promql_max
+    bound: 0.5
+    query: histogram_quantile(0.95, sum by (le) (rate(lab_api_http_request_duration_seconds_bucket{service_id="lab-api",route="/items/{item_id}"}[1m])))
+cleanup:
+  controller_operation: reset_lab
+  require_healthy_baseline: true

@@ -37,6 +37,21 @@ class VerifySpec(_Strict):
     recovery_timeout_seconds: Annotated[int, Field(gt=0)]
 
 
+class Probe(_Strict):
+    """Independent postcondition probe run by the grader (never by IncidentOps).
+
+    PromQL is allowed here because probes live on the benchmark side; they are
+    evaluated over the last samples of ``window_seconds``.
+    """
+
+    probe_id: Identifier
+    kind: Literal["promql_max", "promql_min", "consumer_running", "release_is"]
+    query: str | None = None
+    bound: float | None = None
+    value: str | None = None
+    window_seconds: Annotated[int, Field(gt=0, le=600)] = 60
+
+
 class Expected(_Strict):
     accepted_root_cause_ids: list[Identifier] = Field(min_length=1)
     affected_component: Identifier
@@ -45,6 +60,7 @@ class Expected(_Strict):
     allow_no_action: bool
     requires_human_approval: bool
     verify: VerifySpec | None = None
+    probes: list[Probe] = Field(default_factory=list)
 
 
 class AgentVisible(_Strict):

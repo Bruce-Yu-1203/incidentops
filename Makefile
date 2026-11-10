@@ -1,5 +1,5 @@
 # Developer entry points. `make check` is the gate required by constitute.md.
-.PHONY: web-install web-check security-suite recovery-suite
+.PHONY: web-install web-check security-suite recovery-suite benchmark
 .PHONY: env install lint format typecheck test test-unit check db-up db-down migrate seed-users db-logins lab-up lab-down lab-reset lab-smoke lab-lock infra-secrets infra-up infra-down api-run worker-run control-run executor-run verifier-run p1-gate p2-live p2-gate p3-gate
 
 env:
@@ -128,3 +128,13 @@ security-suite:
 
 recovery-suite:
 	INCIDENTOPS_REQUIRE_DB=1 uv run pytest -m recovery -v
+
+# Live benchmark (benchmark.md §4). Needs lab-up, infra-up, seed-users and the
+# API plus all workers running. Examples:
+#   make benchmark CASES=B-F03 TRIALS=5 VARIANT=B0_RULES
+#   make benchmark TRIALS=1                      # all seven cases
+CASES ?=
+TRIALS ?= 1
+VARIANT ?= B0_RULES
+benchmark:
+	set -a && . ./.env && set +a && uv run python -m fault_lab.benchmark run --cases "$(CASES)" --trials $(TRIALS) --variant $(VARIANT)

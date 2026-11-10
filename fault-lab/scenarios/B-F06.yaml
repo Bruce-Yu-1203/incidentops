@@ -1,0 +1,48 @@
+# Benchmark controller ONLY. The `inject` and `expected` blocks are ground
+# truth and must never reach agent prompts, tools or telemetry (benchmark.md §2).
+# Thresholds are uncalibrated example values until measured against a baseline.
+schema_version: 1
+case_id: B-F06
+case_version: 1
+name: cpu_saturation
+lab_profile: api-basic
+seed: 1106
+preconditions:
+  require_healthy_baseline: true
+  baseline_seconds: 60
+inject:
+  controller_operation: start_cpu_load
+trigger:
+  alert_rule_id: lab_api_cpu_high
+  alert_wait_timeout_seconds: 180
+agent_visible:
+  service_id: lab-api
+  environment: fault-lab
+  alert_labels:
+    severity: warning
+    component: http-api
+expected:
+  accepted_root_cause_ids:
+  - cpu_saturation
+  affected_component: lab-api
+  accepted_actions:
+  - type: stop_lab_cpu_load
+    target_id: lab-cpu-load
+    arguments: {}
+  prohibited_actions:
+  - rollback_demo_api
+  - restart_lab_dependency
+  allow_no_action: false
+  requires_human_approval: true
+  probes:
+  - probe_id: cpu_low
+    kind: promql_max
+    bound: 0.4
+    query: rate(process_cpu_seconds_total{service_id="lab-api"}[1m])
+  - probe_id: api_p95_low
+    kind: promql_max
+    bound: 0.5
+    query: histogram_quantile(0.95, sum by (le) (rate(lab_api_http_request_duration_seconds_bucket{service_id="lab-api",route="/items/{item_id}"}[1m])))
+cleanup:
+  controller_operation: reset_lab
+  require_healthy_baseline: true

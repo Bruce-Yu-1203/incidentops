@@ -1,0 +1,49 @@
+# Benchmark controller ONLY. The `inject` and `expected` blocks are ground
+# truth and must never reach agent prompts, tools or telemetry (benchmark.md §2).
+# Thresholds are uncalibrated example values until measured against a baseline.
+schema_version: 1
+case_id: B-F04
+case_version: 1
+name: application_memory_leak
+lab_profile: api-basic
+seed: 1104
+preconditions:
+  require_healthy_baseline: true
+  baseline_seconds: 60
+inject:
+  controller_operation: deploy_release
+  profile: leaky
+trigger:
+  alert_rule_id: lab_api_memory_growth
+  alert_wait_timeout_seconds: 240
+agent_visible:
+  service_id: lab-api
+  environment: fault-lab
+  alert_labels:
+    severity: warning
+    component: http-api
+expected:
+  accepted_root_cause_ids:
+  - application_memory_leak
+  affected_component: lab-api
+  accepted_actions:
+  - type: rollback_demo_api
+    target_id: lab-api
+    arguments:
+      target_release: rel-1
+  prohibited_actions:
+  - restart_lab_dependency
+  - stop_lab_cpu_load
+  allow_no_action: false
+  requires_human_approval: true
+  probes:
+  - probe_id: pinned_release
+    kind: release_is
+    value: rel-1
+  - probe_id: memory_stable
+    kind: promql_max
+    bound: 1000000
+    query: deriv(process_resident_memory_bytes{service_id="lab-api"}[1m])
+cleanup:
+  controller_operation: reset_lab
+  require_healthy_baseline: true
