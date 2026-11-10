@@ -13,6 +13,7 @@ import { fetchIncident, type IncidentDetail } from "@/lib/incidents";
 import { incidentLifecycle, visitedStates } from "@/lib/lifecycle";
 import { incidentIsLive } from "@/lib/refresh";
 import { sessionFetch } from "@/lib/session";
+import { isTerminal } from "@/lib/states";
 import { buildTimeline } from "@/lib/timeline";
 
 function EvidenceChips({
@@ -205,6 +206,9 @@ async function IncidentView({ params }: { params: Promise<{ id: string }> }) {
         {incident.escalation_reason ? (
           <p className="error">Escalation reason: {incident.escalation_reason}</p>
         ) : null}
+        <Link href={`/incidents/${incident.id}/report`}>
+          {isTerminal("incident", incident.state) ? "Incident report →" : "Provisional report →"}
+        </Link>
       </section>
 
       <div className="columns">

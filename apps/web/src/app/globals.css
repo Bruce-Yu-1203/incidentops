@@ -915,3 +915,25 @@ button.small {
 .anchor-row:target {
   background: var(--tone-attention-bg);
 }
+
+.report-headline {
+  align-items: center;
+  margin: 0;
+}
+
+@media print {
+  .no-print,
+  .userbar,
+  .live {
+    display: none !important;
+  }
+
+  body {
+    background: #ffffff;
+  }
+
+  .panel {
+    break-inside: avoid;
+    border-color: #cccccc;
+  }
+}
