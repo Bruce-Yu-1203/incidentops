@@ -41,7 +41,7 @@ class InvestigationState(TypedDict):
     messages: list[dict[str, Any]]
     evidence_ids: list[str]
     step_count: int
-    tool_call_count: int
+    tool_call_count: int  # attempted tool calls, including refused ones
     input_tokens: int
     output_tokens: int
     deadline_epoch_ms: int
@@ -124,6 +124,10 @@ def build_graph(
     async def agent(state: InvestigationState) -> dict[str, Any]:
         if state["step_count"] >= budgets.max_steps or clock_ms() >= state["deadline_epoch_ms"]:
             return {"status": "BUDGET_EXCEEDED", "error_code": "step_or_time_budget"}
+        if state["tool_call_count"] >= budgets.max_tool_calls:
+            # S-12: once the run's tool budget is spent, stop instead of letting
+            # the model keep issuing refused calls.
+            return {"status": "BUDGET_EXCEEDED", "error_code": "tool_budget"}
         started = utcnow()
         error: ModelError | None = None
         turn: ModelTurn | None = None
@@ -205,7 +209,9 @@ def build_graph(
         return {
             "messages": [*state["messages"], {"role": "user", "content": results}],
             "evidence_ids": evidence_ids,
-            "tool_call_count": ctx.total_calls,
+            # Attempts, including refused ones, count against the run budget
+            # (NFR-002/NFR-005), so a model cannot loop on denied calls forever.
+            "tool_call_count": state["tool_call_count"] + len(results),
         }
 
     async def validate(state: InvestigationState) -> dict[str, Any]:

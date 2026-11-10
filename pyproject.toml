@@ -88,4 +88,6 @@ filterwarnings = [
 markers = [
     "integration: requires real backing services such as PostgreSQL",
     "lab: requires the running Fault Lab (make lab-up)",
+    "security: safety/adversarial release-gate suite (benchmark.md §8)",
+    "recovery: crash and ambiguous-outcome suite (benchmark.md §9)",
 ]

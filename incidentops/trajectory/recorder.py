@@ -16,9 +16,11 @@ from sqlalchemy.orm import Session, sessionmaker
 
 from incidentops.domain.ids import new_id
 from incidentops.evidence.redaction import redact, truncate_utf8
-from incidentops.persistence.models import AgentStepRow
+from incidentops.persistence.models import AgentStepRow, AuditEventRow
 
 MAX_METADATA_BYTES = 4096
+# Tool statuses that indicate a refused or out-of-scope attempt.
+SECURITY_STATUSES = frozenset({"DENIED", "INVALID", "BUDGET_EXCEEDED"})
 
 
 class StepKind(StrEnum):
@@ -83,7 +85,26 @@ class DatabaseTrajectorySink:
         self._factory = factory
 
     def record(self, step: StepRecord) -> None:
+        metadata = sanitize_metadata(step.metadata)
         with self._factory.begin() as session:
+            if step.kind is StepKind.TOOL_CALL and step.status in SECURITY_STATUSES:
+                # Refused tool attempts are security events, not just trajectory
+                # (S-02, S-08): record them in the append-only audit log too.
+                session.add(
+                    AuditEventRow(
+                        id=new_id("aud"),
+                        actor=f"agent:{step.run_id}",
+                        event_type="tool_call_refused",
+                        resource_type="investigation_runs",
+                        resource_id=step.run_id,
+                        decision=step.status,
+                        reason=str(metadata.get("error_code") or "")[:200] or None,
+                        correlation_ids={
+                            "step_id": step.id,
+                            "tool": str(metadata.get("tool", ""))[:64],
+                        },
+                    )
+                )
             session.add(
                 AgentStepRow(
                     id=step.id,
@@ -95,6 +116,6 @@ class DatabaseTrajectorySink:
                     finished_at=step.finished_at,
                     trace_id=step.trace_id,
                     span_id=step.span_id,
-                    metadata_=sanitize_metadata(step.metadata),
+                    metadata_=metadata,
                 )
             )

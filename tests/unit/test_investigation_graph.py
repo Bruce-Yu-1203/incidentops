@@ -249,3 +249,10 @@ def test_prompt_states_exact_action_argument_contract() -> None:
         in message
     )
     assert "exactly" in SYSTEM_PROMPT
+
+
+async def test_spent_tool_budget_ends_the_run() -> None:
+    model = ScriptedModelAdapter([lag_and_status()] * 10)
+    final, _ = await run(model, budgets=Budgets(max_tool_calls=4))
+    assert (final["status"], final["error_code"]) == ("BUDGET_EXCEEDED", "tool_budget")
+    assert final["tool_call_count"] == 4

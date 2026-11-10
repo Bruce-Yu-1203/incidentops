@@ -1,5 +1,5 @@
 # Developer entry points. `make check` is the gate required by constitute.md.
-.PHONY: web-install web-check
+.PHONY: web-install web-check security-suite recovery-suite
 .PHONY: env install lint format typecheck test test-unit check db-up db-down migrate seed-users db-logins lab-up lab-down lab-reset lab-smoke lab-lock infra-secrets infra-up infra-down api-run worker-run control-run executor-run verifier-run p1-gate p2-live p2-gate p3-gate
 
 env:
@@ -121,3 +121,10 @@ executor-run:
 
 verifier-run:
 	$(LOAD_ENV) && $(STRIP_EXECUTOR) && $(STRIP_MODEL) && $(call DB_AS,io_verifier,VERIFIER) uv run python -m incidentops.workers.verifier
+
+# Release-gate suites (benchmark.md §8, §9). They run inside `make check` too.
+security-suite:
+	INCIDENTOPS_REQUIRE_DB=1 uv run pytest -m security -v
+
+recovery-suite:
+	INCIDENTOPS_REQUIRE_DB=1 uv run pytest -m recovery -v
