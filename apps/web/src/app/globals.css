@@ -293,3 +293,70 @@ button.link {
   font-size: 12px;
   margin: 8px 0 0;
 }
+
+.outcome {
+  display: flex;
+  gap: 14px;
+  align-items: flex-start;
+  margin: 16px 0;
+  padding: 16px 18px;
+  border-radius: 10px;
+  background: var(--tone-bg);
+  border: 1px solid color-mix(in srgb, var(--tone-fg) 35%, transparent);
+}
+
+.outcome-icon {
+  flex: none;
+  width: 34px;
+  height: 34px;
+  border-radius: 50%;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--tone-fg);
+  color: var(--tone-bg);
+}
+
+.outcome-eyebrow {
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  color: var(--tone-fg);
+}
+
+.outcome-title {
+  font-size: 17px;
+}
+
+.outcome-next {
+  font-size: 14px;
+}
+
+.checks {
+  list-style: none;
+  padding: 0;
+  margin: 8px 0 0;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  overflow: hidden;
+}
+
+.checks li {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  align-items: center;
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--border);
+  font-size: 14px;
+}
+
+.checks li:last-child {
+  border-bottom: none;
+}
+
+.check-id {
+  flex: 1 1 200px;
+  font-family: ui-monospace, "SFMono-Regular", Menlo, monospace;
+  font-size: 13px;
+}

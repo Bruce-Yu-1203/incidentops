@@ -4,10 +4,12 @@ import { Suspense } from "react";
 
 import { fetchAction } from "@/lib/actions";
 import { StateBadge } from "@/components/state-badge";
+import { OutcomeBanner } from "@/components/outcome-banner";
 import { Stepper } from "@/components/stepper";
 import { apiBaseUrl } from "@/lib/api";
 import { fetchMe } from "@/lib/auth";
 import { actionLifecycle } from "@/lib/lifecycle";
+import { actionOutcome, sortChecks } from "@/lib/outcomes";
 import { sessionFetch } from "@/lib/session";
 
 import { approveAction, cancelAction, rejectAction } from "./decisions";
@@ -33,6 +35,8 @@ async function ActionView({
   const envelope = action.envelope;
   const pending = action.state === "PENDING_APPROVAL";
   const canDecide = pending && user?.role === "approver";
+  const outcome = actionOutcome(action);
+  const lastOperation = action.operations.at(-1);
   const canCancel = CANCELLABLE.has(action.state) && user !== null && user.role !== "viewer";
   const hidden = (
     <>
@@ -57,6 +61,19 @@ async function ActionView({
           action.decisions.some((d) => d.decision.toUpperCase().startsWith("APPROVE")),
         )}
       />
+      {outcome ? (
+        <OutcomeBanner outcome={outcome}>
+          {outcome.kind === "reconciling" && lastOperation ? (
+            <span className="subtitle">
+              Provider {lastOperation.provider} · operation{" "}
+              <code>{lastOperation.provider_operation_id ?? "not yet known"}</code> · last update{" "}
+              <time dateTime={lastOperation.updated_at}>
+                {new Date(lastOperation.updated_at).toLocaleTimeString()}
+              </time>
+            </span>
+          ) : null}
+        </OutcomeBanner>
+      ) : null}
       {done ? <p className="ok">Decision recorded: {done}</p> : null}
       {error ? <p className="error">Decision refused: {error}</p> : null}
 
@@ -160,9 +177,6 @@ async function ActionView({
           ))}
         </ul>
       )}
-      {action.state === "RECONCILING" ? (
-        <p className="error">Outcome unknown: reconciling by action ID; it will not be re-sent.</p>
-      ) : null}
 
       <h2>Independent verification</h2>
       {action.verifications.length === 0 ? (
@@ -171,13 +185,23 @@ async function ActionView({
         action.verifications.map((v) => (
           <div key={v.id} className="panel">
             <p>
-              <StateBadge machine="verification" state={v.outcome} />
+              <StateBadge machine="verification" state={v.outcome} />{" "}
+              <span className="subtitle">
+                window{" "}
+                <time dateTime={v.window_start}>{new Date(v.window_start).toLocaleTimeString()}</time>–
+                <time dateTime={v.window_end}>{new Date(v.window_end).toLocaleTimeString()}</time>
+              </span>
             </p>
-            <ul>
-              {v.checks.map((c) => (
+            <ul className="checks">
+              {sortChecks(v.checks).map((c) => (
                 <li key={c.check_id}>
-                  {c.check_id}: {c.passed === null ? "unknown" : c.passed ? "pass" : "fail"} —{" "}
-                  {c.observed}
+                  <StateBadge
+                    machine="verification"
+                    state={c.passed === null ? "UNKNOWN" : c.passed ? "PASSED" : "VERIFICATION_FAILED"}
+                    label={c.passed === null ? "unknown" : c.passed ? "pass" : "fail"}
+                  />
+                  <span className="check-id">{c.check_id}</span>
+                  <span>{c.observed}</span>
                 </li>
               ))}
             </ul>
