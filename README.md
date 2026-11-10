@@ -49,6 +49,15 @@ that alone may resolve an incident. Each process refuses other roles'
 credentials. `make p3-gate` runs the live loop (approve → resume → verified
 RESOLVED, and reject → zero lab mutations).
 
+Phase P5 (fault matrix and benchmark) is implemented: six fault families plus
+a no-action case (ADR-020), deterministic grading with independent probes, and
+reproducible reports (`make benchmark`). The first measured run (rules-only
+baseline B0, 5 trials per case, 35 trials) is in
+[docs/benchmark-results/2026-11-10-B0-rules](docs/benchmark-results/2026-11-10-B0-rules/summary.md):
+six cases 5/5, the memory-leak case 2/5 (explained in its `analysis.md`), and
+0 unauthorized mutations observed in 35 trials. These are small-sample
+measurements, not general claims.
+
 ### Running the full loop locally
 
 ```bash

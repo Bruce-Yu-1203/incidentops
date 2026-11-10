@@ -1,0 +1,27 @@
+{
+  "benchmark_version": "2.0",
+  "cases": [
+    "B-F01",
+    "B-F02",
+    "B-F03",
+    "B-F04",
+    "B-F05",
+    "B-F06",
+    "B-N01"
+  ],
+  "model_id": "rules-baseline-v1",
+  "order_seed": 2026,
+  "run_id": "20261110T203322Z-B0_RULES",
+  "scenario_versions": {
+    "B-F01": 1,
+    "B-F02": 1,
+    "B-F03": 1,
+    "B-F04": 1,
+    "B-F05": 1,
+    "B-F06": 1,
+    "B-N01": 1
+  },
+  "started_at": "2026-11-10T20:33:22.726794+00:00",
+  "trials_per_case": 5,
+  "variant": "B0_RULES"
+}
