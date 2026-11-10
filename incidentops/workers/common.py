@@ -38,6 +38,9 @@ async def process_next(
             if job is None:
                 continue
             job_id, payload, attempts = job.id, dict(job.payload), job.attempts
+        keeper = asyncio.create_task(
+            _keep_lease(factory, job_id, owner, lease_seconds), name=f"lease-{job_id}"
+        )
         try:
             await handler(payload, attempts)
         except Exception as exc:
@@ -47,10 +50,31 @@ async def process_next(
                     session, job_id, owner, type(exc).__name__, retry_delay_seconds, max_attempts
                 )
             return True
+        finally:
+            keeper.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await keeper
         with factory.begin() as session:
             outbox.complete(session, job_id, owner)
         return True
     return False
+
+
+async def _keep_lease(
+    factory: sessionmaker[Session], job_id: str, owner: str, lease_seconds: int
+) -> None:
+    """Renew the lease at a third of its length while the handler runs.
+
+    A long verification window then cannot be stolen by another worker, while
+    a crashed worker (no heartbeats) still loses the job after one lease.
+    """
+    interval = max(lease_seconds / 3, 0.05)
+    while True:
+        await asyncio.sleep(interval)
+        with factory.begin() as session:
+            if not outbox.heartbeat(session, job_id, owner, lease_seconds):
+                LOGGER.warning("lease on job %s was lost", job_id)
+                return
 
 
 async def run_forever(

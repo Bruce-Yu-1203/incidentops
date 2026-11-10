@@ -36,7 +36,6 @@ async def serve(settings: Settings) -> None:  # pragma: no cover - process entry
     factory = make_session_factory(make_engine(settings.control_database_url.get_secret_value()))
     catalog = load_catalog()
     config = load_verify_config()
-    longest = max((s.recovery_timeout_seconds for s in config.specs.values()), default=60)
     async with httpx.AsyncClient(timeout=5) as client:
         backend = HttpTelemetryBackend(
             client,
@@ -49,8 +48,8 @@ async def serve(settings: Settings) -> None:  # pragma: no cover - process entry
         verifier = RecoveryVerifier(
             factory, catalog, backend, ConsumerTargetInspector(catalog, backend), config
         )
-        # The lease outlives the longest observation so a slow check is not stolen.
-        await run_forever(factory, handlers(verifier), owner_id("verifier"), longest + 120)
+        # Heartbeats keep the lease while a long observation window runs.
+        await run_forever(factory, handlers(verifier), owner_id("verifier"), 60)
 
 
 def main() -> None:  # pragma: no cover

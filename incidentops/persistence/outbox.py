@@ -81,3 +81,18 @@ def release_for_retry(
     else:
         job.status = "PENDING"
         job.available_at = func.now() + timedelta(seconds=retry_delay_seconds)
+
+
+def heartbeat(session: Session, job_id: str, owner: str, lease_seconds: int) -> bool:
+    """Extend a held lease; returns False if this worker no longer owns the job."""
+    result = session.execute(
+        update(OutboxJobRow)
+        .where(
+            OutboxJobRow.id == job_id,
+            OutboxJobRow.lease_owner == owner,
+            OutboxJobRow.status == "LEASED",
+        )
+        .values(lease_until=func.now() + timedelta(seconds=lease_seconds))
+        .returning(OutboxJobRow.id)
+    )
+    return result.scalar_one_or_none() is not None
