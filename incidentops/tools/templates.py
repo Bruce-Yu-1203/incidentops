@@ -64,7 +64,9 @@ _ALL: Final = (
         "Share of HTTP responses with 5xx status over 1m windows",
         _API,
         lambda s: (
-            f'sum(rate(lab_api_http_requests_total{{{_sid(s)}, status=~"5.."}}[1m])) / '
+            # "or vector(0)": with no 5xx series yet the ratio is 0, not "no data".
+            f'(sum(rate(lab_api_http_requests_total{{{_sid(s)}, status=~"5.."}}[1m])) '
+            f"or vector(0)) / "
             f"clamp_min(sum(rate(lab_api_http_requests_total{{{_sid(s)}}}[1m])), 1e-9)"
         ),
         "ratio",

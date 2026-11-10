@@ -47,6 +47,7 @@ def _run(args: argparse.Namespace) -> int:
     run_id = datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ") + f"-{args.variant}"
     out_dir = Path(args.out) / run_id
     trials: list[dict[str, object]] = []
+    out_dir.parent.mkdir(parents=True, exist_ok=True)
     with httpx.Client(timeout=15) as client, httpx.Client(timeout=15) as api_client:
         api = IncidentOpsApi(api_client, args.api)
         api.login("approver", password)
@@ -63,7 +64,8 @@ def _run(args: argparse.Namespace) -> int:
             record = runner.run(manifest, trial_id)
             record["variant"] = args.variant
             trials.append(record)
-            print(f"[{trial_id}] {record['status']} {record.get('reasons') or ''}", flush=True)
+            detail = record.get("invalid_reason") or record.get("reasons") or ""
+            print(f"[{trial_id}] {record['status']} {detail}", flush=True)
             with (out_dir.parent / f"{run_id}.partial.jsonl").open("a", encoding="utf-8") as h:
                 h.write(json.dumps(record) + "\n")
     metadata = {

@@ -44,7 +44,7 @@ expected:
   - probe_id: api_errors_low
     kind: promql_max
     bound: 0.02
-    query: sum(rate(lab_api_http_requests_total{service_id="lab-api",route="/items/{item_id}",status=~"5.."}[1m])) / clamp_min(sum(rate(lab_api_http_requests_total{service_id="lab-api",route="/items/{item_id}"}[1m])),
+    query: (sum(rate(lab_api_http_requests_total{service_id="lab-api",route="/items/{item_id}",status=~"5.."}[1m])) or vector(0)) / clamp_min(sum(rate(lab_api_http_requests_total{service_id="lab-api",route="/items/{item_id}"}[1m])),
       1e-9)
   - probe_id: api_p95_low
     kind: promql_max
