@@ -12,6 +12,7 @@ approval, an isolated executor and an independent verifier. See:
   [Technology stack](docs/tech-stack.md) · [Roadmap](docs/roadmap.md) ·
   [Benchmark](docs/benchmark.md)
 - [Architecture decision records](docs/adr/)
+- [Failure modes and operator guide](docs/operations/failure-modes.md)
 
 ## Status
 
