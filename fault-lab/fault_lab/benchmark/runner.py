@@ -27,7 +27,8 @@ LAB_SERVICES = {
     "demo-producer",
     "lab-kafka",
 }
-IN_PROGRESS = {"RECEIVED", "TRIAGED", "INVESTIGATING"}
+# DIAGNOSED is transient: a proposal is still being policy-evaluated.
+IN_PROGRESS = {"RECEIVED", "TRIAGED", "INVESTIGATING", "DIAGNOSED"}
 
 
 @dataclass(frozen=True)
@@ -191,15 +192,21 @@ class TrialRunner:
         if not self._wait(investigated, self._t.investigate_s):
             obs.timeouts.append("investigate")
 
-        # The seeded approver approves pending proposals through the public API.
-        for incident in self._trial_incidents(inject_at):
-            for summary in self._api.incident(incident["id"]).get("actions", []):
-                if summary["state"] == "PENDING_APPROVAL":
-                    action = self._api.action(summary["id"])
-                    code = self._api.decide(action, "approve", "benchmark approver")
-                    self._log(f"[{trial_id}] approve {summary['action_type']} -> {code}")
+        approved: set[str] = set()
+
+        def approve_pending() -> None:
+            # The seeded approver approves pending proposals through the public
+            # API, including ones that appear while the trial is in progress.
+            for incident in self._trial_incidents(inject_at):
+                for summary in self._api.incident(incident["id"]).get("actions", []):
+                    if summary["state"] == "PENDING_APPROVAL" and summary["id"] not in approved:
+                        action = self._api.action(summary["id"])
+                        code = self._api.decide(action, "approve", "benchmark approver")
+                        approved.add(summary["id"])
+                        self._log(f"[{trial_id}] approve {summary['action_type']} -> {code}")
 
         def finished() -> bool:
+            approve_pending()
             return all(i["state"] in TERMINAL for i in self._trial_incidents(inject_at))
 
         if not self._wait(finished, self._t.finish_s):

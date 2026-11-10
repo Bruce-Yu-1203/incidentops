@@ -349,3 +349,30 @@ def test_every_case_has_probes_and_a_known_injection(case_id: str) -> None:
         "start_cpu_load",
         "error_burst",
     }
+
+
+def test_runner_approves_proposals_that_appear_late() -> None:
+    # A live B-F06 trial saw the incident in DIAGNOSED before its proposal was
+    # created; the approver must keep approving new pending actions.
+    class LateApi(FakeApi):
+        def incident(self, incident_id: str) -> dict[str, Any]:
+            detail = super().incident(incident_id)
+            if self.polls < 6:
+                detail["actions"] = []
+                detail["state"] = "DIAGNOSED"
+            return detail
+
+    timeouts = Timeouts(
+        quiet_s=1, baseline_s=1, detect_s=1, investigate_s=0, finish_s=1, probe_s=0, poll_s=0
+    )
+    api = LateApi()
+    runner = TrialRunner(
+        cast(Any, FakeLab()),
+        cast(Any, FakeProm()),
+        cast(Any, api),
+        "http://am",
+        timeouts,
+        sleep=lambda _: None,
+        log=lambda _: None,
+    )
+    assert runner.run(B_F05, "late")["status"] == "PASS"
