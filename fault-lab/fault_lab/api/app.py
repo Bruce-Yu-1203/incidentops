@@ -7,6 +7,7 @@ a server span and the database call a child span for trace correlation.
 
 from __future__ import annotations
 
+import hmac
 import logging
 import os
 import time
@@ -14,13 +15,22 @@ from collections.abc import AsyncIterator, Awaitable, Callable
 from contextlib import asynccontextmanager
 from typing import Annotated, Any, Protocol
 
-from fastapi import FastAPI, HTTPException, Path, Request, Response
+from fastapi import FastAPI, Header, HTTPException, Path, Request, Response
 from fastapi.responses import PlainTextResponse
 from opentelemetry import trace
 from opentelemetry.trace import SpanKind, Status, StatusCode
-from prometheus_client import CollectorRegistry, Counter, Histogram, generate_latest
+from prometheus_client import (
+    CollectorRegistry,
+    Counter,
+    Gauge,
+    Histogram,
+    ProcessCollector,
+    generate_latest,
+)
+from pydantic import BaseModel, ConfigDict, Field
 
 from fault_lab import telemetry
+from fault_lab.api.behaviour import Behaviour, InjectedFailureError, Profile
 
 LOGGER = logging.getLogger("fault_lab.api")
 ITEM_COUNT = 1000
@@ -30,13 +40,36 @@ class Dependencies(Protocol):
     async def prepare(self) -> None: ...
     async def check_database(self) -> None: ...
     async def check_cache(self) -> None: ...
+    async def touch_cache(self) -> None: ...
     async def count_events(self) -> int: ...
     async def get_item(self, item_id: int) -> dict[str, Any] | None: ...
 
 
-def create_app(deps: Dependencies, tracer: trace.Tracer | None = None) -> FastAPI:
+class BehaviourUpdate(BaseModel):
+    """Internal control message from the fault controller (lab-internal token)."""
+
+    model_config = ConfigDict(extra="forbid")
+    release_id: Annotated[str, Field(pattern=r"^rel-[0-9]{1,6}$")] | None = None
+    profile: Profile | None = None
+    cpu_load: bool | None = None
+    noise_seconds: Annotated[float, Field(ge=0, le=600)] | None = None
+    reset: bool = False
+
+
+def create_app(
+    deps: Dependencies,
+    tracer: trace.Tracer | None = None,
+    behaviour: Behaviour | None = None,
+    internal_token: str | None = None,
+) -> FastAPI:
     tracer = tracer or trace.get_tracer("lab-api")
+    behaviour = behaviour or Behaviour()
     registry = CollectorRegistry()
+    # Process memory and CPU are ordinary service telemetry (agent-visible).
+    ProcessCollector(registry=registry)
+    release_info = Gauge(
+        "lab_api_release_info", "Currently running release", ["release"], registry=registry
+    )
     requests = Counter(
         "lab_api_http_requests",
         "HTTP requests by route and status",
@@ -62,7 +95,11 @@ def create_app(deps: Dependencies, tracer: trace.Tracer | None = None) -> FastAP
     async def instrument(
         request: Request, call_next: Callable[[Request], Awaitable[Response]]
     ) -> Response:
-        if request.url.path in ("/metrics", "/healthz"):
+        # Internal fault-control calls are never instrumented: their timing
+        # would reveal benchmark injections in agent-visible telemetry.
+        if request.url.path in ("/metrics", "/healthz") or request.url.path.startswith(
+            "/internal/"
+        ):
             return await call_next(request)
         start = time.perf_counter()
         status = 500
@@ -100,8 +137,44 @@ def create_app(deps: Dependencies, tracer: trace.Tracer | None = None) -> FastAP
             raise HTTPException(status_code=503, detail="dependency unavailable") from exc
         return {"status": "ready"}
 
+    def _publish_release() -> None:
+        release_info.clear()
+        release_info.labels(release=behaviour.release_id).set(1)
+
+    _publish_release()
+
+    @app.post("/internal/behaviour")
+    async def update_behaviour(
+        body: BehaviourUpdate, authorization: Annotated[str | None, Header()] = None
+    ) -> dict[str, object]:
+        expected = f"Bearer {internal_token}" if internal_token else None
+        if expected is None or not hmac.compare_digest(authorization or "", expected):
+            raise HTTPException(status_code=403, detail="fault controller only")
+        if body.reset:
+            behaviour.reset()
+        if body.release_id is not None and body.profile is not None:
+            behaviour.deploy(body.release_id, body.profile)
+        if body.cpu_load is True:
+            behaviour.start_cpu_load()
+        elif body.cpu_load is False:
+            behaviour.stop_cpu_load()
+        if body.noise_seconds is not None:
+            behaviour.start_noise(body.noise_seconds)
+        _publish_release()
+        return behaviour.snapshot()
+
     @app.get("/items/{item_id}")
     async def get_item(item_id: Annotated[int, Path(ge=1, le=ITEM_COUNT)]) -> dict[str, Any]:
+        try:
+            behaviour.on_request()
+        except InjectedFailureError as exc:
+            LOGGER.error("request failed in release %s: %s", behaviour.release_id, exc)
+            raise HTTPException(status_code=500, detail="internal error") from exc
+        try:
+            await deps.touch_cache()
+        except Exception as exc:
+            LOGGER.error("cache call failed: %s", type(exc).__name__)
+            raise HTTPException(status_code=503, detail="cache unavailable") from exc
         with tracer.start_as_current_span("SELECT lab_items", kind=SpanKind.CLIENT) as span:
             span.set_attribute("db.system", "postgresql")
             span.set_attribute("db.collection.name", "lab_items")
@@ -133,9 +206,17 @@ class LiveDependencies:  # pragma: no cover - exercised by the live lab smoke te
     """Real PostgreSQL/Redis access. Queries are bounded by statement_timeout."""
 
     def __init__(self, dsn: str, redis_url: str, statement_timeout_ms: int = 5000) -> None:
+        import redis.asyncio as redis
+
         self._dsn = dsn
         self._redis_url = redis_url
         self._options = f"-c statement_timeout={statement_timeout_ms}"
+        self._cache = redis.from_url(redis_url, socket_timeout=1, socket_connect_timeout=1)
+
+    async def touch_cache(self) -> None:
+        # Every item request counts a hit in Redis, so a Redis outage is visible
+        # as API errors (B-F02).
+        await self._cache.incr("lab:item_hits")
 
     async def _connect(self) -> Any:
         import psycopg
@@ -195,7 +276,9 @@ def main() -> None:  # pragma: no cover - container entry point
     logging.basicConfig(level=logging.INFO)
     tracer = telemetry.configure("lab-api")
     app = create_app(
-        LiveDependencies(os.environ["LAB_DATABASE_DSN"], os.environ["LAB_REDIS_URL"]), tracer
+        LiveDependencies(os.environ["LAB_DATABASE_DSN"], os.environ["LAB_REDIS_URL"]),
+        tracer,
+        internal_token=os.environ.get("FAULT_LAB_INTERNAL_TOKEN"),
     )
     uvicorn.run(app, host="0.0.0.0", port=int(os.environ.get("PORT", "8080")))  # noqa: S104
 

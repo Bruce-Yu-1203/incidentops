@@ -20,9 +20,14 @@ class FakeDeps:
     def __init__(self, healthy: bool = True) -> None:
         self.healthy = healthy
         self.prepared = False
+        self.cache_down = False
 
     async def prepare(self) -> None:
         self.prepared = True
+
+    async def touch_cache(self) -> None:
+        if self.cache_down:
+            raise ConnectionError("redis paused")
 
     async def get_item(self, item_id: int) -> dict[str, Any] | None:
         if not self.healthy:

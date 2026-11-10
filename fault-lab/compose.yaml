@@ -85,6 +85,8 @@ services:
       PORT: "8080"
       # Traces and logs go to the collector in infra/compose.yaml when it runs.
       OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-collector:4318
+      # Lets only the fault controller switch injected behaviours.
+      FAULT_LAB_INTERNAL_TOKEN: ${FAULT_LAB_INTERNAL_TOKEN:?set in .env}
     depends_on:
       lab-postgres: {condition: service_healthy}
       lab-redis: {condition: service_healthy}
@@ -157,8 +159,14 @@ services:
     command: ["python", "-m", "fault_lab.faults.app"]
     environment:
       <<: *lab-tokens
+      FAULT_LAB_INTERNAL_TOKEN: ${FAULT_LAB_INTERNAL_TOKEN:?set in .env}
       LAB_DATABASE_DSN: postgresql://lab:${LAB_DB_PASSWORD:-lab}@lab-postgres:5432/lab
+      LAB_API_URL: http://lab-api:8080
+      LAB_REDIS_URL: redis://lab-redis:6379/0
+      LAB_LEDGER_PATH: /data/remediations.sqlite3
       PORT: "8090"
+    volumes:
+      - fault-ledger:/data
     depends_on:
       lab-api: {condition: service_healthy}
     ports: ["127.0.0.1:18090:8090"]
@@ -175,3 +183,4 @@ networks:
 
 volumes:
   consumer-ledger: {}
+  fault-ledger: {}

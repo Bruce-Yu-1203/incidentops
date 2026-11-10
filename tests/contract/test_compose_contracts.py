@@ -49,13 +49,15 @@ def test_lab_third_party_images_are_digest_pinned() -> None:
             assert "@sha256:" in service["image"], f"{name} image is not digest-pinned"
 
 
-def test_only_consumer_receives_lab_control_tokens() -> None:
+def test_only_controllers_receive_lab_control_tokens() -> None:
     holders = {
-        name
+        name: {key for key in _env(service) if key.startswith("FAULT_LAB_")}
         for name, service in _services(LAB).items()
-        if any(key.startswith("FAULT_LAB_") for key in _env(service))
     }
-    assert holders == {"lab-consumer", "fault-controller"}
+    holders = {name: keys for name, keys in holders.items() if keys}
+    assert set(holders) == {"lab-consumer", "fault-controller", "lab-api"}
+    # The API only verifies the internal behaviour token; it holds no role token.
+    assert holders["lab-api"] == {"FAULT_LAB_INTERNAL_TOKEN"}
 
 
 def test_lab_dockerfile_installs_from_hashed_lock() -> None:

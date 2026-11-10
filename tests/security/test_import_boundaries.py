@@ -31,4 +31,6 @@ def test_control_plane_never_imports_fault_lab(path: Path) -> None:
 @pytest.mark.parametrize("path", SOURCES, ids=lambda p: str(p.relative_to(PACKAGE)))
 def test_control_plane_never_references_benchmark_token(path: Path) -> None:
     # Fault-injection credentials belong to the benchmark controller only.
-    assert "FAULT_LAB_BENCHMARK_TOKEN" not in path.read_text(encoding="utf-8")
+    text = path.read_text(encoding="utf-8")
+    assert "FAULT_LAB_BENCHMARK_TOKEN" not in text
+    assert "FAULT_LAB_INTERNAL_TOKEN" not in text

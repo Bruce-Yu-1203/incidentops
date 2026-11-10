@@ -1,4 +1,4 @@
-"""Benchmark-only fault controller: known, bounded, releasable fixtures.
+"""Fault controller: known, bounded, releasable fixtures plus allowlisted remediations.
 
 P1 provides one fixture, a PostgreSQL lock held on ``lab_items`` by a known
 transaction. It is addressed only by its fixture token (the inject action ID),
@@ -20,12 +20,16 @@ from collections.abc import AsyncIterator, Callable, Coroutine
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from datetime import UTC, datetime
-from typing import Annotated, Any
+from typing import TYPE_CHECKING, Annotated, Any, Literal
 
 from fastapi import Depends, FastAPI, Header, HTTPException
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel, ConfigDict, Field
 
 from fault_lab.auth import LabAuthenticator, LabRole
+
+if TYPE_CHECKING:
+    from fault_lab.faults.controller import LabController
 
 LOGGER = logging.getLogger("fault_lab.faults")
 MAX_HOLD_SECONDS = 600
@@ -128,31 +132,76 @@ class ReleaseRequest(BaseModel):
     fixture_token: FixtureToken
 
 
-def create_app(fixture: DbLockFixture, authenticator: LabAuthenticator) -> FastAPI:
+class FaultRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    action_id: FixtureToken
+    seconds: Annotated[float, Field(gt=0, le=MAX_HOLD_SECONDS)] = 300
+
+
+class DeployRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    action_id: FixtureToken
+    profile: Literal["faulty", "leaky"]
+
+
+class RemediationRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    action_id: FixtureToken
+    action_type: str
+    target_id: Annotated[str, Field(pattern=r"^[a-z0-9-]{1,63}$")]
+    expected_revision: Annotated[str, Field(pattern=r"^[A-Za-z0-9_.:-]{1,128}$")]
+    arguments: dict[str, str | int | bool | None] = Field(default_factory=dict)
+
+
+def create_app(
+    fixture: DbLockFixture,
+    authenticator: LabAuthenticator,
+    controller: "LabController | None" = None,
+) -> FastAPI:
+    from fault_lab.faults.controller import (
+        LabController,
+        RemediationError,
+        RemediationType,
+    )
+
+    lab = controller or LabController(fixture, _NullLabApi(), _NullRedis(), _MemoryLedger())
+
     @asynccontextmanager
     async def lifespan(_: FastAPI) -> AsyncIterator[None]:
         yield
         await fixture.reset()
 
-    app = FastAPI(title="Fault Lab fault controller (benchmark only)", lifespan=lifespan)
+    app = FastAPI(title="Fault Lab fault controller", lifespan=lifespan)
 
-    def benchmark_only(authorization: Annotated[str | None, Header()] = None) -> LabRole:
+    def caller(authorization: Annotated[str | None, Header()] = None) -> LabRole:
         role = authenticator.authenticate(authorization)
         if role is None:
             raise HTTPException(status_code=401, detail="unauthenticated")
+        return role
+
+    def benchmark_only(role: Annotated[LabRole, Depends(caller)]) -> LabRole:
         if role is not LabRole.BENCHMARK:
             raise HTTPException(status_code=403, detail="benchmark controller only")
         return role
 
+    def executor_only(role: Annotated[LabRole, Depends(caller)]) -> LabRole:
+        if role is not LabRole.EXECUTOR:
+            raise HTTPException(status_code=403, detail="executor only")
+        return role
+
     Benchmark = Annotated[LabRole, Depends(benchmark_only)]  # noqa: N806 - type alias
+    Executor = Annotated[LabRole, Depends(executor_only)]  # noqa: N806 - type alias
+    AnyRole = Annotated[LabRole, Depends(caller)]  # noqa: N806 - type alias
 
     @app.get("/healthz")
     async def healthz() -> dict[str, str]:
         return {"status": "ok"}
 
+    # ---- benchmark controller: inject and reset (ground truth stays here) ----
+
     @app.get("/faults")
     async def status(_: Benchmark) -> dict[str, Any]:
-        return fixture.status()
+        return {**fixture.status(), "lab": lab.state.__dict__ | {"deployments": None}}
 
     @app.post("/faults/db-lock", status_code=201)
     async def inject(body: InjectRequest, _: Benchmark) -> dict[str, Any]:
@@ -169,20 +218,158 @@ def create_app(fixture: DbLockFixture, authenticator: LabAuthenticator) -> FastA
             raise HTTPException(status_code=404, detail="no such active fixture") from exc
         return fixture.status()
 
+    @app.post("/faults/redis-outage", status_code=201)
+    async def redis_outage(body: FaultRequest, _: Benchmark) -> dict[str, str]:
+        await lab.pause_redis(body.seconds)
+        return {"status": "injected"}
+
+    @app.post("/faults/deploy", status_code=201)
+    async def deploy(body: DeployRequest, _: Benchmark) -> dict[str, Any]:
+        return await lab.deploy_release(body.profile)
+
+    @app.post("/faults/cpu-load", status_code=201)
+    async def cpu_load(body: FaultRequest, _: Benchmark) -> dict[str, str]:
+        await lab.start_cpu_load()
+        return {"status": "injected"}
+
+    @app.post("/faults/noise", status_code=201)
+    async def noise(body: FaultRequest, _: Benchmark) -> dict[str, str]:
+        await lab.start_noise(body.seconds)
+        return {"status": "injected"}
+
     @app.post("/faults/reset")
     async def reset(_: Benchmark) -> dict[str, Any]:
-        await fixture.reset()
+        await lab.reset()
         return fixture.status()
 
+    # ---- read-only operational views (any lab role) ----
+
+    @app.get("/targets/{target_id}")
+    async def target(target_id: str, _: AnyRole) -> dict[str, Any]:
+        revision = lab.target_revision(target_id)
+        if revision is None:
+            raise HTTPException(status_code=404, detail="unknown target")
+        return {"target_id": target_id, "revision": revision}
+
+    @app.get("/deployments/lab-api")
+    async def deployments(_: AnyRole) -> dict[str, Any]:
+        return lab.deployments()
+
+    @app.get("/remediations/operations/{action_id}")
+    async def remediation_operation(action_id: str, role: AnyRole) -> dict[str, Any]:
+        if role is LabRole.READER:
+            raise HTTPException(status_code=403, detail="executor or benchmark only")
+        record = lab.operation(action_id)
+        if record is None:
+            raise HTTPException(status_code=404, detail="operation not found")
+        return record
+
+    # ---- executor: the four allowlisted remediations only ----
+
+    @app.post("/remediations")
+    async def remediate(body: RemediationRequest, _: Executor) -> JSONResponse:
+        try:
+            action_type = RemediationType(body.action_type)
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail="remediation not allowlisted") from exc
+        try:
+            receipt, replayed = await lab.remediate(
+                body.action_id,
+                action_type,
+                body.target_id,
+                body.expected_revision,
+                dict(body.arguments),
+            )
+        except RemediationError as exc:
+            return JSONResponse(
+                status_code=exc.status_code, content={"error": exc.code, "detail": str(exc)}
+            )
+        return JSONResponse(status_code=200 if replayed else 201, content=receipt)
+
     return app
+
+
+class _NullLabApi:
+    async def update(self, **fields: Any) -> dict[str, Any]:
+        return dict(fields)
+
+
+class _NullRedis:
+    async def pause(self, milliseconds: int) -> None:
+        return None
+
+    async def unpause(self) -> None:
+        return None
+
+
+class _MemoryLedger:
+    def __init__(self) -> None:
+        self._records: dict[str, dict[str, Any]] = {}
+
+    def get(self, action_id: str) -> dict[str, Any] | None:
+        return self._records.get(action_id)
+
+    def put(self, action_id: str, record: dict[str, Any]) -> None:
+        self._records[action_id] = record
+
+
+class HttpLabApi:  # pragma: no cover - live lab only
+    """Calls the lab API's internal behaviour endpoint with the lab-internal token."""
+
+    def __init__(self, base_url: str, token: str) -> None:
+        self._base = base_url.rstrip("/")
+        self._headers = {"Authorization": f"Bearer {token}"}
+
+    async def update(self, **fields: Any) -> dict[str, Any]:
+        import httpx
+
+        async with httpx.AsyncClient(timeout=5) as client:
+            response = await client.post(
+                f"{self._base}/internal/behaviour", json=fields, headers=self._headers
+            )
+            response.raise_for_status()
+            return dict(response.json())
+
+
+class LiveRedis:  # pragma: no cover - live lab only
+    """Makes the lab Redis unavailable with CLIENT PAUSE (no container control needed)."""
+
+    def __init__(self, url: str) -> None:
+        self._url = url
+
+    async def pause(self, milliseconds: int) -> None:
+        import redis.asyncio as redis
+
+        client = redis.from_url(self._url, socket_timeout=2)
+        try:
+            await client.execute_command("CLIENT", "PAUSE", milliseconds, "ALL")  # type: ignore[no-untyped-call]
+        finally:
+            await client.aclose()
+
+    async def unpause(self) -> None:
+        import redis.asyncio as redis
+
+        client = redis.from_url(self._url, socket_timeout=2)
+        try:
+            await client.execute_command("CLIENT", "UNPAUSE")  # type: ignore[no-untyped-call]
+        finally:
+            await client.aclose()
 
 
 def main() -> None:  # pragma: no cover - container entry point
     import uvicorn
 
     logging.basicConfig(level=logging.INFO)
+    from fault_lab.faults.controller import LabController, Ledger
+
     fixture = DbLockFixture(postgres_lock_holder(os.environ["LAB_DATABASE_DSN"]))
-    app = create_app(fixture, LabAuthenticator.from_env())
+    controller = LabController(
+        fixture,
+        HttpLabApi(os.environ["LAB_API_URL"], os.environ["FAULT_LAB_INTERNAL_TOKEN"]),
+        LiveRedis(os.environ["LAB_REDIS_URL"]),
+        Ledger(os.environ.get("LAB_LEDGER_PATH", "/data/remediations.sqlite3")),
+    )
+    app = create_app(fixture, LabAuthenticator.from_env(), controller)
     uvicorn.run(app, host="0.0.0.0", port=int(os.environ.get("PORT", "8090")))  # noqa: S104
 
 
