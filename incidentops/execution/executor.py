@@ -204,11 +204,13 @@ class ActionExecutor:
     ) -> tuple[ActionState, str] | None:
         if adapter is None:
             return ActionState.FAILED, "no_adapter_for_action_type"
+        # No row lock on the approval: approve/reject/cancel all lock the action
+        # row first, which this transaction already holds, so the approval cannot
+        # change underneath us. The executor's database role only reads approvals.
         approval = session.scalars(
             select(ApprovalRequestRow)
             .where(ApprovalRequestRow.action_id == action.id)
             .order_by(ApprovalRequestRow.created_at.desc())
-            .with_for_update()
         ).first()
         if approval is None or approval.state != ApprovalState.APPROVED:
             return ActionState.FAILED, "approval_not_valid"

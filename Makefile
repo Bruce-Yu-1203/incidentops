@@ -1,6 +1,6 @@
 # Developer entry points. `make check` is the gate required by constitute.md.
 .PHONY: web-install web-check
-.PHONY: env install lint format typecheck test test-unit check db-up db-down migrate seed-users lab-up lab-down lab-reset lab-smoke lab-lock infra-secrets infra-up infra-down api-run worker-run control-run executor-run verifier-run p1-gate p2-live p2-gate p3-gate
+.PHONY: env install lint format typecheck test test-unit check db-up db-down migrate seed-users db-logins lab-up lab-down lab-reset lab-smoke lab-lock infra-secrets infra-up infra-down api-run worker-run control-run executor-run verifier-run p1-gate p2-live p2-gate p3-gate
 
 env:
 	uv run python scripts/generate_env.py
@@ -43,7 +43,10 @@ migrate:
 	set -a && . ./.env && set +a && uv run alembic upgrade head
 
 seed-users:
-	set -a && . ./.env && set +a && uv run alembic upgrade head && uv run python -m incidentops.cli seed-demo-users
+	set -a && . ./.env && set +a && uv run alembic upgrade head && uv run python -m incidentops.cli seed-demo-users && uv run python scripts/create_db_logins.py
+
+db-logins:
+	set -a && . ./.env && set +a && uv run alembic upgrade head && uv run python scripts/create_db_logins.py
 
 LAB_COMPOSE = docker compose -f fault-lab/compose.yaml --env-file .env
 
@@ -62,7 +65,7 @@ lab-smoke:
 
 # Investigation worker (needs INCIDENTOPS_MODEL_ID and INCIDENTOPS_ANTHROPIC_API_KEY in .env).
 worker-run:
-	$(LOAD_ENV) && $(STRIP_EXECUTOR) && uv run python -m incidentops.workers.investigation
+	$(LOAD_ENV) && $(STRIP_EXECUTOR) && $(call DB_AS,io_agent,AGENT) uv run python -m incidentops.workers.investigation
 
 # Roadmap P2 gate with a real model (needs api-run and worker-run in other terminals).
 p2-gate:
@@ -101,18 +104,20 @@ infra-down:
 # Each process receives only its own credentials: foreign variables are
 # stripped here and the process refuses to start if any remain.
 LOAD_ENV = set -a && . ./.env && set +a
+# Each process connects with its own least-privilege login (migration 0004).
+DB_AS = INCIDENTOPS_CONTROL_DATABASE_URL=postgresql+psycopg://$(1):$$INCIDENTOPS_DB_$(2)_PASSWORD@localhost:5433/incidentops_control
 STRIP_EXECUTOR = unset INCIDENTOPS_EXECUTOR_LAB_TOKEN FAULT_LAB_EXECUTOR_TOKEN FAULT_LAB_BENCHMARK_TOKEN
 STRIP_MODEL = unset INCIDENTOPS_ANTHROPIC_API_KEY
 
 # Run the control-plane API on the host for Alertmanager (host.docker.internal:8000).
 api-run:
-	$(LOAD_ENV) && $(STRIP_EXECUTOR) && $(STRIP_MODEL) && uv run alembic upgrade head && uv run uvicorn --factory incidentops.api.app:create_app --host 127.0.0.1 --port 8000
+	$(LOAD_ENV) && $(STRIP_EXECUTOR) && $(STRIP_MODEL) && uv run alembic upgrade head && $(call DB_AS,io_api,API) uv run uvicorn --factory incidentops.api.app:create_app --host 127.0.0.1 --port 8000
 
 control-run:
-	$(LOAD_ENV) && $(STRIP_EXECUTOR) && $(STRIP_MODEL) && uv run python -m incidentops.workers.control
+	$(LOAD_ENV) && $(STRIP_EXECUTOR) && $(STRIP_MODEL) && $(call DB_AS,io_api,API) uv run python -m incidentops.workers.control
 
 executor-run:
-	$(LOAD_ENV) && $(STRIP_MODEL) && unset INCIDENTOPS_LAB_READ_TOKEN FAULT_LAB_READ_TOKEN FAULT_LAB_BENCHMARK_TOKEN && uv run python -m incidentops.workers.executor
+	$(LOAD_ENV) && $(STRIP_MODEL) && unset INCIDENTOPS_LAB_READ_TOKEN FAULT_LAB_READ_TOKEN FAULT_LAB_BENCHMARK_TOKEN && $(call DB_AS,io_executor,EXECUTOR) uv run python -m incidentops.workers.executor
 
 verifier-run:
-	$(LOAD_ENV) && $(STRIP_EXECUTOR) && $(STRIP_MODEL) && uv run python -m incidentops.workers.verifier
+	$(LOAD_ENV) && $(STRIP_EXECUTOR) && $(STRIP_MODEL) && $(call DB_AS,io_verifier,VERIFIER) uv run python -m incidentops.workers.verifier

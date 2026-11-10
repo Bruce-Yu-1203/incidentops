@@ -30,6 +30,7 @@ from incidentops.evidence.store import DatabaseEvidenceSink
 from incidentops.ingestion.service import INVESTIGATE_JOB
 from incidentops.persistence import outbox
 from incidentops.persistence.db import make_engine, make_session_factory
+from incidentops.persistence.urls import checkpoint_conninfo
 from incidentops.security.identities import Role
 from incidentops.tools.backends import HttpTelemetryBackend
 from incidentops.tools.gateway import ToolGateway
@@ -115,7 +116,7 @@ async def serve(settings: Settings) -> None:  # pragma: no cover - process entry
 
     async with (
         httpx.AsyncClient(timeout=10) as client,
-        AsyncPostgresSaver.from_conn_string(database_url.replace("+psycopg", "")) as saver,
+        AsyncPostgresSaver.from_conn_string(checkpoint_conninfo(database_url)) as saver,
     ):
         await saver.setup()
         backend = HttpTelemetryBackend(
