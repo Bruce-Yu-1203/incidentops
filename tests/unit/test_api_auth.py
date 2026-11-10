@@ -38,7 +38,7 @@ def test_webhook_rejects_malformed_payload_after_auth() -> None:
     assert response.status_code == 422
 
 
-def test_incident_reads_refused_outside_dev_profile() -> None:
-    client = _client(profile=Profile.DEMO)
+def test_incident_reads_require_a_session_in_every_profile() -> None:
+    client = _client(profile=Profile.DEV)
     assert client.get("/api/v1/incidents").status_code == 401
     assert client.get("/api/v1/incidents/inc_x").status_code == 401

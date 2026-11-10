@@ -18,7 +18,8 @@ import httpx
 import pytest
 from fault_lab.scripts.labctl import LabController, LabEndpoints
 
-from tests.e2e.test_p1_alert_gate import API, _wait_for_quiet_baseline
+from tests.e2e.session import API, sign_in_viewer
+from tests.e2e.test_p1_alert_gate import _wait_for_quiet_baseline
 
 pytestmark = pytest.mark.lab
 DIAGNOSIS_TIMEOUT_S = 600
@@ -35,6 +36,7 @@ def env() -> Iterator[tuple[LabController, httpx.Client]]:
     except httpx.HTTPError:
         client.close()
         pytest.fail("API is required: run `make api-run` and `make worker-run`")
+    sign_in_viewer(client)
     try:
         yield LabController(LabEndpoints(), token, client), client
     finally:

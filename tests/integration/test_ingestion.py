@@ -17,6 +17,7 @@ from incidentops.domain.state_machines import IncidentState
 from incidentops.ingestion.service import INVESTIGATE_JOB
 from incidentops.persistence.models import AlertEventRow, AuditEventRow, IncidentRow, OutboxJobRow
 from incidentops.persistence.transitions import AuditSpec, transition
+from tests.integration.auth_helpers import sign_in
 from tests.unit.test_alertmanager_normalize import payload
 
 pytestmark = pytest.mark.integration
@@ -114,6 +115,15 @@ def test_different_rules_create_separate_incidents(session_factory: sessionmaker
     assert len(body["created_incident_ids"]) == 2
 
 
+def test_reads_require_a_session(session_factory: sessionmaker[Session]) -> None:
+    client = _client(session_factory)
+    (incident_id,) = _post(client, payload())["created_incident_ids"]
+    assert client.get("/api/v1/incidents").status_code == 401
+    assert client.get(f"/api/v1/incidents/{incident_id}").status_code == 401
+    sign_in(client, session_factory)
+    assert client.get(f"/api/v1/incidents/{incident_id}").status_code == 200
+
+
 def test_resolved_alert_never_resolves_incident(session_factory: sessionmaker[Session]) -> None:
     client = _client(session_factory)
     (incident_id,) = _post(client, payload())["created_incident_ids"]
@@ -162,6 +172,7 @@ def test_list_and_detail_endpoints(session_factory: sessionmaker[Session]) -> No
     client = _client(session_factory)
     (incident_id,) = _post(client, payload())["created_incident_ids"]
     _post(client, payload())
+    sign_in(client, session_factory)
 
     listed = client.get("/api/v1/incidents").json()
     assert [item["id"] for item in listed] == [incident_id]
@@ -181,4 +192,5 @@ def test_list_and_detail_endpoints(session_factory: sessionmaker[Session]) -> No
 def test_incident_history_survives_api_restart(session_factory: sessionmaker[Session]) -> None:
     (incident_id,) = _post(_client(session_factory), payload())["created_incident_ids"]
     restarted = _client(session_factory)  # a fresh application instance
+    sign_in(restarted, session_factory)
     assert restarted.get(f"/api/v1/incidents/{incident_id}").status_code == 200

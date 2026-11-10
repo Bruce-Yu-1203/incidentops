@@ -34,6 +34,7 @@ from incidentops.persistence.transitions import AuditSpec, transition
 from incidentops.tools.gateway import ToolGateway
 from incidentops.trajectory.recorder import DatabaseTrajectorySink
 from incidentops.workers.investigation import process_one
+from tests.integration.auth_helpers import sign_in
 from tests.unit.test_alertmanager_normalize import payload
 from tests.unit.test_investigation_graph import CONSUMER, lag_and_status, submit
 from tests.unit.tool_fakes import FakeBackend
@@ -287,6 +288,7 @@ async def test_investigation_api_links_incident_run_steps_and_evidence(
     await process_one(session_factory, runner, OWNER, 60)
     client = TestClient(create_app(Settings(_env_file=None), session_factory=session_factory))
 
+    sign_in(client, session_factory)
     incident = client.get(f"/api/v1/incidents/{incident_id}").json()
     (run,) = incident["runs"]
     assert incident["diagnosis"]["diagnosis"]["root_cause_id"] == "consumer_paused"

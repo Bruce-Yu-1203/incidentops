@@ -10,6 +10,7 @@ import { type EvidenceView, fetchRun, safeSourceUrl } from "@/lib/investigations
 import { runIsLive } from "@/lib/refresh";
 import { sessionFetch } from "@/lib/session";
 import { evidenceGraph, type GraphNode, stepRow } from "@/lib/trajectory";
+import { LoadError } from "@/app/load-error";
 
 function EvidenceCard({ node, kind }: { node: GraphNode; kind: "supporting" | "contradicting" }) {
   const e = node.evidence;
@@ -47,7 +48,8 @@ async function RunView({ params }: { params: Promise<{ id: string }> }) {
   await connection();
   const { id } = await params;
   const result = await fetchRun(apiBaseUrl(), id, await sessionFetch());
-  if (!result.ok) return <p className="error">Could not load investigation: {result.error}</p>;
+  if (!result.ok)
+    return <LoadError what="investigation" error={result.error} next={`/investigations/${id}`} />;
   const run = result.data;
   const rows = run.steps.map(stepRow);
   const blocked = rows.filter((r) => r.blocked).length;

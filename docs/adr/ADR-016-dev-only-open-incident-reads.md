@@ -1,9 +1,8 @@
 # ADR-016: Incident read API is open only in the dev profile until P3
 
-- **Status:** Accepted (temporary). P3 added session authentication: every
-  mutating human endpoint now requires a session with an explicit role, and
-  authenticated reads use the viewer role. The anonymous dev-profile read
-  exception remains until P4 security hardening removes it.
+- **Status:** Superseded in P4. Every read endpoint now requires an
+  authenticated session with a read role in every profile; the anonymous
+  dev-profile exception described below no longer exists.
 
 ## Context
 

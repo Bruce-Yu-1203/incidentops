@@ -19,6 +19,7 @@ import { actionIsLive } from "@/lib/refresh";
 import { sessionFetch } from "@/lib/session";
 
 import { approveAction, cancelAction, rejectAction } from "./decisions";
+import { LoadError } from "@/app/load-error";
 
 const CANCELLABLE = new Set(["PENDING_APPROVAL", "APPROVED", "QUEUED"]);
 
@@ -36,7 +37,7 @@ async function ActionView({
     fetchAction(apiBaseUrl(), id, authed),
     fetchMe(apiBaseUrl(), authed),
   ]);
-  if (!result.ok) return <p className="error">Could not load action: {result.error}</p>;
+  if (!result.ok) return <LoadError what="action" error={result.error} next={`/actions/${id}`} />;
   const action = result.data;
   const envelope = action.envelope;
   const pending = action.state === "PENDING_APPROVAL";

@@ -15,6 +15,7 @@ import { incidentIsLive } from "@/lib/refresh";
 import { sessionFetch } from "@/lib/session";
 import { isTerminal } from "@/lib/states";
 import { buildTimeline } from "@/lib/timeline";
+import { LoadError } from "@/app/load-error";
 
 function EvidenceChips({
   ids,
@@ -175,7 +176,7 @@ async function IncidentView({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
   const result = await fetchIncident(apiBaseUrl(), id, await sessionFetch());
   if (!result.ok) {
-    return <p className="error">Could not load incident: {result.error}</p>;
+    return <LoadError what="incident" error={result.error} next={`/incidents/${id}`} />;
   }
   const incident = result.data;
   const now = new Date();

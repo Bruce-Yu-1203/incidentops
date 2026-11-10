@@ -22,7 +22,8 @@ import httpx
 import pytest
 from fault_lab.scripts.labctl import LabController, LabEndpoints
 
-from tests.e2e.test_p1_alert_gate import API, _wait_for_quiet_baseline
+from tests.e2e.session import API
+from tests.e2e.test_p1_alert_gate import _wait_for_quiet_baseline
 
 pytestmark = pytest.mark.lab
 TIMEOUT_S = 420

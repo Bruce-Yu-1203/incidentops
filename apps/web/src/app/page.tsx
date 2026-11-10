@@ -19,6 +19,7 @@ import { incidentLifecycle } from "@/lib/lifecycle";
 import { listIsLive } from "@/lib/refresh";
 import { sessionFetch } from "@/lib/session";
 import type { Tone } from "@/lib/states";
+import { LoadError } from "@/app/load-error";
 
 // Both panels read live control-plane state, so they render at request time.
 async function ApiStatus() {
@@ -114,7 +115,7 @@ async function IncidentList({ searchParams }: { searchParams: Promise<{ view?: s
     searchParams,
   ]);
   if (!result.ok) {
-    return <p className="error">Could not load incidents: {result.error}</p>;
+    return <LoadError what="incidents" error={result.error} next="/" />;
   }
   const now = new Date();
   const view = parseView(params.view);

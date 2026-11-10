@@ -15,7 +15,7 @@ it with a new ADR that supersedes the old one.
 | [ADR-013](ADR-013-verification-failed-state.md) | `VERIFICATION_FAILED` is a verification result, not an incident state | Accepted |
 | [ADR-014](ADR-014-repository-layout.md) | Repository layout and import boundaries | Accepted |
 | [ADR-015](ADR-015-action-cancellation.md) | Action cancellation and pre-dispatch revalidation failures | Accepted |
-| [ADR-016](ADR-016-dev-only-open-incident-reads.md) | Incident read API is open only in the dev profile until P3 | Accepted (temporary) |
+| [ADR-016](ADR-016-dev-only-open-incident-reads.md) | Incident read API is open only in the dev profile until P3 | Superseded (P4) |
 | [ADR-017](ADR-017-incident-dedup-key.md) | Incident dedup key is environment + service | Accepted |
 | [ADR-018](ADR-018-container-metrics-deferred.md) | Defer container CPU/memory metrics (cAdvisor) to P5 | Accepted |
 | [ADR-019](ADR-019-anthropic-compatible-endpoints.md) | Anthropic-compatible model endpoints | Accepted |

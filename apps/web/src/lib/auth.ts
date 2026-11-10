@@ -42,3 +42,8 @@ export function safeNextPath(value: FormDataEntryValue | null): string {
   if (typeof value !== "string" || !value.startsWith("/") || value.startsWith("//")) return "/";
   return value;
 }
+
+/** Every read requires a session (ADR-016 retired); a 401 means "sign in". */
+export function needsSignIn(error: string): boolean {
+  return error === "HTTP 401";
+}

@@ -36,3 +36,12 @@ describe("safeNextPath", () => {
     expect(safeNextPath(null)).toBe("/");
   });
 });
+
+describe("needsSignIn", () => {
+  it("only treats 401 as a sign-in prompt", async () => {
+    const { needsSignIn } = await import("./auth");
+    expect(needsSignIn("HTTP 401")).toBe(true);
+    expect(needsSignIn("HTTP 403")).toBe(false);
+    expect(needsSignIn("connection refused")).toBe(false);
+  });
+});

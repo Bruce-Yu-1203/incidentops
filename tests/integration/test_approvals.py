@@ -113,7 +113,8 @@ async def test_approval_queues_exactly_one_execution(
     _seed(session_factory)
     action = await _pending_action(session_factory)
     client = _client(session_factory)
-    response = _approve(client, _login(client, "approver"), action, reason="lag evidence is clear")
+    auth = _login(client, "approver")
+    response = _approve(client, auth, action, reason="lag evidence is clear")
     assert response.json() == {"outcome": "approved", "action_state": "QUEUED"}
     with session_factory() as session:
         approval = session.scalars(select(ApprovalRequestRow)).one()
@@ -121,7 +122,7 @@ async def test_approval_queues_exactly_one_execution(
     assert approval.state == "APPROVED"
     assert (decision.approver_id, decision.action_hash) == ("user:approver", action["hash"])
     assert _count(session_factory, OutboxJobRow, OutboxJobRow.kind == EXECUTE_ACTION_JOB) == 1
-    detail = client.get(f"/api/v1/actions/{action['id']}").json()
+    detail = client.get(f"/api/v1/actions/{action['id']}", headers=auth).json()
     assert detail["state"] == "QUEUED"
     assert detail["decisions"][0]["decision"] == "APPROVED"
 
@@ -225,8 +226,11 @@ async def test_operator_can_cancel_a_queued_action(session_factory: sessionmaker
     _seed(session_factory)
     action = await _pending_action(session_factory)
     client = _client(session_factory)
-    _approve(client, _login(client, "approver"), action)
-    queued_version = client.get(f"/api/v1/actions/{action['id']}").json()["version"]
+    approver = _login(client, "approver")
+    _approve(client, approver, action)
+    queued_version = client.get(f"/api/v1/actions/{action['id']}", headers=approver).json()[
+        "version"
+    ]
     viewer = client.post(
         f"/api/v1/actions/{action['id']}/cancel",
         json={"expected_version": queued_version},

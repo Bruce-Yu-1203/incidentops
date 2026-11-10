@@ -9,13 +9,15 @@ import { apiBaseUrl } from "@/lib/api";
 import { fetchIncident } from "@/lib/incidents";
 import { buildReport } from "@/lib/report";
 import { sessionFetch } from "@/lib/session";
+import { LoadError } from "@/app/load-error";
 
 async function ReportView({ params }: { params: Promise<{ id: string }> }) {
   await connection();
   const { id } = await params;
   const authed = await sessionFetch();
   const result = await fetchIncident(apiBaseUrl(), id, authed);
-  if (!result.ok) return <p className="error">Could not load incident: {result.error}</p>;
+  if (!result.ok)
+    return <LoadError what="incident report" error={result.error} next={`/incidents/${id}/report`} />;
   const incident = result.data;
   const loaded = await Promise.all(
     incident.actions.map((a) => fetchAction(apiBaseUrl(), a.id, authed)),

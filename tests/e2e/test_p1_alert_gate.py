@@ -18,9 +18,10 @@ import httpx
 import pytest
 from fault_lab.scripts.labctl import LabController, LabEndpoints
 
+from tests.e2e.session import API, sign_in_viewer
+
 pytestmark = pytest.mark.lab
 
-API = os.environ.get("INCIDENTOPS_API_URL", "http://127.0.0.1:8000")
 ALERT_TIMEOUT_S = 180
 QUIET_TIMEOUT_S = 300
 
@@ -40,6 +41,7 @@ def env() -> Iterator[tuple[LabController, httpx.Client]]:
     if not token:
         client.close()
         pytest.skip("FAULT_LAB_BENCHMARK_TOKEN not set")
+    sign_in_viewer(client)
     try:
         yield LabController(LabEndpoints(), token, client), client
     finally:

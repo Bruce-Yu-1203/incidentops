@@ -146,11 +146,12 @@ def create_app(
     User = Annotated[AuthenticatedUser, Depends(require_user)]  # noqa: N806
 
     def require_viewer(user: MaybeUser) -> None:
-        if user is not None and user.role in READ_ROLES:
-            return
-        # ADR-016: anonymous reads remain possible only in the local dev profile.
-        if resolved.profile is not Profile.DEV:
+        # Every read requires an authenticated session with a read role; the
+        # anonymous dev-profile exception of ADR-016 was retired in P4.
+        if user is None:
             raise HTTPException(status.HTTP_401_UNAUTHORIZED, "authentication required")
+        if user.role not in READ_ROLES:
+            raise HTTPException(status.HTTP_403_FORBIDDEN, "read access denied")
 
     @app.get("/healthz", tags=["ops"])
     async def healthz() -> dict[str, str]:
