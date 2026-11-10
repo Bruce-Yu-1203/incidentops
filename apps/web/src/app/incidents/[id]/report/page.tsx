@@ -61,7 +61,7 @@ async function ReportView({ params }: { params: Promise<{ id: string }> }) {
               <tr>
                 <th>Milestone</th>
                 <th>Time</th>
-                <th>Since alert</th>
+                <th>Since opened</th>
               </tr>
             </thead>
             <tbody>

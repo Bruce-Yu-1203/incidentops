@@ -79,3 +79,18 @@ describe("visitedStates", () => {
     ]);
   });
 });
+
+describe("positionKnown", () => {
+  it("is false only for an exit with no history to place it", () => {
+    expect(incidentLifecycle("ESCALATED").positionKnown).toBe(false);
+    expect(incidentLifecycle("ESCALATED", ["VERIFYING"]).positionKnown).toBe(true);
+    expect(incidentLifecycle("EXECUTING").positionKnown).toBe(true);
+    expect(incidentLifecycle("DIAGNOSED_ONLY").positionKnown).toBe(true);
+  });
+
+  it("keeps earlier action steps neutral-progress when only SUCCEEDED is green", () => {
+    const steps = actionLifecycle("SUCCEEDED", "VERIFICATION_FAILED").steps;
+    expect(steps[0].tone).toBe("progress");
+    expect(steps.at(-2)?.tone).toBe("success");
+  });
+});

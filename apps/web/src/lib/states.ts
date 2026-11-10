@@ -4,7 +4,15 @@
 
 export type Tone = "neutral" | "progress" | "attention" | "success" | "danger" | "unknown";
 
-export type Machine = "incident" | "run" | "action" | "approval" | "verification" | "step" | "tool";
+export type Machine =
+  | "incident"
+  | "run"
+  | "action"
+  | "approval"
+  | "verification"
+  | "step"
+  | "tool"
+  | "receipt";
 
 const TONES: Record<Machine, Record<string, Tone>> = {
   incident: {
@@ -64,6 +72,12 @@ const TONES: Record<Machine, Record<string, Tone>> = {
     COMPLETED: "success",
     FAILED: "danger",
     ERROR: "danger",
+  },
+  receipt: {
+    ACCEPTED: "progress",
+    COMPLETED: "success",
+    FAILED: "danger",
+    UNKNOWN: "unknown",
   },
   tool: {
     SUCCESS: "success",

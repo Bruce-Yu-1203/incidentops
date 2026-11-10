@@ -44,3 +44,10 @@ describe("isTerminal", () => {
     expect(isTerminal("run", "RUNNING")).toBe(false);
   });
 });
+
+describe("receipt tones", () => {
+  it("shows an unknown receipt as unknown, not failed", () => {
+    expect(toneOf("receipt", "UNKNOWN")).toBe("unknown");
+    expect(toneOf("receipt", "COMPLETED")).toBe("success");
+  });
+});

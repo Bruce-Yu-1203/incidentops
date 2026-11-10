@@ -7,7 +7,8 @@ export type StepStatus = "done" | "current" | "upcoming" | "skipped";
 
 export type LifecycleStep = { label: string; status: StepStatus; tone: Tone };
 
-export type Lifecycle = { steps: LifecycleStep[]; exits: string[] };
+/** `positionKnown` is false when an exit is drawn without history saying where it happened. */
+export type Lifecycle = { steps: LifecycleStep[]; exits: string[]; positionKnown: boolean };
 
 export const INCIDENT_MAIN_PATH = [
   "RECEIVED",
@@ -80,9 +81,17 @@ function furthest(main: readonly string[], visited: readonly string[]): number {
 export function incidentLifecycle(state: string, visited: readonly string[] = []): Lifecycle {
   const main = INCIDENT_MAIN_PATH;
   let branch = furthest(main, visited);
+  const positionKnown =
+    main.includes(state as (typeof main)[number]) ||
+    branch >= 0 ||
+    state in INCIDENT_DEFAULT_BRANCH;
   if (branch < 0) branch = INCIDENT_DEFAULT_BRANCH[state] ?? 0;
   const steps = walk("incident", main, state, branch);
-  return { steps, exits: isTerminal("incident", state) ? [] : (INCIDENT_EXITS[state] ?? []) };
+  return {
+    steps,
+    exits: isTerminal("incident", state) ? [] : (INCIDENT_EXITS[state] ?? []),
+    positionKnown,
+  };
 }
 
 export const ACTION_MAIN_PATH = [
@@ -128,6 +137,7 @@ export function actionLifecycle(
   const branch = state === "CANCELLED" ? (approved ? 2 : 1) : (ACTION_BRANCH[state] ?? 0);
   const steps = walk("action", main, state, branch);
   if (state === "SUCCEEDED") {
+    steps.forEach((s, i) => (s.tone = i === steps.length - 1 ? "success" : "progress"));
     if (verificationOutcome === null) {
       steps.push({ label: VERIFY_STEP, status: "current", tone: "progress" });
     } else {
@@ -148,7 +158,7 @@ export function actionLifecycle(
       tone: "neutral",
     });
   }
-  return { steps, exits: ACTION_EXITS[state] ?? [] };
+  return { steps, exits: ACTION_EXITS[state] ?? [], positionKnown: true };
 }
 
 /** Incident states recorded in audit timeline summaries such as "incident_created: RECEIVED". */

@@ -15,7 +15,7 @@ export function Stepper({ lifecycle, label }: { lifecycle: Lifecycle; label: str
           >
             <span className="step-dot">
               {step.status === "done" || step.status === "current" ? (
-                <ToneIcon tone={step.tone} size={11} />
+                <ToneIcon tone={step.status === "done" ? "success" : step.tone} size={11} />
               ) : null}
             </span>
             <span className="step-label">{step.label}</span>

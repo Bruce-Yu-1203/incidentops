@@ -937,3 +937,35 @@ button.small {
     border-color: #cccccc;
   }
 }
+
+/* Flex children may shrink below their content so wide parts scroll inside. */
+.stack-lg > *,
+.panel {
+  min-width: 0;
+}
+
+h1 {
+  overflow-wrap: anywhere;
+}
+
+.step {
+  min-width: 132px;
+  padding-right: 10px;
+}
+
+.step-label {
+  overflow-wrap: anywhere;
+}
+
+.facts dd {
+  margin: 0;
+}
+
+button.primary {
+  background: var(--tone-attention-fg);
+  color: var(--surface);
+  border: 1px solid var(--tone-attention-fg);
+  border-radius: 6px;
+  font-weight: 600;
+  min-height: 44px;
+}

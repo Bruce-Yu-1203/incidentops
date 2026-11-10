@@ -67,7 +67,12 @@ async function ActionView({
           <h1 id="action-title" className="mono">
             {String(envelope.action_type)} → {String(envelope.target_id)}
           </h1>
-          <StateBadge machine="action" state={action.state} />
+          <span className="row-wrap">
+            <StateBadge machine="action" state={action.state} />
+            {action.verifications.length > 0 ? (
+              <StateBadge machine="verification" state={action.verifications.at(-1)!.outcome} />
+            ) : null}
+          </span>
         </div>
         <Stepper
           label="Action lifecycle"
@@ -186,7 +191,9 @@ async function ActionView({
                     Reason (optional)
                     <input name="reason" maxLength={2000} />
                   </label>
-                  <button type="submit">Approve this exact action</button>
+                  <button type="submit" className="primary">
+                    Approve this exact action
+                  </button>
                 </form>
                 <form action={rejectAction} className="stack">
                   {hidden}
@@ -244,7 +251,7 @@ async function ActionView({
                 {action.operations.map((o) => (
                   <li key={o.provider}>
                     {o.provider} · operation {o.provider_operation_id} ·{" "}
-                    <StateBadge machine="step" state={o.status} />
+                    <StateBadge machine="receipt" state={o.status} />
                   </li>
                 ))}
               </ul>

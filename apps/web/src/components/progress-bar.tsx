@@ -2,6 +2,9 @@ import type { Lifecycle } from "@/lib/lifecycle";
 
 /** One segment per lifecycle step; a compact version of the Stepper for tables. */
 export function ProgressBar({ lifecycle }: { lifecycle: Lifecycle }) {
+  if (!lifecycle.positionKnown) {
+    return <span className="subtitle small-text">left the main path</span>;
+  }
   const current = lifecycle.steps.find((s) => s.status === "current");
   const done = lifecycle.steps.filter((s) => s.status === "done").length;
   const label = current
