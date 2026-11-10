@@ -332,28 +332,58 @@ class HttpLabApi:  # pragma: no cover - live lab only
 
 
 class LiveRedis:  # pragma: no cover - live lab only
-    """Makes the lab Redis unavailable with CLIENT PAUSE (no container control needed)."""
+    """Makes the lab Redis unavailable without container control.
+
+    ``pause`` sets a random ``requirepass`` and disconnects every other client,
+    so the API and the exporter get authentication failures (Redis looks down
+    to them). ``unpause`` uses the controller's own authenticated connection to
+    clear the password. An automatic restore after the requested duration
+    guarantees the outage is bounded. CLIENT PAUSE was not usable: a paused
+    server also blocks CLIENT UNPAUSE.
+    """
 
     def __init__(self, url: str) -> None:
         self._url = url
+        self._password: str | None = None
+        self._restore: asyncio.Task[None] | None = None
 
     async def pause(self, milliseconds: int) -> None:
+        import secrets
+
         import redis.asyncio as redis
 
+        password = secrets.token_hex(16)
         client = redis.from_url(self._url, socket_timeout=2)
         try:
-            await client.execute_command("CLIENT", "PAUSE", milliseconds, "ALL")  # type: ignore[no-untyped-call]
+            await client.config_set("requirepass", password)
+            await client.execute_command(  # type: ignore[no-untyped-call]
+                "CLIENT", "KILL", "TYPE", "normal", "SKIPME", "yes"
+            )
         finally:
             await client.aclose()
+        self._password = password
+        if self._restore is not None:
+            self._restore.cancel()
+        self._restore = asyncio.create_task(self._auto_restore(milliseconds / 1000))
+
+    async def _auto_restore(self, seconds: float) -> None:
+        await asyncio.sleep(seconds)
+        await self.unpause()
 
     async def unpause(self) -> None:
         import redis.asyncio as redis
 
-        client = redis.from_url(self._url, socket_timeout=2)
+        if self._password is None:
+            return
+        client = redis.from_url(self._url, password=self._password, socket_timeout=2)
         try:
-            await client.execute_command("CLIENT", "UNPAUSE")  # type: ignore[no-untyped-call]
+            await client.config_set("requirepass", "")
         finally:
             await client.aclose()
+        self._password = None
+        if self._restore is not None and self._restore is not asyncio.current_task():
+            self._restore.cancel()
+        self._restore = None
 
 
 def main() -> None:  # pragma: no cover - container entry point

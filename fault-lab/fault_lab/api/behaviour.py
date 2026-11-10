@@ -19,6 +19,8 @@ LEAK_CHUNK_BYTES: Final = 256 * 1024
 LEAK_CAP_BYTES: Final = 400 * 1024 * 1024
 FAULTY_ERROR_RATE: Final = 0.3
 NOISE_ERROR_RATE: Final = 0.15
+CPU_BURN_SECONDS: Final = 0.05
+CPU_REST_SECONDS: Final = 0.01
 
 
 class Profile(StrEnum):
@@ -76,15 +78,19 @@ class Behaviour:
     def start_noise(self, seconds: float) -> None:
         self.noise_until = time.time() + seconds
 
-    def start_cpu_load(self, threads: int = 2) -> None:
+    def start_cpu_load(self, threads: int = 1) -> None:
         if self.cpu_load_active:
             return
         stop = threading.Event()
 
         def burn() -> None:
-            # Pure-Python busy loop: competes for the GIL with request handling.
+            # Pure-Python busy loop that holds the GIL most of the time, with
+            # short sleeps so requests slow down sharply but still complete.
             while not stop.is_set():
-                sum(i * i for i in range(10_000))
+                deadline = time.perf_counter() + CPU_BURN_SECONDS
+                while time.perf_counter() < deadline:
+                    sum(i * i for i in range(2_000))
+                time.sleep(CPU_REST_SECONDS)
 
         self._cpu_stop = stop
         self._cpu_threads = [threading.Thread(target=burn, daemon=True) for _ in range(threads)]
