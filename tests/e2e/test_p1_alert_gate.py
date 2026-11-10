@@ -60,7 +60,11 @@ def _wait_for_alert_event(
 ) -> dict[str, Any]:
     deadline = time.monotonic() + ALERT_TIMEOUT_S
     while time.monotonic() < deadline:
-        for incident in _active_incidents(client):
+        # Look at all incidents: with workers running, an incident may already
+        # have been investigated into a terminal state (e.g. DIAGNOSED_ONLY).
+        response = client.get(f"{API}/api/v1/incidents", params={"limit": 200})
+        response.raise_for_status()
+        for incident in response.json():
             if incident["service_id"] != service_id:
                 continue
             detail = client.get(f"{API}/api/v1/incidents/{incident['id']}").json()
