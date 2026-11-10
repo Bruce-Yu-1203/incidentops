@@ -39,7 +39,7 @@ def test_resume_requires_human_approval() -> None:
     decision = _engine().evaluate(_request())
     assert decision.decision is Decision.REQUIRES_APPROVAL
     assert decision.reason_code is ReasonCode.APPROVAL_REQUIRED
-    assert decision.policy_version == "p1"
+    assert decision.policy_version == "p2"
     assert decision.risk_class == "low"
 
 
@@ -47,7 +47,7 @@ def test_resume_requires_human_approval() -> None:
     ("overrides", "reason"),
     [
         ({"environment": "production"}, ReasonCode.PRODUCTION_DISABLED),  # S-01
-        ({"action_type": "rollback_demo_api"}, ReasonCode.UNKNOWN_OPERATION),
+        ({"action_type": "delete_topic"}, ReasonCode.UNKNOWN_OPERATION),
         ({"action_type": "run_shell"}, ReasonCode.UNKNOWN_OPERATION),  # S-02
         ({"environment": "staging"}, ReasonCode.ENVIRONMENT_NOT_ALLOWED),
         ({"target_id": "lab-api"}, ReasonCode.TARGET_NOT_ALLOWLISTED),  # S-08
@@ -129,3 +129,25 @@ def test_explicit_deny_rule() -> None:
     config = PolicyConfig.model_validate(_raw_policy(decision="DENY"))
     decision = PolicyEngine(config, load_catalog()).evaluate(_request())
     assert decision.decision is Decision.DENY
+
+
+@pytest.mark.parametrize(
+    ("action_type", "target_id", "arguments", "allowed"),
+    [
+        ("release_lab_db_blocker", "lab-postgres", {}, True),
+        ("restart_lab_dependency", "lab-redis", {}, True),
+        ("rollback_demo_api", "lab-api", {"target_release": "rel-1"}, True),
+        ("rollback_demo_api", "lab-api", {"target_release": "rel-7"}, False),
+        ("rollback_demo_api", "lab-api", {"image": "attacker/api:latest"}, False),
+        ("stop_lab_cpu_load", "lab-cpu-load", {}, True),
+        ("restart_lab_dependency", "lab-postgres", {}, False),  # wrong target
+        ("release_lab_db_blocker", "lab-postgres", {"pid": 4242}, False),
+    ],
+)
+def test_p5_remediations(
+    action_type: str, target_id: str, arguments: dict[str, Any], allowed: bool
+) -> None:
+    decision = _engine().evaluate(
+        _request(action_type=action_type, target_id=target_id, arguments=arguments)
+    )
+    assert (decision.decision is Decision.REQUIRES_APPROVAL) is allowed

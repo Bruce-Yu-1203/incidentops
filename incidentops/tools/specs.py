@@ -62,6 +62,10 @@ class PostgresHealthInput(_Input):
     service_id: ResourceId
 
 
+class DeploymentsInput(_Input):
+    service_id: ResourceId
+
+
 @dataclass(frozen=True)
 class ToolSpec:
     name: str
@@ -132,6 +136,16 @@ _SPECS: Final = (
         timeout_ms=2000,
         max_response_bytes=4096,
         max_calls_per_run=10,
+    ),
+    ToolSpec(
+        "get_recent_deployments",
+        1,
+        "Recent releases of a registered service (release IDs and deploy times).",
+        DeploymentsInput,
+        frozenset({ServiceKind.HTTP_API}),
+        timeout_ms=2000,
+        max_response_bytes=4096,
+        max_calls_per_run=5,
     ),
     ToolSpec(
         "get_postgres_health",

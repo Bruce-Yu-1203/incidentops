@@ -41,10 +41,39 @@ ACTOR: Final = "service:verifier"
 DEFAULT_SPEC_PATH = Path(__file__).resolve().parents[2] / "config" / "verification.yaml"
 
 
+class MetricCheck(BaseModel):
+    """A bound on a predeclared metric template over the observation window."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    kind: Literal["metric_max", "metric_min", "metric_not_rising"]
+    check_id: Annotated[str, Field(pattern=r"^[a-z][a-z0-9_]{0,63}$")]
+    template_id: str
+    service_id: str
+    # max/min bound, or allowed growth (last - first) for metric_not_rising.
+    bound: float
+
+
+class RevisionCheck(BaseModel):
+    """The target must report the revision recorded in the execution receipt."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    kind: Literal["target_revision"]
+    check_id: Annotated[str, Field(pattern=r"^[a-z][a-z0-9_]{0,63}$")]
+    target_id: str
+    equals: str | None = None  # None: the receipt's revision_after
+
+
+CheckSpec = Annotated[MetricCheck | RevisionCheck, Field(discriminator="kind")]
+
+
 class VerifySpec(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
-    lag_max: Annotated[int, Field(ge=0)]
+    # Generic checks; when empty, the consumer lag checks below apply (B-F03).
+    checks: tuple[CheckSpec, ...] = ()
+    lag_max: Annotated[int, Field(ge=0)] = 100
     observation_window_seconds: Annotated[int, Field(ge=10, le=3600)]
     sample_min_count: Annotated[int, Field(ge=2)]
     recovery_timeout_seconds: Annotated[int, Field(ge=10, le=3600)]
@@ -73,6 +102,31 @@ class CheckSet:
     @property
     def unknown(self) -> bool:
         return any(c.passed is None for c in self.checks)
+
+
+def evaluate_metric(check: MetricCheck, points: list[float], spec: VerifySpec) -> VerificationCheck:
+    """Sustained bound over the last ``sample_min_count`` samples (or growth limit)."""
+    if len(points) < spec.sample_min_count:
+        return VerificationCheck(
+            check_id=check.check_id,
+            passed=None,
+            observed=f"only {len(points)} fresh samples of {check.template_id}",
+            sample_count=len(points),
+        )
+    tail = points[-spec.sample_min_count :]
+    if check.kind == "metric_max":
+        passed = max(tail) <= check.bound
+        observed = f"{check.template_id} tail max {max(tail):.4g} (bound <= {check.bound:g})"
+    elif check.kind == "metric_min":
+        passed = min(tail) >= check.bound
+        observed = f"{check.template_id} tail min {min(tail):.4g} (bound >= {check.bound:g})"
+    else:
+        growth = tail[-1] - tail[0]
+        passed = growth <= check.bound
+        observed = f"{check.template_id} grew {growth:.4g} over the tail (limit {check.bound:g})"
+    return VerificationCheck(
+        check_id=check.check_id, passed=passed, observed=observed, sample_count=len(points)
+    )
 
 
 def evaluate_lag(points: list[float], spec: VerifySpec) -> VerificationCheck:
@@ -115,9 +169,52 @@ class RecoveryVerifier:
         self._clock = clock
         self._sleep = sleep
 
+    async def _generic_checks(self, expected_revision: str | None, spec: VerifySpec) -> CheckSet:
+        results: list[VerificationCheck] = []
+        now = self._clock()
+        for check in spec.checks:
+            if isinstance(check, RevisionCheck):
+                state = await self._inspector.inspect(check.target_id)
+                wanted = check.equals or expected_revision
+                if state is None or wanted is None:
+                    results.append(
+                        VerificationCheck(
+                            check_id=check.check_id,
+                            passed=None,
+                            observed="revision unavailable",
+                        )
+                    )
+                    continue
+                results.append(
+                    VerificationCheck(
+                        check_id=check.check_id,
+                        passed=state["revision"] == wanted,
+                        observed=f"revision={state['revision']} expected={wanted}",
+                    )
+                )
+                continue
+            try:
+                series = await self._backend.prometheus_range(
+                    TEMPLATES[check.template_id].render(self._catalog.get(check.service_id)),
+                    now - timedelta(seconds=spec.observation_window_seconds),
+                    now,
+                    5,
+                )
+                points = [value for _, value in series[0].points] if series else []
+                results.append(evaluate_metric(check, points, spec))
+            except Exception:
+                results.append(
+                    VerificationCheck(
+                        check_id=check.check_id, passed=None, observed="prometheus unavailable"
+                    )
+                )
+        return CheckSet(results)
+
     async def _checks(
         self, target_id: str, expected_generation: str | None, spec: VerifySpec
     ) -> CheckSet:
+        if spec.checks:
+            return await self._generic_checks(expected_generation, spec)
         service = self._catalog.get(target_id)
         checks: list[VerificationCheck] = []
 

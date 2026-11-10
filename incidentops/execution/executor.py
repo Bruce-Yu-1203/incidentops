@@ -368,11 +368,19 @@ class ActionExecutor:
 
 
 def receipt_generation(receipt: Mapping[str, Any] | None) -> str | None:
-    """Generation reported by the controller after the action, if present."""
+    """Target revision reported by the controller after the action, if present.
+
+    Consumer receipts nest it as ``operation.generation_after``; lab controller
+    receipts report ``revision_after`` (directly or under ``operation`` once
+    reconciled).
+    """
     if not receipt:
         return None
+    candidates: list[Any] = [receipt.get("revision_after")]
     operation = receipt.get("operation")
     if isinstance(operation, Mapping):
-        value = operation.get("generation_after")
-        return value if isinstance(value, str) else None
+        candidates += [operation.get("generation_after"), operation.get("revision_after")]
+    for value in candidates:
+        if isinstance(value, str):
+            return value
     return None

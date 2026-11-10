@@ -159,3 +159,64 @@ async def test_only_verifying_incidents_are_verified(
     action_id = await _queued_action(session_factory)  # not executed yet
     verifier, _ = _verifier(session_factory, LagBackend([0] * 5), FakeInspector("gen-3", False))
     assert await verifier.verify(action_id) is None
+
+
+@pytest.mark.parametrize(
+    ("points", "revision", "outcome"),
+    [
+        ([0.3, 0.0, 0.0, 0.0, 0.0, 0.0], "gen-3", VerificationOutcome.PASSED),
+        ([0.3, 0.3, 0.3, 0.3, 0.3], "gen-3", VerificationOutcome.VERIFICATION_FAILED),
+        ([0.0, 0.0, 0.0, 0.0, 0.0], "gen-9", VerificationOutcome.VERIFICATION_FAILED),
+        ([0.0, 0.0], "gen-3", VerificationOutcome.UNKNOWN),
+    ],
+)
+async def test_generic_checks_from_config(
+    session_factory: sessionmaker[Session],
+    points: list[float],
+    revision: str,
+    outcome: VerificationOutcome,
+) -> None:
+    from incidentops.verification.verifier import MetricCheck, RevisionCheck
+
+    action_id = await _verifying_action(session_factory)
+    spec = VerifySpec(
+        observation_window_seconds=60,
+        sample_min_count=5,
+        recovery_timeout_seconds=30,
+        poll_interval_seconds=10,
+        checks=(
+            RevisionCheck(
+                kind="target_revision", check_id="revision", target_id="persist-demo-consumer"
+            ),
+            MetricCheck(
+                kind="metric_max",
+                check_id="errors",
+                template_id="api_error_ratio",
+                service_id="lab-api",
+                bound=0.02,
+            ),
+        ),
+    )
+    clock = FakeClock()
+    verifier = RecoveryVerifier(
+        session_factory,
+        load_catalog(),
+        LagBackend(points),
+        FakeInspector(revision, paused=False),
+        VerifyConfig(schema_version=1, specs={"resume_test_consumer": spec}),
+        clock=clock,
+        sleep=clock.sleep,
+    )
+    assert await verifier.verify(action_id) is outcome
+
+
+def test_repository_verification_specs_reference_known_templates() -> None:
+    from incidentops.tools.templates import TEMPLATES
+    from incidentops.verification.verifier import MetricCheck, load_verify_config
+
+    catalog = load_catalog()
+    for spec in load_verify_config().specs.values():
+        for check in spec.checks:
+            if isinstance(check, MetricCheck):
+                assert check.template_id in TEMPLATES
+                TEMPLATES[check.template_id].render(catalog.get(check.service_id))

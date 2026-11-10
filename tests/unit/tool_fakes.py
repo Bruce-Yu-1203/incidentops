@@ -23,6 +23,13 @@ class FakeBackend:
         self.lag = [(NOW.timestamp() - 60, 100.0), (NOW.timestamp(), 1300.0)]
         self.paused = True
         self.brokers = 1.0
+        self.revisions: dict[str, str] = {}
+        self.deployments: dict[str, Any] = {
+            "service_id": "lab-api",
+            "current_release": "rel-1",
+            "pinned_healthy_release": "rel-1",
+            "history": [],
+        }
         self.delay = 0.0
         self.fail = False
 
@@ -65,6 +72,15 @@ class FakeBackend:
         await self._maybe_slow()
         self.queries.append(traceql)
         return [TraceSummary("ab" * 16, "lab-api", "GET /items/{item_id}", 0, 5012)]
+
+    async def controller_get(
+        self, service_id: str, management_url: str, path: str
+    ) -> dict[str, Any]:
+        await self._maybe_slow()
+        self.queries.append(path)
+        if path.startswith("/deployments"):
+            return self.deployments
+        return {"target_id": service_id, "revision": self.revisions.get(service_id, "rev-1")}
 
     async def consumer_status(self, service_id: str, management_url: str) -> dict[str, Any]:
         await self._maybe_slow()

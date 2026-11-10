@@ -15,7 +15,11 @@ class TargetInspector(Protocol):
 
 
 class ConsumerTargetInspector:
-    """Reads ``GET /control/status`` with the read-only lab token."""
+    """Reads a target's current revision with the read-only lab token.
+
+    Consumers report their generation via ``GET /control/status``; targets of
+    the lab controller report theirs via ``GET /targets/{id}``.
+    """
 
     def __init__(self, catalog: ServiceCatalog, backend: TelemetryBackend) -> None:
         self._catalog = catalog
@@ -26,13 +30,18 @@ class ConsumerTargetInspector:
             service = self._catalog.get(target_id)
         except UnknownServiceError:
             return None
-        if service.kind is not ServiceKind.KAFKA_CONSUMER or service.management_url is None:
+        if service.management_url is None:
             return None
+        url = str(service.management_url)
         try:
-            status = await self._backend.consumer_status(target_id, str(service.management_url))
+            if service.kind is ServiceKind.KAFKA_CONSUMER:
+                status = await self._backend.consumer_status(target_id, url)
+                generation = status.get("generation")
+                if not isinstance(generation, str):
+                    return None
+                return {"revision": generation, "paused": status.get("paused")}
+            state = await self._backend.controller_get(target_id, url, f"/targets/{target_id}")
         except Exception:
             return None
-        generation = status.get("generation")
-        if not isinstance(generation, str):
-            return None
-        return {"revision": generation, "paused": status.get("paused")}
+        revision = state.get("revision")
+        return {"revision": revision} if isinstance(revision, str) else None

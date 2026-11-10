@@ -17,7 +17,12 @@ import httpx
 from incidentops.actions.approvals import EXECUTE_ACTION_JOB
 from incidentops.config import Settings, get_settings
 from incidentops.domain.catalog import load_catalog
-from incidentops.execution.adapters import ConsumerResumeAdapter
+from incidentops.execution.adapters import (
+    LAB_CONTROLLER_ACTIONS,
+    ConsumerResumeAdapter,
+    LabControllerAdapter,
+    RemediationAdapter,
+)
 from incidentops.execution.executor import (
     RECONCILE_ACTION_JOB,
     ActionExecutor,
@@ -57,9 +62,15 @@ async def serve(settings: Settings) -> None:  # pragma: no cover - process entry
             settings.executor_lab_token.get_secret_value(),
             settings.endpoint_overrides,
         )
-        executor = ActionExecutor(
-            factory, PolicyEngine(load_policy(), catalog), {"resume_test_consumer": adapter}
+        controller = LabControllerAdapter(
+            client,
+            catalog,
+            settings.executor_lab_token.get_secret_value(),
+            settings.endpoint_overrides,
         )
+        adapters: dict[str, RemediationAdapter] = {"resume_test_consumer": adapter}
+        adapters.update({action: controller for action in LAB_CONTROLLER_ACTIONS})
+        executor = ActionExecutor(factory, PolicyEngine(load_policy(), catalog), adapters)
         await run_forever(
             factory,
             handlers(executor),

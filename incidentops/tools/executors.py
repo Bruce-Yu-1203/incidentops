@@ -16,6 +16,7 @@ from incidentops.tools.backends import Series, TelemetryBackend
 from incidentops.tools.specs import (
     ConsumerLagInput,
     ConsumerStatusInput,
+    DeploymentsInput,
     PostgresHealthInput,
     QueryMetricsInput,
     SearchLogsInput,
@@ -282,6 +283,43 @@ async def get_postgres_health(
     )
 
 
+async def get_recent_deployments(
+    args: _Input, catalog: ServiceCatalog, backend: TelemetryBackend, now: datetime
+) -> ToolOutput:
+    args = _expect(args, DeploymentsInput)
+    service = _service(catalog, args.service_id)
+    if service.management_url is None:
+        raise ScopeError(f"{service.service_id} has no deployment controller")
+    raw = await backend.controller_get(
+        service.service_id, str(service.management_url), f"/deployments/{service.service_id}"
+    )
+    history = [
+        {"release_id": d.get("release_id"), "deployed_at": d.get("deployed_at")}
+        for d in raw.get("history", [])[-10:]
+        if isinstance(d, dict)
+    ]
+    current = raw.get("current_release")
+    last = history[-1] if history else None
+    summary = f"{service.service_id} runs {current}; " + (
+        f"last change to {last['release_id']} at {last['deployed_at']}"
+        if last
+        else "no recent changes"
+    )
+    return ToolOutput(
+        EvidenceSource.DEPLOYMENT_CONTROLLER,
+        "recent_deployments",
+        {"service_id": service.service_id},
+        now - timedelta(hours=1),
+        now,
+        summary,
+        {
+            "current_release": current,
+            "pinned_healthy_release": raw.get("pinned_healthy_release"),
+            "history": history,
+        },
+    )
+
+
 EXECUTORS: Final[Mapping[str, Executor]] = MappingProxyType(
     {
         "query_metrics": query_metrics,
@@ -290,5 +328,6 @@ EXECUTORS: Final[Mapping[str, Executor]] = MappingProxyType(
         "get_kafka_consumer_lag": get_kafka_consumer_lag,
         "get_consumer_status": get_consumer_status,
         "get_postgres_health": get_postgres_health,
+        "get_recent_deployments": get_recent_deployments,
     }
 )

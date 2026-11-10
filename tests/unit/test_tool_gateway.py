@@ -252,3 +252,25 @@ def test_manifest_lists_templates_and_applicable_services() -> None:
     assert "producer_send_rate (messages/s; services: demo-producer)" in query["description"]
     assert tools["search_logs"]["description"].endswith("Applies to: lab-api.")
     assert "persist-demo-consumer" in tools["get_consumer_status"]["description"]
+
+
+async def test_recent_deployments_tool_reports_release_changes() -> None:
+    gateway, backend, evidence, _ = make_gateway()
+    backend.deployments = {
+        "service_id": "lab-api",
+        "current_release": "rel-2",
+        "pinned_healthy_release": "rel-1",
+        "history": [{"release_id": "rel-2", "deployed_at": "2026-11-10T12:00:00Z", "actor": "x"}],
+    }
+    result = await gateway.invoke(
+        make_context(), "d", "get_recent_deployments", {"service_id": "lab-api"}
+    )
+    assert result.status is ToolStatus.SUCCESS
+    assert "runs rel-2" in result.summary
+    stored = evidence.items[result.evidence_id or ""]
+    assert stored.source.value == "deployment_controller"
+    assert "actor" not in stored.snapshot  # only release IDs and times are kept
+    denied = await gateway.invoke(
+        make_context(), "e", "get_recent_deployments", {"service_id": "lab-redis"}
+    )
+    assert denied.error_code == "tool_not_applicable"

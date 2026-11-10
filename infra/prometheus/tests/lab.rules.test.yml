@@ -103,3 +103,67 @@ tests:
       - eval_time: 120s
         alertname: lab_api_error_ratio_high
         exp_alerts: []
+
+  - name: memory growth fires after a sustained increase
+    interval: 15s
+    input_series:
+      - series: 'process_resident_memory_bytes{service_id="lab-api"}'
+        values: "100000000+30000000x20"
+    alert_rule_test:
+      - eval_time: 4m
+        alertname: lab_api_memory_growth
+        exp_alerts:
+          - exp_labels:
+              severity: warning
+              service_id: lab-api
+              environment: fault-lab
+              component: http-api
+            exp_annotations:
+              summary: "lab-api resident memory growing faster than 1 MB/s"
+              observed_value: "1.907MiB/s"
+
+  - name: stable memory stays quiet
+    interval: 15s
+    input_series:
+      - series: 'process_resident_memory_bytes{service_id="lab-api"}'
+        values: "100000000x20"
+    alert_rule_test:
+      - eval_time: 4m
+        alertname: lab_api_memory_growth
+        exp_alerts: []
+
+  - name: high cpu fires
+    interval: 5s
+    input_series:
+      - series: 'process_cpu_seconds_total{service_id="lab-api"}'
+        values: "0+4x30"
+    alert_rule_test:
+      - eval_time: 2m
+        alertname: lab_api_cpu_high
+        exp_alerts:
+          - exp_labels:
+              severity: warning
+              service_id: lab-api
+              environment: fault-lab
+              component: http-api
+            exp_annotations:
+              summary: "lab-api process using more than 0.6 CPU cores"
+              observed_value: "0.80 cores"
+
+  - name: redis down fires
+    interval: 5s
+    input_series:
+      - series: 'redis_up{service_id="lab-redis"}'
+        values: "1 1 0x20"
+    alert_rule_test:
+      - eval_time: 1m
+        alertname: lab_redis_down
+        exp_alerts:
+          - exp_labels:
+              severity: critical
+              service_id: lab-redis
+              environment: fault-lab
+              component: cache
+            exp_annotations:
+              summary: "lab-redis is not reachable by its exporter"
+              observed_value: "0"

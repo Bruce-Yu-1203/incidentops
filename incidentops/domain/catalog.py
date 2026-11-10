@@ -26,6 +26,7 @@ class ServiceKind(StrEnum):
     KAFKA_BROKER = "kafka_broker"
     POSTGRES = "postgres"
     REDIS = "redis"
+    LOAD_GENERATOR = "load_generator"
 
 
 class KafkaBinding(BaseModel):

@@ -13,7 +13,9 @@ from incidentops.persistence.models import (
     ActionProposalRow,
     ApprovalRequestRow,
     AuditEventRow,
+    DiagnosisRow,
     IncidentRow,
+    InvestigationRunRow,
 )
 from incidentops.policy.engine import Decision, PolicyEngine, load_policy
 from tests.integration.helpers import FakeInspector, diagnosed_incident, production_proposal
@@ -52,7 +54,7 @@ async def test_valid_proposal_opens_approval_with_frozen_envelope(
         "PENDING",
         "AWAITING_APPROVAL",
     )
-    assert (policy_audit.decision, policy_audit.policy_version) == ("REQUIRES_APPROVAL", "p1")
+    assert (policy_audit.decision, policy_audit.policy_version) == ("REQUIRES_APPROVAL", "p2")
 
 
 async def test_production_proposal_is_denied(session_factory: sessionmaker[Session]) -> None:
@@ -93,3 +95,53 @@ async def test_evaluation_is_idempotent(session_factory: sessionmaker[Session]) 
     assert second.reason == "already_evaluated"
     with session_factory() as session:
         assert len(session.scalars(select(ActionProposalRow)).all()) == 1
+
+
+async def test_second_action_on_same_target_is_denied_while_first_is_active(
+    session_factory: sessionmaker[Session],
+) -> None:
+    first_incident, first_diagnosis = await diagnosed_incident(session_factory)
+    evaluator = _evaluator(session_factory, FakeInspector("gen-2"))
+    first = await evaluator.evaluate(first_incident, first_diagnosis)
+    assert first.decision is Decision.REQUIRES_APPROVAL
+
+    # A second incident (another service's alert) proposes the same target.
+    from fastapi.testclient import TestClient
+    from pydantic import SecretStr
+
+    from incidentops.agent.model import ScriptedModelAdapter
+    from incidentops.api.app import create_app
+    from incidentops.config import Settings
+    from incidentops.workers.investigation import process_one
+    from tests.integration.test_investigation_worker import OWNER, _runner
+    from tests.unit.test_alertmanager_normalize import payload
+    from tests.unit.test_investigation_graph import lag_and_status, submit
+
+    client = TestClient(
+        create_app(
+            Settings(alertmanager_token=SecretStr("alertmanager-token-0123456789")),
+            session_factory=session_factory,
+        )
+    )
+    other = payload(fingerprint="abcdefabcdef0001")
+    other["alerts"][0]["labels"]["service_id"] = "demo-producer"
+    response = client.post(
+        "/api/v1/alerts/alertmanager",
+        json=other,
+        headers={"Authorization": "Bearer alertmanager-token-0123456789"},
+    )
+    (second_incident,) = response.json()["created_incident_ids"]
+    runner = _runner(session_factory, ScriptedModelAdapter([lag_and_status(), submit]))
+    await process_one(session_factory, runner, OWNER, 60)
+    with session_factory() as session:
+        diagnosis_id = session.scalars(
+            select(DiagnosisRow.id)
+            .join(InvestigationRunRow, InvestigationRunRow.id == DiagnosisRow.run_id)
+            .where(InvestigationRunRow.incident_id == second_incident)
+        ).one()
+    second = await evaluator.evaluate(second_incident, diagnosis_id)
+    assert second.decision is Decision.DENY
+    with session_factory() as session:
+        assert session.get_one(ActionProposalRow, second.action_id).reason_code == (
+            "duplicate_active_action"
+        )

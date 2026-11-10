@@ -52,6 +52,10 @@ class TelemetryBackend(Protocol):
 
     async def consumer_status(self, service_id: str, management_url: str) -> dict[str, Any]: ...
 
+    async def controller_get(
+        self, service_id: str, management_url: str, path: str
+    ) -> dict[str, Any]: ...
+
 
 class BackendError(RuntimeError):
     """A telemetry backend returned an error or an unexpected shape."""
@@ -163,6 +167,21 @@ class HttpTelemetryBackend:
         base = self._overrides.get(service_id, management_url)
         return await self._get(
             f"{base.rstrip('/')}/control/status",
+            {},
+            headers={"Authorization": f"Bearer {self._read_token}"},
+        )
+
+    async def controller_get(
+        self, service_id: str, management_url: str, path: str
+    ) -> dict[str, Any]:
+        """Read-only GET against a registered lab controller (targets, deployments)."""
+        if not self._read_token:
+            raise BackendError("lab read token not configured")
+        if not path.startswith("/") or ".." in path:
+            raise BackendError("invalid controller path")
+        base = self._overrides.get(service_id, management_url)
+        return await self._get(
+            f"{base.rstrip('/')}{path}",
             {},
             headers={"Authorization": f"Bearer {self._read_token}"},
         )

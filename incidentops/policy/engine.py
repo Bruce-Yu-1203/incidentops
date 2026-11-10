@@ -37,6 +37,7 @@ class ReasonCode(StrEnum):
     ARGUMENTS_NOT_ALLOWED = "arguments_not_allowed"
     MISSING_TARGET_REVISION = "missing_target_revision"
     POLICY_ERROR = "policy_error"
+    DUPLICATE_ACTIVE_ACTION = "duplicate_active_action"
 
 
 class PolicyRule(BaseModel):

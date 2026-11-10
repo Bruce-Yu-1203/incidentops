@@ -3,7 +3,7 @@
 # Write operations can only be DENY or REQUIRES_APPROVAL: the MVP never
 # executes a mutation without a human approval.
 schema_version: 1
-policy_version: p1
+policy_version: p2
 approval_ttl_seconds: 900
 require_separation_of_duties: true
 rules:
@@ -14,3 +14,26 @@ rules:
     # Every argument must be listed; values outside the list are denied.
     allowed_arguments:
       desired_paused: [false]
+  - action_type: release_lab_db_blocker
+    environments: [fault-lab]
+    decision: REQUIRES_APPROVAL
+    risk_class: low
+    # The exact blocker is the target revision (its fixture token), not an argument.
+    allowed_arguments: {}
+  - action_type: restart_lab_dependency
+    environments: [fault-lab]
+    decision: REQUIRES_APPROVAL
+    risk_class: medium
+    allowed_arguments: {}
+  - action_type: rollback_demo_api
+    environments: [fault-lab]
+    decision: REQUIRES_APPROVAL
+    risk_class: medium
+    # Only the pinned healthy release; never an arbitrary image or version.
+    allowed_arguments:
+      target_release: [rel-1]
+  - action_type: stop_lab_cpu_load
+    environments: [fault-lab]
+    decision: REQUIRES_APPROVAL
+    risk_class: low
+    allowed_arguments: {}

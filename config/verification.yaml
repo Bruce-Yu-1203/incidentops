@@ -9,3 +9,57 @@ specs:
     sample_min_count: 5
     recovery_timeout_seconds: 240
     poll_interval_seconds: 10
+
+  release_lab_db_blocker:
+    observation_window_seconds: 60
+    sample_min_count: 5
+    recovery_timeout_seconds: 240
+    poll_interval_seconds: 10
+    checks:
+      - {kind: target_revision, check_id: blocker_released, target_id: lab-postgres, equals: none}
+      - {kind: metric_max, check_id: no_exclusive_locks, template_id: postgres_exclusive_locks,
+         service_id: lab-postgres, bound: 0}
+      - {kind: metric_max, check_id: api_errors_recovered, template_id: api_error_ratio,
+         service_id: lab-api, bound: 0.02}
+      - {kind: metric_max, check_id: api_latency_recovered, template_id: api_latency_p95,
+         service_id: lab-api, bound: 0.5}
+
+  restart_lab_dependency:
+    observation_window_seconds: 60
+    sample_min_count: 5
+    recovery_timeout_seconds: 240
+    poll_interval_seconds: 10
+    checks:
+      - {kind: target_revision, check_id: dependency_restarted, target_id: lab-redis}
+      - {kind: metric_min, check_id: redis_up, template_id: redis_up,
+         service_id: lab-redis, bound: 1}
+      - {kind: metric_max, check_id: api_errors_recovered, template_id: api_error_ratio,
+         service_id: lab-api, bound: 0.02}
+
+  rollback_demo_api:
+    observation_window_seconds: 90
+    sample_min_count: 6
+    recovery_timeout_seconds: 300
+    poll_interval_seconds: 10
+    checks:
+      - {kind: target_revision, check_id: pinned_release_running, target_id: lab-api,
+         equals: rel-1}
+      - {kind: metric_max, check_id: api_errors_recovered, template_id: api_error_ratio,
+         service_id: lab-api, bound: 0.02}
+      - {kind: metric_max, check_id: api_latency_recovered, template_id: api_latency_p95,
+         service_id: lab-api, bound: 0.5}
+      # Memory must stop growing (freed memory is not always returned to the OS).
+      - {kind: metric_not_rising, check_id: memory_stable, template_id: api_memory_bytes,
+         service_id: lab-api, bound: 10000000}
+
+  stop_lab_cpu_load:
+    observation_window_seconds: 60
+    sample_min_count: 5
+    recovery_timeout_seconds: 240
+    poll_interval_seconds: 10
+    checks:
+      - {kind: target_revision, check_id: load_stopped, target_id: lab-cpu-load}
+      - {kind: metric_max, check_id: api_cpu_recovered, template_id: api_cpu_cores,
+         service_id: lab-api, bound: 0.4}
+      - {kind: metric_max, check_id: api_latency_recovered, template_id: api_latency_p95,
+         service_id: lab-api, bound: 0.5}

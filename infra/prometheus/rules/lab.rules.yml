@@ -53,3 +53,43 @@ groups:
         annotations:
           summary: "persist-demo-consumer group lag above 200 messages"
           observed_value: "{{ $value }}"
+
+  - name: lab-resources
+    rules:
+      - alert: lab_api_memory_growth
+        expr: deriv(process_resident_memory_bytes{service_id="lab-api"}[2m]) > 1000000
+        for: 1m
+        labels:
+          severity: warning
+          service_id: lab-api
+          environment: fault-lab
+          component: http-api
+        annotations:
+          summary: "lab-api resident memory growing faster than 1 MB/s"
+          observed_value: "{{ $value | humanize1024 }}B/s"
+
+      - alert: lab_api_cpu_high
+        expr: rate(process_cpu_seconds_total{service_id="lab-api"}[1m]) > 0.6
+        for: 30s
+        labels:
+          severity: warning
+          service_id: lab-api
+          environment: fault-lab
+          component: http-api
+        annotations:
+          summary: "lab-api process using more than 0.6 CPU cores"
+          observed_value: "{{ $value | printf \"%.2f\" }} cores"
+
+  - name: lab-dependencies
+    rules:
+      - alert: lab_redis_down
+        expr: redis_up{service_id="lab-redis"} == 0
+        for: 15s
+        labels:
+          severity: critical
+          service_id: lab-redis
+          environment: fault-lab
+          component: cache
+        annotations:
+          summary: "lab-redis is not reachable by its exporter"
+          observed_value: "{{ $value }}"

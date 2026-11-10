@@ -125,3 +125,87 @@ class ConsumerResumeAdapter:
 
 def _is_json(response: httpx.Response) -> bool:
     return bool(response.headers.get("content-type", "").startswith("application/json"))
+
+
+class LabControllerAdapter:
+    """The P5 remediations, each a single allowlisted call to the lab controller.
+
+    ``POST /remediations`` carries the stable action_id, the action type, the
+    registered target, the approved target revision and the policy-checked
+    arguments. The controller refuses anything outside its own allowlist too.
+    """
+
+    provider = "lab_fault_controller"
+
+    def __init__(
+        self,
+        client: httpx.AsyncClient,
+        catalog: ServiceCatalog,
+        executor_token: str,
+        endpoint_overrides: dict[str, str] | None = None,
+    ) -> None:
+        self._client = client
+        self._catalog = catalog
+        self._headers = {"Authorization": f"Bearer {executor_token}"}
+        self._overrides = dict(endpoint_overrides or {})
+
+    def _base(self, target_id: str) -> str:
+        service = self._catalog.get(target_id)
+        if service.management_url is None:
+            raise ValueError(f"{target_id} has no management endpoint")
+        return self._overrides.get(target_id, str(service.management_url)).rstrip("/")
+
+    async def apply(self, envelope: ActionEnvelope) -> ApplyResult:
+        body = {
+            "action_id": envelope.action_id,
+            "action_type": envelope.action_type,
+            "target_id": envelope.target_id,
+            "expected_revision": envelope.target_revision,
+            "arguments": dict(envelope.arguments),
+        }
+        try:
+            response = await self._client.post(
+                f"{self._base(envelope.target_id)}/remediations", json=body, headers=self._headers
+            )
+        except httpx.HTTPError as exc:
+            return ApplyResult(ApplyStatus.AMBIGUOUS, detail=type(exc).__name__)
+        if response.status_code in (200, 201):
+            return ApplyResult(ApplyStatus.COMPLETED, dict(response.json()))
+        if 400 <= response.status_code < 500:
+            detail = response.json().get("error") if _is_json(response) else None
+            return ApplyResult(ApplyStatus.REJECTED, detail=str(detail or response.status_code))
+        return ApplyResult(ApplyStatus.AMBIGUOUS, detail=f"http_{response.status_code}")
+
+    async def get_operation(self, envelope: ActionEnvelope) -> LookupResult:
+        try:
+            response = await self._client.get(
+                f"{self._base(envelope.target_id)}/remediations/operations/{envelope.action_id}",
+                headers=self._headers,
+            )
+        except httpx.HTTPError:
+            return LookupResult(LookupStatus.UNKNOWN)
+        if response.status_code == 200:
+            return LookupResult(LookupStatus.FOUND, dict(response.json()))
+        if response.status_code == 404:
+            return LookupResult(LookupStatus.NOT_FOUND)
+        return LookupResult(LookupStatus.UNKNOWN)
+
+    async def inspect_target(self, target_id: str) -> str | None:
+        try:
+            response = await self._client.get(
+                f"{self._base(target_id)}/targets/{target_id}", headers=self._headers
+            )
+        except httpx.HTTPError:
+            return None
+        if response.status_code != 200:
+            return None
+        revision = response.json().get("revision")
+        return revision if isinstance(revision, str) else None
+
+
+LAB_CONTROLLER_ACTIONS = (
+    "release_lab_db_blocker",
+    "restart_lab_dependency",
+    "rollback_demo_api",
+    "stop_lab_cpu_load",
+)

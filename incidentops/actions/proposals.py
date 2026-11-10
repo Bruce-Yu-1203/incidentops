@@ -29,11 +29,20 @@ from incidentops.persistence.models import (
     IncidentRow,
 )
 from incidentops.persistence.transitions import AuditSpec, transition
-from incidentops.policy.engine import Decision, PolicyEngine, PolicyRequest
+from incidentops.policy.engine import Decision, PolicyEngine, PolicyRequest, ReasonCode
 from incidentops.time import utcnow
 
 ACTOR: Final = "service:proposal-evaluator"
 UNKNOWN_REVISION: Final = "unknown"
+ACTIVE_ACTION_STATES: Final = frozenset(
+    {
+        ActionState.PENDING_APPROVAL,
+        ActionState.APPROVED,
+        ActionState.QUEUED,
+        ActionState.EXECUTING,
+        ActionState.RECONCILING,
+    }
+)
 
 
 @dataclass(frozen=True)
@@ -55,6 +64,19 @@ class ProposalEvaluator:
         self._policy = policy
         self._inspector = inspector
         self._clock = clock
+
+    def _has_active_action(self, target_id: str) -> bool:
+        active = [s.value for s in ACTIVE_ACTION_STATES]
+        with self._factory() as session:
+            return (
+                session.scalars(
+                    select(ActionProposalRow.id).where(
+                        ActionProposalRow.target_id == target_id,
+                        ActionProposalRow.state.in_(active),
+                    )
+                ).first()
+                is not None
+            )
 
     async def evaluate(self, incident_id: str, diagnosis_id: str) -> EvaluationOutcome:
         with self._factory() as session:
@@ -84,6 +106,17 @@ class ProposalEvaluator:
                 target_revision=revision,
             )
         )
+        if decision.decision is Decision.REQUIRES_APPROVAL and self._has_active_action(
+            draft.target_id
+        ):
+            # One fault often opens incidents on several services (e.g. Redis and
+            # the API that uses it). Only one in-flight action per target.
+            decision = decision.model_copy(
+                update={
+                    "decision": Decision.DENY,
+                    "reason_code": ReasonCode.DUPLICATE_ACTIVE_ACTION,
+                }
+            )
         now = self._clock()
         envelope = ActionEnvelope(
             action_id=new_id("act"),
