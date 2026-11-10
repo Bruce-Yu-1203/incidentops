@@ -64,3 +64,8 @@ def test_lab_dockerfile_installs_from_hashed_lock() -> None:
     dockerfile = (REPO_ROOT / "fault-lab" / "Dockerfile").read_text(encoding="utf-8")
     assert "--require-hashes -r requirements.lock" in dockerfile
     assert "@sha256:" in dockerfile.splitlines()[2] or "@sha256:" in dockerfile
+
+
+def test_lab_api_returns_leaked_memory_between_trials() -> None:
+    env = _env(_services(LAB)["lab-api"])
+    assert env["MALLOC_MMAP_THRESHOLD_"] == "131072"

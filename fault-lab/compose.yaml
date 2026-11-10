@@ -87,6 +87,10 @@ services:
       OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-collector:4318
       # Lets only the fault controller switch injected behaviours.
       FAULT_LAB_INTERNAL_TOKEN: ${FAULT_LAB_INTERNAL_TOKEN:?set in .env}
+      # Fixed glibc mmap threshold: memory retained by the leaky release is
+      # returned to the OS on rollback/reset, so every B-F04 trial starts from
+      # the same resident memory instead of reusing earlier trials' heap.
+      MALLOC_MMAP_THRESHOLD_: "131072"
     depends_on:
       lab-postgres: {condition: service_healthy}
       lab-redis: {condition: service_healthy}
