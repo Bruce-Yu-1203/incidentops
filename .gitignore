@@ -24,8 +24,8 @@ out/
 next-env.d.ts
 
 # Benchmark output
-results/
-reports/
+/results/
+/reports/
 
 # OS / editor
 .DS_Store
