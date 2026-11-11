@@ -27,6 +27,9 @@ for the same alert while it waits for a person.
 - Assign and close are operator actions (operator, approver, admin). Both bump
   the incident version with compare-and-swap and write an audit event in the
   same transaction. Closing never runs an action.
+- A `resolved` alert delivery with no active incident is stored on the newest
+  handed-over incident for the same dedup key that still waits for a person.
+  It never changes state; the console shows it as "alert cleared N min ago".
 - "Re-check now" re-evaluates the incident's verification metric checks once,
   read-only, from Prometheus. It uses no model and no executor, is audited, and
   only reports; a person still decides.

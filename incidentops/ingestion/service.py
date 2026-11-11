@@ -20,6 +20,7 @@ from sqlalchemy import select, text
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.orm import Session, sessionmaker
 
+from incidentops.domain.disposition import HANDOVER_STATES
 from incidentops.domain.ids import new_id
 from incidentops.domain.schemas import AlertEvent, AlertStatus
 from incidentops.domain.state_machines import INCIDENT_MACHINE, IncidentState
@@ -46,6 +47,20 @@ def _active_incident(session: Session, key: str) -> IncidentRow | None:
         .where(IncidentRow.dedup_key == key, IncidentRow.state.not_in(terminal))
         .with_for_update()
     ).one_or_none()
+
+
+def _waiting_handover(session: Session, key: str) -> IncidentRow | None:
+    """The newest handed-over incident for ``key`` that still waits for a person."""
+    return session.scalars(
+        select(IncidentRow)
+        .where(
+            IncidentRow.dedup_key == key,
+            IncidentRow.state.in_([s.value for s in HANDOVER_STATES]),
+            IncidentRow.disposition.is_(None),
+        )
+        .order_by(IncidentRow.created_at.desc())
+        .limit(1)
+    ).first()
 
 
 def _create_incident(session: Session, event: AlertEvent, key: str) -> str | None:
@@ -100,9 +115,15 @@ def ingest_events(
                 result.updated_incident_ids.append(incident.id)
                 continue
             if event.status is AlertStatus.RESOLVED:
-                # No active incident to attach to; a resolved notification
-                # alone must not open an incident.
-                result.ignored_resolved += 1
+                # A resolved notification alone must not open an incident. It
+                # is kept on a handed-over incident that still waits for a
+                # person, as a hint only: the state never changes (ADR-021).
+                waiting = _waiting_handover(session, key)
+                if waiting is None:
+                    result.ignored_resolved += 1
+                else:
+                    _record_event(session, waiting.id, event)
+                    result.updated_incident_ids.append(waiting.id)
                 continue
 
             created_id = _create_incident(session, event, key)
