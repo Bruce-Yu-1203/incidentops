@@ -23,6 +23,7 @@ PREFIXES: Final = frozenset(
         "job",
         "usr",
         "ses",
+        "msg",
     }
 )
 _ID_PATTERN: Final = re.compile(r"^(?P<prefix>[a-z]+)_[0-9a-f]{32}$")

@@ -21,3 +21,4 @@ it with a new ADR that supersedes the old one.
 | [ADR-019](ADR-019-anthropic-compatible-endpoints.md) | Anthropic-compatible model endpoints | Accepted |
 | [ADR-020](ADR-020-p5-fault-simulation.md) | How the P5 fault families are simulated in the lab | Accepted |
 | [ADR-021](ADR-021-human-disposition.md) | Humans close handed-over incidents with a disposition, not a state | Accepted |
+| [ADR-022](ADR-022-incident-chat.md) | A read-only incident chat answered by the agent worker | Accepted |

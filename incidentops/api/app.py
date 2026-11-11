@@ -32,6 +32,7 @@ from incidentops.api import investigations as run_queries
 from incidentops.api import metrics as metric_queries
 from incidentops.auth import service as auth
 from incidentops.auth.service import READ_ROLES, AuthenticatedUser
+from incidentops.chat import service as chat
 from incidentops.config import Profile, Settings, get_settings
 from incidentops.domain.catalog import load_catalog
 from incidentops.domain.disposition import Disposition
@@ -95,6 +96,10 @@ class CloseRequest(BaseModel):
     expected_version: int = Field(ge=1)
     disposition: Disposition
     note: str | None = Field(default=None, max_length=2000)
+
+
+class ChatQuestion(BaseModel):
+    question: str = Field(min_length=1, max_length=chat.MAX_QUESTION_CHARS)
 
 
 class HandlingResponse(BaseModel):
@@ -412,6 +417,33 @@ def create_app(
             based_on=plan.action_type or "service_defaults",
             alert_cleared_at=cleared,
         )
+
+    @app.get(
+        "/api/v1/incidents/{incident_id}/chat",
+        tags=["chat"],
+        dependencies=[Depends(require_viewer)],
+    )
+    def incident_chat(incident_id: str, factory: Sessions) -> chat.ChatThreadView:
+        with factory() as session:
+            view = chat.thread(session, incident_id)
+        if view is None:
+            raise HTTPException(status.HTTP_404_NOT_FOUND, "incident not found")
+        return view
+
+    @app.post(
+        "/api/v1/incidents/{incident_id}/chat",
+        tags=["chat"],
+        status_code=status.HTTP_202_ACCEPTED,
+    )
+    def ask_incident_chat(
+        incident_id: str, body: ChatQuestion, user: User, factory: Sessions
+    ) -> chat.ChatMessageView:
+        # Any signed-in role may ask: answers are read-only and change nothing.
+        with factory.begin() as session:
+            message = chat.ask(session, incident_id, user, body.question)
+        if message is None:
+            raise HTTPException(status.HTTP_404_NOT_FOUND, "incident not found")
+        return message
 
     @app.get("/api/v1/history", tags=["history"], dependencies=[Depends(require_viewer)])
     def incident_history(
