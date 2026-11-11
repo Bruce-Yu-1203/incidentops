@@ -129,3 +129,25 @@ export function panelForService(serviceId: string, title?: string | null): strin
   if (serviceId === "lab-redis") return "redis_memory";
   return null;
 }
+
+
+export type MetricMarker = { at: string; label: string };
+export type IncidentMetricsView = MetricsView & {
+  markers: MetricMarker[];
+  mode: "live" | "historical";
+};
+
+export async function fetchIncidentMetrics(
+  baseUrl: string, incidentId: string, fetchImpl: typeof fetch = fetch,
+): Promise<ApiResult<IncidentMetricsView>> {
+  try {
+    const response = await fetchImpl(`${baseUrl}/api/v1/incidents/${incidentId}/metrics`, { cache: "no-store" });
+    if (!response.ok) return { ok: false, error: `HTTP ${response.status}` };
+    const body: unknown = await response.json();
+    return isMetricsView(body) && "markers" in body && Array.isArray(body.markers) && "mode" in body
+      ? { ok: true, data: body as IncidentMetricsView }
+      : { ok: false, error: "unexpected response shape" };
+  } catch {
+    return { ok: false, error: "Could not load incident metrics" };
+  }
+}

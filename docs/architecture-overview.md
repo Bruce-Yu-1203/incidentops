@@ -119,3 +119,12 @@ audit_events: append-only, insert-only for every application role
 | Database schema, roles, outbox | `incidentops/persistence/` |
 | Lab services and fault controller | `fault-lab/fault_lab/` |
 | Scenarios and benchmark | `fault-lab/scenarios/`, `fault-lab/fault_lab/benchmark/` |
+
+## Console metric replay
+
+The Story chart uses the authenticated incident metrics endpoint. Its range starts
+five minutes before the first alert and ends five minutes after the terminal audit
+transition (capped at the current time), or at the current time for active incidents.
+Manual ownership and disposition edits do not move an audited historical boundary.
+Queries remain server-side and allowlisted. Missing historical telemetry is shown
+explicitly; current readings never replace a historical window.

@@ -13,7 +13,7 @@ import { incidentTitle, inboxStatus } from "@/lib/inbox";
 import { DISPOSITION_LABEL, DISPOSITIONS, fetchIncident, type IncidentDetail } from "@/lib/incidents";
 import { fetchRun, type RunDetail } from "@/lib/investigations";
 import { alertClearedAt, lifecycleRows, mergeAlerts } from "@/lib/lifecycle-rows";
-import { fetchMetrics, formatValue, panelForService } from "@/lib/metrics";
+import { fetchIncidentMetrics, formatValue } from "@/lib/metrics";
 import { incidentIsLive } from "@/lib/refresh";
 import { sessionFetch } from "@/lib/session";
 import { buildStory, type StoryStatus } from "@/lib/story";
@@ -61,28 +61,32 @@ function confidencePill(level: string | undefined) {
 }
 
 async function StoryChart({ incident }: { incident: IncidentDetail }) {
-  const panelId = panelForService(incident.service_id, incident.title);
-  if (!panelId) return null;
-  const metrics = await fetchMetrics(apiBaseUrl(), 30, await sessionFetch());
-  if (!metrics.ok) return null;
-  const panel = metrics.data.panels.find((p) => p.panel_id === panelId);
-  if (!panel || panel.status === "unavailable") return null;
-  const windows = metrics.data.incidents.filter((w) => w.incident_id === incident.id);
+  const result = await fetchIncidentMetrics(apiBaseUrl(), incident.id, await sessionFetch());
+  if (!result.ok) return <p className="small muted">Incident chart unavailable. Reload to retry.</p>;
+  const view = result.data;
+  const panel = view.panels[0];
+  if (!panel) return <p className="small muted">No chart is configured for this alert.</p>;
+  const values = panel.series.flatMap((series) => series.points.map(([, value]) => value));
+  const peak = values.length ? Math.max(...values) : null;
   return (
-    <>
-      <div className="row between tiny muted">
-        <span>{panel.title} · last 30 min</span>
-        <span className="mono">{formatValue(panel.latest, panel.unit)}</span>
+    <div className="incident-chart">
+      <div className="row between small">
+        <strong>{panel.title}</strong>
+        <span>Peak {formatValue(peak, panel.unit)}</span>
       </div>
-      <LineChart
-        panel={panel}
-        startMs={new Date(metrics.data.start).getTime()}
-        endMs={new Date(metrics.data.end).getTime()}
-        windows={windows}
-        height={120}
-        tone="warm"
-      />
-    </>
+      <p className="tiny muted">
+        {view.mode === "historical" ? "Incident replay" : "Incident in progress"} · {new Date(view.start).toLocaleString()} – {new Date(view.end).toLocaleString()}
+      </p>
+      {panel.status === "unavailable" || values.length === 0 ? (
+        <p className="small muted">Historical metrics are unavailable or outside telemetry retention. Current data is not substituted.</p>
+      ) : (
+        <LineChart panel={panel} startMs={new Date(view.start).getTime()} endMs={new Date(view.end).getTime()} height={180} tone="warm" />
+      )}
+      <div className="tiny muted">
+        {view.markers.map((marker) => <span key={`${marker.at}-${marker.label}`} style={{ marginRight: 12 }}>{marker.label} · {new Date(marker.at).toLocaleTimeString()}</span>)}
+        <Link href="/metrics">View current metrics →</Link>
+      </div>
+    </div>
   );
 }
 

@@ -36,7 +36,7 @@ from incidentops.chat import service as chat
 from incidentops.config import Profile, Settings, get_settings
 from incidentops.domain.catalog import load_catalog
 from incidentops.domain.disposition import Disposition
-from incidentops.domain.state_machines import IncidentState
+from incidentops.domain.state_machines import INCIDENT_MACHINE, IncidentState
 from incidentops.handling import recheck as rechecks
 from incidentops.handling import service as handling
 from incidentops.ingestion.alertmanager import PayloadRejectedError, normalize
@@ -467,6 +467,36 @@ def create_app(
         )
         with factory() as session:
             return history_queries.search(session, flt, page, page_size, utcnow())
+
+    @app.get(
+        "/api/v1/incidents/{incident_id}/metrics",
+        tags=["metrics"],
+        dependencies=[Depends(require_viewer)],
+    )
+    async def incident_metrics(
+        incident_id: str, factory: Sessions
+    ) -> metric_queries.IncidentMetricsView:
+        with factory() as session:
+            incident = incident_queries.get_incident(session, incident_id)
+        if incident is None:
+            raise HTTPException(status.HTTP_404_NOT_FOUND, "incident not found")
+        now = utcnow()
+        start, end, markers = metric_queries.incident_metric_window(incident, now)
+        panel_id = metric_queries.incident_panel_id(incident.service_id, incident.title)
+        step = max(5, int((end - start).total_seconds()) // 180)
+        panels = await metric_queries.load_panels(
+            backend, catalog, start, end, step, {panel_id} if panel_id else set()
+        )
+        return metric_queries.IncidentMetricsView(
+            start=start,
+            end=end,
+            step_seconds=step,
+            grafana_dashboard_url=resolved.grafana_url.rstrip("/") + metric_queries.DASHBOARD_PATH,
+            panels=panels,
+            incidents=[],
+            markers=markers,
+            mode="historical" if INCIDENT_MACHINE.is_terminal(incident.state) else "live",
+        )
 
     @app.get("/api/v1/metrics", tags=["metrics"], dependencies=[Depends(require_viewer)])
     async def live_metrics(

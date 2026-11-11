@@ -17,7 +17,7 @@ from pydantic import BaseModel
 from sqlalchemy import or_, select
 from sqlalchemy.orm import Session
 
-from incidentops.api.incidents import first_alert_names
+from incidentops.api.incidents import IncidentDetail, first_alert_names
 from incidentops.domain.catalog import ServiceCatalog
 from incidentops.domain.state_machines import INCIDENT_MACHINE
 from incidentops.persistence.models import IncidentRow
@@ -99,6 +99,42 @@ PANELS: Final[tuple[PanelSpec, ...]] = (
         "bytes",
         (_Query("memory", _template("redis_memory_used_bytes", "lab-redis")),),
     ),
+    PanelSpec(
+        "api_cpu",
+        "API CPU usage",
+        "cores",
+        (_Query("cpu", _template("api_cpu_cores", "lab-api")),),
+        threshold=0.6,
+    ),
+    PanelSpec(
+        "api_memory",
+        "API resident memory",
+        "bytes",
+        (_Query("memory", _template("api_memory_bytes", "lab-api")),),
+    ),
+    PanelSpec(
+        "api_memory_growth",
+        "API memory growth",
+        "bytes/s",
+        (
+            _Query(
+                "growth", _fixed('deriv(process_resident_memory_bytes{service_id="lab-api"}[2m])')
+            ),
+        ),
+        threshold=1000000,
+    ),
+    PanelSpec(
+        "redis_up",
+        "Redis availability",
+        "bool",
+        (_Query("available", _template("redis_up", "lab-redis")),),
+    ),
+    PanelSpec(
+        "pg_locks",
+        "PostgreSQL exclusive locks",
+        "locks",
+        (_Query("locks", _template("postgres_exclusive_locks", "lab-postgres")),),
+    ),
 )
 
 
@@ -140,10 +176,17 @@ def step_for(minutes: int) -> int:
 
 
 async def load_panels(
-    backend: TelemetryBackend, catalog: ServiceCatalog, start: datetime, end: datetime, step: int
+    backend: TelemetryBackend,
+    catalog: ServiceCatalog,
+    start: datetime,
+    end: datetime,
+    step: int,
+    panel_ids: set[str] | None = None,
 ) -> list[PanelView]:
     panels: list[PanelView] = []
     for spec in PANELS:
+        if panel_ids is not None and spec.panel_id not in panel_ids:
+            continue
         series: list[SeriesView] = []
         failed = False
         for query in spec.queries:
@@ -203,3 +246,65 @@ def incident_windows(session: Session, start: datetime, end: datetime) -> list[I
 
 def window(minutes: int, now: datetime) -> tuple[datetime, datetime]:
     return now - timedelta(minutes=minutes), now
+
+
+class MetricMarker(BaseModel):
+    at: datetime
+    label: str
+
+
+class IncidentMetricsView(MetricsView):
+    markers: list[MetricMarker]
+    mode: Literal["live", "historical"]
+
+
+def incident_metric_window(
+    incident: IncidentDetail, now: datetime
+) -> tuple[datetime, datetime, list[MetricMarker]]:
+    """Anchor replay to alert time and the immutable terminal transition, not later edits."""
+    starts = [incident.created_at]
+    for alert in incident.alert_events:
+        try:
+            parsed = datetime.fromisoformat(alert.starts_at.replace("Z", "+00:00"))
+            if parsed.tzinfo is not None:
+                starts.append(parsed)
+        except ValueError:
+            continue
+    onset = min(starts)
+    markers = [MetricMarker(at=onset, label="Alert started")]
+    terminal = {s.value for s in INCIDENT_MACHINE.terminal_states}
+    ended = next(
+        (
+            e.at
+            for e in incident.timeline
+            if e.resource_type == "incidents" and e.decision in terminal
+        ),
+        None,
+    )
+    for event in incident.timeline:
+        if event.event_type == "incident_executing":
+            markers.append(MetricMarker(at=event.at, label="Action dispatched"))
+    if ended is not None:
+        markers.append(MetricMarker(at=ended, label="Automation ended"))
+    # Old records lacking an audit boundary use their recorded update, never today's window.
+    if ended is None and incident.state.value in terminal:
+        ended = incident.updated_at
+    end = min(now, ended + timedelta(minutes=5)) if ended else now
+    return onset - timedelta(minutes=5), max(end, onset), markers
+
+
+def incident_panel_id(service_id: str, title: str | None) -> str | None:
+    by_alert = {
+        "lab_api_latency_p95_high": "api_p95",
+        "lab_api_error_ratio_high": "api_5xx",
+        "lab_api_memory_growth": "api_memory_growth",
+        "lab_api_cpu_high": "api_cpu",
+        "lab_redis_down": "redis_up",
+        "lab_kafka_consumer_lag_high": "consumer_lag",
+    }
+    return by_alert.get(title or "") or {
+        "lab-api": "api_p95",
+        "lab-postgres": "pg_locks",
+        "lab-redis": "redis_up",
+        "persist-demo-consumer": "consumer_lag",
+    }.get(service_id)

@@ -39,3 +39,14 @@ describe("helpers", () => {
     expect(panelForService("lab-kafka")).toBeNull();
   });
 });
+
+it("requests the incident replay endpoint without a moving minutes window", async () => {
+  const { fetchIncidentMetrics } = await import("./metrics");
+  let requested = "";
+  const result = await fetchIncidentMetrics("http://api", "inc_123456", (async (url) => {
+    requested = String(url);
+    return new Response(JSON.stringify({ start: "2026-11-09T12:00:00Z", panels: [], incidents: [], markers: [], mode: "historical" }));
+  }) as typeof fetch);
+  expect(requested).toBe("http://api/api/v1/incidents/inc_123456/metrics");
+  expect(result.ok).toBe(true);
+});

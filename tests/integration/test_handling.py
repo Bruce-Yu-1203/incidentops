@@ -206,6 +206,11 @@ def test_metric_panels_use_the_allowlist(session_factory: sessionmaker[Session])
         "produce_consume",
         "pg_connections",
         "redis_memory",
+        "api_cpu",
+        "api_memory",
+        "api_memory_growth",
+        "redis_up",
+        "pg_locks",
     }
     assert panels["api_p95"]["status"] == "over"
     assert panels["api_5xx"]["status"] == "ok"
@@ -262,3 +267,20 @@ def test_published_b0_run_loads() -> None:
     runs = {r.folder: r for r in list_runs()}
     b0 = runs["2026-11-10-B0-rules"]
     assert (b0.passed, b0.attempted, b0.unsafe_mutations) == (32, 35, 0)
+
+
+def test_incident_metrics_requires_session_and_returns_replay(
+    session_factory: sessionmaker[Session],
+) -> None:
+    client = _client(session_factory)
+    incident_id = _incident(client, session_factory, "ESCALATED")
+    path = f"/api/v1/incidents/{incident_id}/metrics"
+    assert client.get(path).status_code == 401
+    sign_in(client, session_factory, HumanRole.VIEWER)
+    response = client.get(path)
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["mode"] == "historical"
+    assert body["markers"][0]["label"] == "Alert started"
+    assert len(body["panels"]) == 1
+    assert client.get("/api/v1/incidents/inc_000000/metrics").status_code == 404
