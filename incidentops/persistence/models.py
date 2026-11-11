@@ -29,6 +29,7 @@ from sqlalchemy import (
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
+from incidentops.domain.disposition import HANDOVER_STATES, Disposition
 from incidentops.domain.state_machines import (
     ACTION_MACHINE,
     APPROVAL_MACHINE,
@@ -59,6 +60,16 @@ def _terminal_predicate(machine: StateMachine[Any], column: str = "state") -> st
     return f"{column} NOT IN ({terminal})"
 
 
+_DISPOSITION_CHECK = (
+    "disposition IS NULL OR ("
+    + "disposition IN ("
+    + ", ".join(f"'{d.value}'" for d in Disposition)
+    + ") AND state IN ("
+    + ", ".join(f"'{s.value}'" for s in sorted(HANDOVER_STATES))
+    + ") AND disposed_by IS NOT NULL AND disposed_at IS NOT NULL)"
+)
+
+
 class Base(DeclarativeBase):
     metadata = MetaData(naming_convention=NAMING_CONVENTION)
 
@@ -78,11 +89,19 @@ class IncidentRow(Base):
     state: Mapped[str] = mapped_column(String(32), nullable=False)
     version: Mapped[int] = mapped_column(Integer, nullable=False, server_default="1")
     escalation_reason: Mapped[str | None] = mapped_column(String(64))
+    # Human handling of handed-over incidents (ADR-021); never set by automation.
+    owner_username: Mapped[str | None] = mapped_column(String(64))
+    assigned_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    disposition: Mapped[str | None] = mapped_column(String(32))
+    disposition_note: Mapped[str | None] = mapped_column(String(2000))
+    disposed_by: Mapped[str | None] = mapped_column(String(64))
+    disposed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     created_at: Mapped[datetime] = _now()
     updated_at: Mapped[datetime] = _now()
 
     __table_args__ = (
         _state_check(INCIDENT_MACHINE),
+        CheckConstraint(_DISPOSITION_CHECK, name="disposition_valid"),
         # FR-002: at most one *active* incident per dedup key.
         Index(
             "uq_incidents_active_dedup_key",
