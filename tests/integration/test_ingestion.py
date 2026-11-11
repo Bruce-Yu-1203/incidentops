@@ -8,7 +8,7 @@ from typing import Any
 import pytest
 from fastapi.testclient import TestClient
 from pydantic import SecretStr
-from sqlalchemy import func, select
+from sqlalchemy import func, select, update
 from sqlalchemy.orm import Session, sessionmaker
 
 from incidentops.api.app import create_app
@@ -137,6 +137,30 @@ def test_resolved_alert_without_incident_is_ignored(session_factory: sessionmake
     body = _post(_client(session_factory), payload(status="resolved"))
     assert body["ignored_resolved"] == 1
     assert _count(session_factory, IncidentRow) == 0
+
+
+def test_resolved_alert_is_kept_on_a_waiting_handover(
+    session_factory: sessionmaker[Session],
+) -> None:
+    client = _client(session_factory)
+    (incident_id,) = _post(client, payload())["created_incident_ids"]
+    with session_factory.begin() as session:
+        session.execute(
+            update(IncidentRow).where(IncidentRow.id == incident_id).values(state="ESCALATED")
+        )
+    body = _post(client, payload(status="resolved", endsAt="2026-11-09T12:05:00Z"))
+    assert body["updated_incident_ids"] == [incident_id]
+    with session_factory() as session:
+        assert session.get_one(IncidentRow, incident_id).state == "ESCALATED"
+
+    # Once a person has closed it, a later resolved delivery is ignored again.
+    with session_factory.begin() as session:
+        session.execute(
+            update(IncidentRow)
+            .where(IncidentRow.id == incident_id)
+            .values(disposition="FALSE_ALARM", disposed_by="amy", disposed_at=func.now())
+        )
+    assert _post(client, payload(status="resolved"))["ignored_resolved"] == 1
 
 
 def test_new_incident_after_previous_reaches_terminal_state(

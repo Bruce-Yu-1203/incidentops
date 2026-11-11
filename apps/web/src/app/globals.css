@@ -1,15 +1,32 @@
 :root {
-  --background: #f6f7f9;
+  /* Direction C, warm editorial: paper, ink, one violet for "needs you". */
+  --background: #f3f0ea;
   --surface: #ffffff;
-  --foreground: #14171f;
-  --muted: #5b6270;
-  --border: #e3e6eb;
-  --danger: #b42318;
-  --ok: #166534;
+  --foreground: #1c1917;
+  --muted: #78716c;
+  --faint: #a8a29e;
+  --border: #e2dcd0;
+  --danger: #b91c1c;
+  --ok: #15803d;
+  --violet: #7c3aed;
+  --violet-ink: #6d28d9;
+  --violet-soft: #ede9fe;
+  --violet-line: #c4b5fd;
+  --amber: #d97706;
+  --amber-ink: #b45309;
+  --amber-soft: #fffbeb;
+  --red: #dc2626;
+  --red-soft: #fef2f2;
+  --green-soft: #dcfce7;
+  --green-ink: #166534;
+  --font-serif: "Fraunces", Georgia, serif;
+  --font-sans: "Inter", system-ui, -apple-system, "Segoe UI", sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+  --shadow-card: 0 1px 2px rgba(28, 25, 23, 0.06), 0 4px 16px rgba(28, 25, 23, 0.06);
 
   /* One tone per meaning; each pair passes 4.5:1 text contrast. */
-  --tone-neutral-fg: #4b5563;
-  --tone-neutral-bg: #eef0f3;
+  --tone-neutral-fg: #57534e;
+  --tone-neutral-bg: #efebe4;
   --tone-progress-fg: #1d4ed8;
   --tone-progress-bg: #e6eefb;
   --tone-attention-fg: #6d28d9;
@@ -22,31 +39,6 @@
   --tone-unknown-bg: #fef3c7;
 }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0f1115;
-    --surface: #171a21;
-    --foreground: #ececec;
-    --muted: #a0a7b2;
-    --border: #2b303a;
-    --danger: #f2b8b5;
-    --ok: #8fd19e;
-
-    --tone-neutral-fg: #c3c8d0;
-    --tone-neutral-bg: #262a33;
-    --tone-progress-fg: #a9c3ff;
-    --tone-progress-bg: #1b2a4a;
-    --tone-attention-fg: #d4bcff;
-    --tone-attention-bg: #2e2149;
-    --tone-success-fg: #8fd19e;
-    --tone-success-bg: #163222;
-    --tone-danger-fg: #f6b3ac;
-    --tone-danger-bg: #43191a;
-    --tone-unknown-fg: #f7cf7c;
-    --tone-unknown-bg: #3d2c0c;
-  }
-}
-
 * {
   box-sizing: border-box;
 }
@@ -55,7 +47,7 @@ body {
   margin: 0;
   background: var(--background);
   color: var(--foreground);
-  font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+  font-family: var(--font-sans);
   line-height: 1.5;
 }
 

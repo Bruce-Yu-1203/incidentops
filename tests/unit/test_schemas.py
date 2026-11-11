@@ -255,3 +255,30 @@ def test_approval_audit_and_receipt_contracts() -> None:
         received_at=NOW,
     )
     assert audit.resource_id == receipt.action_id == approval.action_id
+
+
+def test_evidence_notes_describe_only_cited_evidence() -> None:
+    cited = new_id("ev")
+    report = DiagnosisReport(
+        incident_id=new_id("inc"),
+        diagnosis=_diagnosis(
+            supporting_evidence_ids=[cited],
+            evidence_notes={cited: "The consumer stopped reading at 08:07."},
+        ),
+        needs_human_review=True,
+    )
+    assert report.diagnosis.evidence_notes[cited].startswith("The consumer")
+    with pytest.raises(ValidationError, match="evidence_notes"):
+        DiagnosisReport(
+            incident_id=new_id("inc"),
+            diagnosis=_diagnosis(
+                supporting_evidence_ids=[cited], evidence_notes={new_id("ev"): "Invented."}
+            ),
+            needs_human_review=True,
+        )
+
+
+def test_evidence_notes_are_short() -> None:
+    cited = new_id("ev")
+    with pytest.raises(ValidationError):
+        _diagnosis(supporting_evidence_ids=[cited], evidence_notes={cited: "x" * 281})

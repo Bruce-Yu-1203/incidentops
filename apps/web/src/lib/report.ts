@@ -106,3 +106,63 @@ export function buildReport(
     }),
   };
 }
+
+/** Plain duration figures for the report header (null when not reached). */
+export function reportDurations(incident: IncidentDetail, report: IncidentReport) {
+  const opened = new Date(incident.created_at).getTime();
+  const at = (label: string) => report.milestones.find((m) => m.label === label)?.at ?? null;
+  const ms = (iso: string | null) => (iso === null ? null : new Date(iso).getTime() - opened);
+  const closed = report.final ? new Date(incident.disposed_at ?? incident.updated_at).getTime() - opened : null;
+  return {
+    toDiagnosis: ms(at("Diagnosis returned")),
+    toApproval: ms(at("Approval decided")),
+    toRecovery: incident.state === "RESOLVED" ? ms(at("Verification finished")) : null,
+    open: closed,
+  };
+}
+
+/** The report as Markdown, for pasting into a ticket or postmortem. */
+export function reportMarkdown(
+  incident: IncidentDetail,
+  report: IncidentReport,
+  title: string,
+  notes: readonly { sentence: string; role: string }[] = [],
+): string {
+  const d = incident.diagnosis?.diagnosis ?? null;
+  const lines = [
+    `# ${title}${report.final ? "" : " (provisional)"}`,
+    "",
+    `**Outcome:** ${report.headline}`,
+    "",
+    `- Incident: \`${incident.id}\``,
+    `- Service: ${incident.service_id} · ${incident.environment} · ${incident.severity}`,
+    `- Opened: ${new Date(incident.created_at).toISOString()}`,
+  ];
+  if (incident.disposition) {
+    lines.push(`- Closed by ${incident.disposed_by ?? "a person"}: ${incident.disposition}${incident.disposition_note ? ` — ${incident.disposition_note}` : ""}`);
+  }
+  lines.push("", "## Milestones", "", "| Milestone | Time | Since opened |", "|---|---|---|");
+  for (const m of report.milestones) lines.push(`| ${m.label} | ${m.at ?? "—"} | ${m.sinceOpen ?? "—"} |`);
+  lines.push("", "## Diagnosis", "");
+  if (d) {
+    lines.push(`${d.root_cause_id} on \`${d.affected_component}\` (${d.confidence_level} confidence, a hypothesis).`, "", d.summary);
+    const forIt = notes.filter((n) => n.role === "supports").map((n) => `- ✓ ${n.sentence}`);
+    const against = notes.filter((n) => n.role === "against").map((n) => `- ! ${n.sentence}`);
+    if (forIt.length || against.length) lines.push("", ...forIt, ...against);
+  } else {
+    lines.push("No diagnosis was produced.");
+  }
+  lines.push("", "## Actions", "");
+  if (report.actions.length === 0) lines.push("No action was proposed.");
+  for (const a of report.actions) {
+    lines.push(
+      `- \`${a.title}\` — ${a.state}; ${a.decision ? `${a.decision} by ${a.approver}` : "no decision"}; verification ${a.verification ?? "not run"}; hash \`${a.hash}\``,
+    );
+    for (const c of a.failedChecks) lines.push(`  - failed: ${c}`);
+  }
+  const questions = d?.unresolved_questions ?? [];
+  if (questions.length) {
+    lines.push("", "## Follow-ups", "", ...questions.map((q) => `- [ ] ${q}`));
+  }
+  return `${lines.join("\n")}\n`;
+}

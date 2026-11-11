@@ -1,5 +1,8 @@
 """Investigation worker: claims ``investigate_incident`` jobs and runs the agent.
 
+It also answers the read-only incident chat (``answer_chat`` jobs), because it
+is the only process that holds the read-only model identity.
+
 Identity: read-only telemetry access plus its own evidence/trajectory/run
 records. It holds no executor, fault-controller or Docker credentials.
 
@@ -24,6 +27,8 @@ from incidentops.agent.baseline import BASELINE_MODEL_ID, RulesBaselineAdapter
 from incidentops.agent.graph import Budgets
 from incidentops.agent.model import AnthropicModelAdapter, ModelAdapter
 from incidentops.agent.run_manager import InvestigationRunner
+from incidentops.chat.answerer import ChatAnswerer
+from incidentops.chat.service import ANSWER_CHAT_JOB
 from incidentops.config import Settings, get_settings
 from incidentops.domain.catalog import load_catalog
 from incidentops.evidence.store import DatabaseEvidenceSink
@@ -78,6 +83,39 @@ async def process_one(
         outcome.incident_state,
     )
     return True
+
+
+async def process_chat_one(
+    factory: sessionmaker[Session], answerer: ChatAnswerer, owner: str, lease_seconds: int
+) -> bool:
+    """Claim and answer one chat question. Returns False when none was waiting."""
+    with factory.begin() as session:
+        job = outbox.claim(session, ANSWER_CHAT_JOB, owner, lease_seconds)
+        if job is None:
+            return False
+        job_id, message_id = job.id, str(job.payload["message_id"])
+    try:
+        await answerer.answer(message_id)
+    except Exception as exc:
+        LOGGER.exception("chat job %s failed", job_id)
+        with factory.begin() as session:
+            outbox.release_for_retry(
+                session,
+                job_id,
+                owner,
+                type(exc).__name__,
+                retry_delay_seconds=5,
+                max_attempts=MAX_ATTEMPTS,
+            )
+        return True
+    with factory.begin() as session:
+        outbox.complete(session, job_id, owner)
+    return True
+
+
+def chat_model(model: ModelAdapter) -> ModelAdapter | None:
+    """The rules baseline cannot read questions; chat then answers from rules."""
+    return None if isinstance(model, RulesBaselineAdapter) else model
 
 
 def build_model(settings: Settings) -> ModelAdapter:
@@ -140,10 +178,15 @@ async def serve(settings: Settings) -> None:  # pragma: no cover - process entry
             budgets_from(settings),
             checkpointer=saver,
         )
+        answerer = ChatAnswerer(factory, chat_model(model))
         LOGGER.info("investigation worker %s started (model %s)", owner, model.model_id)
         while not stop.is_set():
+            # Chat first: questions are short and a person is waiting for them.
+            chatted = await process_chat_one(
+                factory, answerer, owner, settings.worker_lease_seconds
+            )
             handled = await process_one(factory, runner, owner, settings.worker_lease_seconds)
-            if not handled:
+            if not (handled or chatted):
                 with contextlib.suppress(TimeoutError):
                     await asyncio.wait_for(stop.wait(), timeout=2)
 

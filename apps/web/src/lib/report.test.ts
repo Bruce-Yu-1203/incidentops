@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import type { ActionDetail } from "./actions";
 import type { IncidentDetail } from "./incidents";
-import { buildReport } from "./report";
+import { buildReport, reportDurations, reportMarkdown } from "./report";
 
 const incident = (over: Partial<IncidentDetail> = {}): IncidentDetail => ({
   id: "inc_1",
@@ -130,5 +130,34 @@ describe("buildReport", () => {
       at: null,
       sinceOpen: null,
     });
+  });
+});
+
+
+describe("reportMarkdown", () => {
+  it("renders outcome, milestones and follow-ups", () => {
+    const incident = {
+      id: "inc_1", dedup_key: "k", service_id: "svc", environment: "lab", severity: "critical",
+      state: "RESOLVED", version: 3, created_at: "2026-11-11T08:00:00Z", updated_at: "2026-11-11T08:05:00Z",
+      escalation_reason: null, alert_events: [], timeline: [], runs: [], actions: [],
+      diagnosis: {
+        diagnosis: {
+          root_cause_id: "consumer_paused", affected_component: "c", confidence_level: "high", summary: "Paused.",
+          supporting_evidence_ids: [], contradicting_evidence_ids: [], unresolved_questions: ["Why paused?"],
+        },
+        proposed_action: null, needs_human_review: false,
+      },
+    } as unknown as Parameters<typeof reportMarkdown>[0];
+    const report = {
+      headline: "Resolved.", tone: "success" as const, final: true,
+      milestones: [{ label: "Verification finished", at: "2026-11-11T08:04:00Z", sinceOpen: "+4 min" }],
+      actions: [],
+    };
+    const md = reportMarkdown(incident, report, "Lag high", [{ role: "supports", sentence: "Lag grew." }]);
+    expect(md).toContain("# Lag high\n");
+    expect(md).toContain("| Verification finished | 2026-11-11T08:04:00Z | +4 min |");
+    expect(md).toContain("- ✓ Lag grew.");
+    expect(md).toContain("- [ ] Why paused?");
+    expect(reportDurations(incident, report).toRecovery).toBe(240_000);
   });
 });

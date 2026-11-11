@@ -15,7 +15,7 @@ from incidentops.domain.schemas import DiagnosisReport
 from incidentops.evidence.redaction import redact, truncate_utf8
 from incidentops.policy.engine import PolicyConfig, load_policy
 
-PROMPT_VERSION: Final = "investigation-v3"
+PROMPT_VERSION: Final = "investigation-v4"
 
 # The label space of root causes the diagnosis may use. This is the generic
 # taxonomy, not the answer to any particular case.
@@ -48,6 +48,9 @@ Rules you must follow:
 - Finish by calling `submit_diagnosis` exactly once. Use root_cause_id
   "insufficient_evidence", confidence "low", no proposed_action and
   needs_human_review=true when the evidence is weak or contradictory.
+- In diagnosis.evidence_notes, give each cited evidence ID one short, plain sentence a
+  non-specialist can read (what it shows and why it matters). Do not add IDs you did
+  not cite.
 - Only propose an action that the service catalog lists for that service, with exactly
   the argument names and values given in its `action_arguments` contract. Any other
   argument is denied by policy.
