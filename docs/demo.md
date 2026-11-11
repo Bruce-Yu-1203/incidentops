@@ -22,6 +22,9 @@ executor, verifier and investigation workers, and the web UI. Logs go to
 | API docs | http://127.0.0.1:8000/docs |
 | Grafana (dashboard "IncidentOps Fault Lab") | http://127.0.0.1:3000 |
 
+The development server accepts both `localhost` and the documented `127.0.0.1`
+loopback address, including the development connection needed for client controls.
+
 Sign in to the UI as `approver` with the `INCIDENTOPS_DEMO_APPROVER_PASSWORD`
 from `.env` (or as `viewer` to look without acting).
 
