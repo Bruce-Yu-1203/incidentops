@@ -6,11 +6,12 @@ from datetime import datetime
 from typing import Any
 
 from pydantic import BaseModel
-from sqlalchemy import select
+from sqlalchemy import and_, or_, select
 from sqlalchemy.orm import Session
 
 from incidentops.api.actions import ActionSummary, actions_for_incident
 from incidentops.api.investigations import RunSummary, latest_diagnosis, runs_for_incident
+from incidentops.domain.disposition import Disposition, needs_human
 from incidentops.domain.state_machines import IncidentState
 from incidentops.persistence.models import (
     AgentStepRow,
@@ -31,6 +32,14 @@ class IncidentSummary(BaseModel):
     version: int
     created_at: datetime
     updated_at: datetime
+    title: str | None = None
+    owner_username: str | None = None
+    assigned_at: datetime | None = None
+    disposition: Disposition | None = None
+    disposition_note: str | None = None
+    disposed_by: str | None = None
+    disposed_at: datetime | None = None
+    needs_human: bool = False
 
 
 class AlertEventView(BaseModel):
@@ -49,6 +58,10 @@ class TimelineEntry(BaseModel):
     kind: str
     summary: str
     reference_id: str
+    actor: str | None = None
+    event_type: str | None = None
+    decision: str | None = None
+    resource_type: str | None = None
 
 
 class IncidentDetail(IncidentSummary):
@@ -60,17 +73,44 @@ class IncidentDetail(IncidentSummary):
     actions: list[ActionSummary]
 
 
-def _summary(row: IncidentRow) -> IncidentSummary:
+def first_alert_names(session: Session, incident_ids: list[str]) -> dict[str, str]:
+    """The alert name of each incident's first delivery (its display title)."""
+    names: dict[str, str] = {}
+    if not incident_ids:
+        return names
+    rows = session.execute(
+        select(AlertEventRow.incident_id, AlertEventRow.payload)
+        .where(AlertEventRow.incident_id.in_(incident_ids))
+        .order_by(AlertEventRow.received_at)
+    )
+    for incident_id, payload in rows:
+        name = payload.get("alert_name") if isinstance(payload, dict) else None
+        if incident_id not in names and name:
+            names[incident_id] = str(name)
+    return names
+
+
+def _summary(row: IncidentRow, title: str | None = None) -> IncidentSummary:
+    disposition = Disposition(row.disposition) if row.disposition else None
+    state = IncidentState(row.state)
     return IncidentSummary(
         id=row.id,
         dedup_key=row.dedup_key,
         service_id=row.service_id,
         environment=row.environment,
         severity=row.severity,
-        state=IncidentState(row.state),
+        state=state,
         version=row.version,
         created_at=row.created_at,
         updated_at=row.updated_at,
+        title=title,
+        owner_username=row.owner_username,
+        assigned_at=row.assigned_at,
+        disposition=disposition,
+        disposition_note=row.disposition_note,
+        disposed_by=row.disposed_by,
+        disposed_at=row.disposed_at,
+        needs_human=needs_human(state, disposition),
     )
 
 
@@ -82,7 +122,9 @@ def list_incidents(
         query = query.where(IncidentRow.state == state.value)
     if service_id is not None:
         query = query.where(IncidentRow.service_id == service_id)
-    return [_summary(row) for row in session.scalars(query)]
+    rows = list(session.scalars(query))
+    titles = first_alert_names(session, [row.id for row in rows])
+    return [_summary(row, titles.get(row.id)) for row in rows]
 
 
 def _alert_view(row: AlertEventRow) -> AlertEventView:
@@ -114,8 +156,13 @@ def get_incident(session: Session, incident_id: str) -> IncidentDetail | None:
         session.scalars(
             select(AuditEventRow)
             .where(
-                AuditEventRow.resource_type == "incidents",
-                AuditEventRow.resource_id == incident_id,
+                or_(
+                    and_(
+                        AuditEventRow.resource_type == "incidents",
+                        AuditEventRow.resource_id == incident_id,
+                    ),
+                    AuditEventRow.correlation_ids["incident_id"].astext == incident_id,
+                )
             )
             .order_by(AuditEventRow.seq)
         )
@@ -134,6 +181,10 @@ def get_incident(session: Session, incident_id: str) -> IncidentDetail | None:
             kind="audit",
             summary=f"{e.event_type}: {e.decision or ''}".strip(),
             reference_id=e.id,
+            actor=e.actor,
+            event_type=e.event_type,
+            decision=e.decision,
+            resource_type=e.resource_type,
         )
         for e in audits
     ]
@@ -154,7 +205,7 @@ def get_incident(session: Session, incident_id: str) -> IncidentDetail | None:
     ]
     timeline.sort(key=lambda entry: entry.at)
     return IncidentDetail(
-        **_summary(row).model_dump(),
+        **_summary(row, first_alert_names(session, [row.id]).get(row.id)).model_dump(),
         escalation_reason=row.escalation_reason,
         alert_events=[_alert_view(a) for a in alerts],
         timeline=timeline,

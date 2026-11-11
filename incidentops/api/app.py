@@ -3,9 +3,11 @@
 # No ``from __future__ import annotations``: FastAPI resolves the locally
 # defined dependency aliases at runtime.
 
-from datetime import timedelta
+from datetime import datetime, timedelta
+from pathlib import Path
 from typing import Annotated, Any
 
+import httpx
 from fastapi import (
     Cookie,
     Depends,
@@ -23,18 +25,26 @@ from sqlalchemy.orm import Session, sessionmaker
 from incidentops import __version__
 from incidentops.actions import approvals
 from incidentops.api import actions as action_queries
+from incidentops.api import benchmarks as benchmark_queries
+from incidentops.api import history as history_queries
 from incidentops.api import incidents as incident_queries
 from incidentops.api import investigations as run_queries
+from incidentops.api import metrics as metric_queries
 from incidentops.auth import service as auth
 from incidentops.auth.service import READ_ROLES, AuthenticatedUser
 from incidentops.config import Profile, Settings, get_settings
 from incidentops.domain.catalog import load_catalog
+from incidentops.domain.disposition import Disposition
 from incidentops.domain.state_machines import IncidentState
+from incidentops.handling import recheck as rechecks
+from incidentops.handling import service as handling
 from incidentops.ingestion.alertmanager import PayloadRejectedError, normalize
 from incidentops.ingestion.service import ingest_events
 from incidentops.persistence.db import make_engine, make_session_factory
 from incidentops.security.identities import IdentityRegistry, Role
 from incidentops.time import utcnow
+from incidentops.tools.backends import HttpTelemetryBackend, TelemetryBackend
+from incidentops.verification.verifier import load_verify_config
 from incidentops.workers.credentials import assert_credential_scope
 
 SESSION_COOKIE = "incidentops_session"
@@ -77,6 +87,27 @@ _HTTP_FOR_OUTCOME = {
 }
 
 
+class HandoverRequest(BaseModel):
+    expected_version: int = Field(ge=1)
+
+
+class CloseRequest(BaseModel):
+    expected_version: int = Field(ge=1)
+    disposition: Disposition
+    note: str | None = Field(default=None, max_length=2000)
+
+
+class HandlingResponse(BaseModel):
+    outcome: str
+    version: int | None
+
+
+_HTTP_FOR_HANDLING = {
+    handling.HandlingOutcome.FORBIDDEN: status.HTTP_403_FORBIDDEN,
+    handling.HandlingOutcome.NOT_FOUND: status.HTTP_404_NOT_FOUND,
+}
+
+
 class IngestResponse(BaseModel):
     accepted_alerts: int
     created_incident_ids: list[str]
@@ -87,6 +118,8 @@ class IngestResponse(BaseModel):
 def create_app(
     settings: Settings | None = None,
     session_factory: sessionmaker[Session] | None = None,
+    telemetry: TelemetryBackend | None = None,
+    benchmark_dir: Path | None = None,
 ) -> FastAPI:
     """Build the control-plane API application.
 
@@ -102,6 +135,17 @@ def create_app(
     if resolved.alertmanager_token is not None:
         tokens[Role.ALERTMANAGER] = resolved.alertmanager_token.get_secret_value()
     registry = IdentityRegistry.from_tokens(tokens)
+    if telemetry is None:
+        # Read-only: Prometheus queries only, no lab token (re-check, metric panels).
+        telemetry = HttpTelemetryBackend(
+            httpx.AsyncClient(timeout=10.0),
+            resolved.prometheus_url,
+            resolved.loki_url,
+            resolved.tempo_url,
+            None,
+        )
+    backend: TelemetryBackend = telemetry
+    verify_config = load_verify_config()
 
     def sessions(request: Request) -> sessionmaker[Session]:
         factory: sessionmaker[Session] | None = request.app.state.session_factory
@@ -319,5 +363,104 @@ def create_app(
         if detail is None:
             raise HTTPException(status.HTTP_404_NOT_FOUND, "investigation not found")
         return detail
+
+    def _handling_response(result: handling.HandlingResult) -> HandlingResponse:
+        if not result.ok:
+            code = _HTTP_FOR_HANDLING.get(result.outcome, status.HTTP_409_CONFLICT)
+            raise HTTPException(code, {"outcome": result.outcome.value, "version": result.version})
+        return HandlingResponse(outcome=result.outcome.value, version=result.version)
+
+    @app.post("/api/v1/incidents/{incident_id}/assign", tags=["handling"])
+    def assign_incident(
+        incident_id: str, body: HandoverRequest, user: User, factory: Sessions
+    ) -> HandlingResponse:
+        with factory.begin() as session:
+            result = handling.assign(session, incident_id, user, body.expected_version)
+        return _handling_response(result)
+
+    @app.post("/api/v1/incidents/{incident_id}/close", tags=["handling"])
+    def close_incident(
+        incident_id: str, body: CloseRequest, user: User, factory: Sessions
+    ) -> HandlingResponse:
+        with factory.begin() as session:
+            result = handling.close(
+                session, incident_id, user, body.expected_version, body.disposition, body.note
+            )
+        return _handling_response(result)
+
+    @app.post("/api/v1/incidents/{incident_id}/recheck", tags=["handling"])
+    async def recheck_incident(
+        incident_id: str, user: User, factory: Sessions
+    ) -> rechecks.RecheckResult:
+        if user.role not in auth.OPERATE_ROLES:
+            raise HTTPException(status.HTTP_403_FORBIDDEN, "operator role required")
+        with factory() as session:
+            plan = rechecks.plan_recheck(session, incident_id, catalog, verify_config)
+        if plan is None:
+            raise HTTPException(status.HTTP_404_NOT_FOUND, "incident not found")
+        checked_at = utcnow()
+        checks = await rechecks.run_checks(plan, catalog, backend, checked_at)
+        outcome = rechecks.outcome_of(checks)
+        with factory.begin() as session:
+            rechecks.record_recheck(session, plan, user, outcome)
+            cleared = rechecks.alert_cleared_at(session, incident_id)
+        return rechecks.RecheckResult(
+            incident_id=incident_id,
+            outcome=outcome,
+            checks=checks.checks,
+            checked_at=checked_at,
+            based_on=plan.action_type or "service_defaults",
+            alert_cleared_at=cleared,
+        )
+
+    @app.get("/api/v1/history", tags=["history"], dependencies=[Depends(require_viewer)])
+    def incident_history(
+        factory: Sessions,
+        q: Annotated[str | None, Query(max_length=200)] = None,
+        outcome: history_queries.Outcome | None = None,
+        service_id: Annotated[str | None, Query(max_length=63)] = None,
+        root_cause_id: Annotated[str | None, Query(max_length=64)] = None,
+        confidence: Annotated[str | None, Query(max_length=16)] = None,
+        since: datetime | None = None,
+        page: Annotated[int, Query(ge=1, le=10_000)] = 1,
+        page_size: Annotated[int, Query(ge=1, le=200)] = 25,
+    ) -> history_queries.HistoryPage:
+        flt = history_queries.HistoryFilter(
+            q=q or None,
+            outcome=outcome,
+            service_id=service_id or None,
+            root_cause_id=root_cause_id or None,
+            confidence=confidence or None,
+            since=since,
+        )
+        with factory() as session:
+            return history_queries.search(session, flt, page, page_size, utcnow())
+
+    @app.get("/api/v1/metrics", tags=["metrics"], dependencies=[Depends(require_viewer)])
+    async def live_metrics(
+        factory: Sessions, minutes: Annotated[int, Query()] = 30
+    ) -> metric_queries.MetricsView:
+        if minutes not in metric_queries.RANGES:
+            raise HTTPException(
+                status.HTTP_422_UNPROCESSABLE_CONTENT,
+                f"minutes must be one of {list(metric_queries.RANGES)}",
+            )
+        start, end = metric_queries.window(minutes, utcnow())
+        step = metric_queries.step_for(minutes)
+        panels = await metric_queries.load_panels(backend, catalog, start, end, step)
+        with factory() as session:
+            windows = metric_queries.incident_windows(session, start, end)
+        return metric_queries.MetricsView(
+            start=start,
+            end=end,
+            step_seconds=step,
+            grafana_dashboard_url=resolved.grafana_url.rstrip("/") + metric_queries.DASHBOARD_PATH,
+            panels=panels,
+            incidents=windows,
+        )
+
+    @app.get("/api/v1/benchmarks", tags=["benchmarks"], dependencies=[Depends(require_viewer)])
+    def benchmark_runs() -> list[benchmark_queries.RunView]:
+        return benchmark_queries.list_runs(benchmark_dir or benchmark_queries.DEFAULT_RESULTS_DIR)
 
     return app
