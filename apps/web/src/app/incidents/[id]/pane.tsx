@@ -1,5 +1,6 @@
 import Link from "next/link";
 
+import { IncidentTabLink } from "@/components/incident-tab-link";
 import { IncidentTabs } from "@/components/incident-tabs";
 import { AutoRefresh } from "@/components/auto-refresh";
 import { LineChart } from "@/components/line-chart";
@@ -415,6 +416,10 @@ function InvestigationTab({ run, notes, incident }: { run: RunDetail | null; not
           <h3 id="why-title" className="serif" style={{ margin: 0, fontSize: 18 }}>
             Why the agent believes it
           </h3>
+          <details id="full-diagnosis" className="full-diagnosis">
+            <summary>Full diagnosis</summary>
+            <p>{d.summary}</p>
+          </details>
           <div className="conclusion">
             {d.root_cause_id.replace(/_/g, " ")} · {d.confidence_level} confidence
           </div>
@@ -671,7 +676,9 @@ export async function IncidentPane({
           {incident.service_id} · {incident.environment} · {incident.severity} · opened{" "}
           {new Date(incident.created_at).toLocaleTimeString()} · <span className={`pill pill-${status.tone === "violet" ? "violet" : status.tone === "red" ? "red" : status.tone === "amber" ? "amber" : status.tone === "green" ? "green" : "gray"}`}>{status.label}</span>
         </span>
-        <h1>{story.headline}</h1>
+        <h1 className="incident-headline">{story.headline}</h1>
+        <p className="incident-summary">{story.summary}</p>
+        {incident.diagnosis ? <IncidentTabLink incidentId={incident.id} tab="investigation" hash="#full-diagnosis" className="small">Read full diagnosis →</IncidentTabLink> : null}
         <span className="tiny faint">
           {incidentTitle(incident)} · <span className="mono">{incident.id}</span> ·{" "}
           <Link href={`/reports?id=${incident.id}`}>Report</Link>

@@ -1262,3 +1262,9 @@ code {
   .metric-service-heading code { display: none; }
   .metric-readout .metric-inspect-hint { display: none; }
 }
+
+.pane .incident-headline { font-size: clamp(24px, 2.2vw, 32px); text-transform: capitalize; overflow-wrap: anywhere; }
+.incident-summary { margin: 0; max-width: 76ch; font-size: 15px; line-height: 1.6; color: var(--muted); overflow-wrap: anywhere; }
+.full-diagnosis { border-block: 1px solid var(--border); padding: 12px 0; }
+.full-diagnosis summary { cursor: pointer; font-size: 14px; font-weight: 600; }
+.full-diagnosis p { margin: 12px 0 0; font-size: 14px; line-height: 1.7; white-space: pre-wrap; overflow-wrap: anywhere; }

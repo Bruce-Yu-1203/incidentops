@@ -3,12 +3,13 @@
 
 import type { ActionDetail } from "./actions";
 import type { IncidentDetail } from "./incidents";
+import { incidentTitle } from "./inbox";
 
 export type StoryStatus = "done" | "current" | "upcoming" | "failed";
 
 export type StoryStep = { key: "happened" | "why" | "propose" | "worked"; title: string; status: StoryStatus };
 
-export type Story = { headline: string; steps: StoryStep[]; worked: "yes" | "no" | "pending" | "none" };
+export type Story = { headline: string; summary: string; steps: StoryStep[]; worked: "yes" | "no" | "pending" | "none" };
 
 const ACTIVE = new Set(["RECEIVED", "TRIAGED", "INVESTIGATING"]);
 
@@ -70,10 +71,26 @@ export function buildStory(
               : "upcoming",
     },
   ];
-  const headline = diagnosis?.summary?.trim()
-    ? diagnosis.summary.trim()
+  const headline = diagnosis
+    ? `${diagnosis.root_cause_id.replace(/_/g, " ")} · ${diagnosis.affected_component}`
+    : incidentTitle(incident);
+  const summary = diagnosis?.summary?.trim()
+    ? compactSummary(diagnosis.summary)
     : investigating
       ? "The agent is still looking into this."
       : "No diagnosis was recorded for this incident.";
-  return { headline, steps, worked };
+  return { headline, summary, steps, worked };
+}
+
+/** Preview recorded text without inventing or rewriting the agent's findings. */
+export function compactSummary(text: string, limit = 220): string {
+  const normalized = text.replace(/\s+/g, " ").trim();
+  if (normalized.length <= limit) return normalized;
+  const prefix = normalized.slice(0, limit - 2);
+  const sentenceEnd = /[.!?。！？](?=\s|$)/g;
+  const endings = [...prefix.matchAll(sentenceEnd)];
+  const end = endings.at(-1)?.index;
+  if (end !== undefined && end >= 60) return prefix.slice(0, end + 1);
+  const space = prefix.lastIndexOf(" ");
+  return `${prefix.slice(0, space >= limit / 2 ? space : prefix.length).trimEnd()}…`;
 }

@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { buildStory, recoveryResult } from "./story";
+import { buildStory, compactSummary, recoveryResult } from "./story";
 
 const diagnosis = {
   diagnosis: {
@@ -23,7 +23,8 @@ describe("buildStory", () => {
       { state: "AWAITING_APPROVAL", diagnosis, actions: [pending], title: null, dedup_key: "k" },
       null,
     );
-    expect(story.headline).toBe("The consumer stopped reading.");
+    expect(story.headline).toBe("consumer paused · c");
+    expect(story.summary).toBe("The consumer stopped reading.");
     expect(story.steps.map((s) => s.status)).toEqual(["done", "done", "current", "upcoming"]);
   });
 
@@ -46,7 +47,7 @@ describe("buildStory", () => {
       null,
     );
     expect(story.steps[1].status).toBe("current");
-    expect(story.headline).toMatch(/still looking/);
+    expect(story.summary).toMatch(/still looking/);
   });
 });
 
@@ -54,5 +55,23 @@ describe("recoveryResult", () => {
   it("treats resolved incidents as recovered and no action as none", () => {
     expect(recoveryResult({ state: "RESOLVED" }, null)).toBe("yes");
     expect(recoveryResult({ state: "DIAGNOSED_ONLY" }, null)).toBe("none");
+  });
+});
+
+
+describe("compact incident summary", () => {
+  it("bounds a long model response without using it as a headline", () => {
+    const full = "Requests began failing after the database acquired an exclusive lock. " + "Detailed evidence and telemetry readings. ".repeat(80);
+    const report = { ...diagnosis, diagnosis: { ...diagnosis.diagnosis, summary: full } };
+    const story = buildStory({ state: "AWAITING_APPROVAL", diagnosis: report, actions: [pending], title: "latency", dedup_key: "k" }, null);
+    expect(story.headline).toBe("consumer paused · c");
+    expect(story.summary.length).toBeLessThanOrEqual(220);
+    expect(story.summary).toContain("exclusive lock.");
+    expect(report.diagnosis.summary).toBe(full);
+  });
+  it("bounds a long single sentence and text without spaces", () => {
+    expect(compactSummary("word ".repeat(300)).length).toBeLessThanOrEqual(220);
+    expect(compactSummary("长".repeat(600)).length).toBeLessThanOrEqual(220);
+    expect(compactSummary("  Short\nsummary. ")).toBe("Short summary.");
   });
 });

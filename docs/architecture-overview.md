@@ -140,3 +140,8 @@ Plots show axes, thresholds, series legends, event markers and pointer/keyboard
 inspection. Missing samples break the line; empty, partial, stale and failed data
 are distinguished from healthy readings. Redis availability uses a below-threshold
 check rather than the above-threshold rule used for latency and CPU.
+
+The incident header uses the root cause and affected component as a short title,
+with a bounded preview of the recorded diagnosis in normal body text. The complete
+original diagnosis stays available in an expandable Investigation section; the
+preview does not alter the stored model output.
