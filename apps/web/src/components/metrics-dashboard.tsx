@@ -1,6 +1,8 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
+import { formatDisplayTime } from "@/lib/display-time";
+import { useDisplayTimeZone } from "@/components/use-display-time-zone";
 import { LineChart } from "@/components/line-chart";
 import { formatValue, isMetricsView, METRIC_GROUPS, METRIC_RANGES, panelHealth, panelWindows, rangeLabel, type MetricRange, type MetricsView, type PanelView } from "@/lib/metrics";
 
@@ -32,6 +34,7 @@ function MetricCard({ panel, view }: { panel: PanelView; view: MetricsView }) {
 }
 
 export function MetricsDashboard({ initial, initialRange }: { initial: MetricsView; initialRange: MetricRange }) {
+  const timeZone = useDisplayTimeZone();
   const [view, setView] = useState(initial);
   const [range, setRange] = useState(initialRange);
   const [service, setService] = useState("all");
@@ -113,7 +116,7 @@ export function MetricsDashboard({ initial, initialRange }: { initial: MetricsVi
       </div>
       <div className="metrics-summary" role="status">
         <span>{warningCount ? `${warningCount} signals need attention` : "All signals within range"}</span>
-        <span>{new Date(view.start).toLocaleString()} – {new Date(view.end).toLocaleTimeString()} · last successful update {new Date(view.end).toLocaleTimeString()}{busy ? " · updating" : ""}</span>
+        <span>{formatDisplayTime(view.start, timeZone, "date")} – {formatDisplayTime(view.end, timeZone)} · last successful update {formatDisplayTime(view.end, timeZone)} · {timeZone}{busy ? " · updating" : ""}</span>
       </div>
       {error ? <div className="notice notice-error" role="alert">{error} <button type="button" className="btn" onClick={() => void load(currentRange.current)}>Retry</button></div> : null}
       {METRIC_GROUPS.filter((group) => service === "all" || group.service === service).map((group) => (

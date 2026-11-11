@@ -145,3 +145,8 @@ The incident header uses the root cause and affected component as a short title,
 with a bounded preview of the recorded diagnosis in normal body text. The complete
 original diagnosis stays available in an expandable Investigation section; the
 preview does not alter the stored model output.
+
+Interactive metric timestamps use an explicit English locale and a shared UTC
+snapshot for server rendering and initial hydration. After hydration they adopt
+the browser timezone, which is shown beside the displayed range. Different host
+locales or timezones cannot leave Metrics controls waiting on mismatched markup.

@@ -1,10 +1,11 @@
 "use client";
 
 import { useEffect, useId, useRef, useState } from "react";
+import { formatDisplayTime } from "@/lib/display-time";
+import { useDisplayTimeZone } from "@/components/use-display-time-zone";
 import { chartGeometry, formatValue, type IncidentWindow, type MetricMarker, type PanelView } from "@/lib/metrics";
 
 const COLORS = ["#6554a4", "#168780", "#bd7430"];
-const timeLabel = (ms: number) => new Date(ms).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
 
 /** Responsive SVG plot with axes, discontinuities, event markers and keyboard inspection. */
 export function LineChart({ panel, startMs, endMs, windows = [], height = 220, markers = [], stepSeconds, tone }: {
@@ -17,6 +18,8 @@ export function LineChart({ panel, startMs, endMs, windows = [], height = 220, m
   stepSeconds?: number;
   tone?: "warm" | "calm";
 }) {
+  const timeZone = useDisplayTimeZone();
+  const timeLabel = (ms: number) => formatDisplayTime(ms, timeZone, "axis");
   const container = useRef<HTMLDivElement>(null);
   const [width, setWidth] = useState(600);
   const [cursor, setCursor] = useState<number | null>(null);
@@ -71,7 +74,7 @@ export function LineChart({ panel, startMs, endMs, windows = [], height = 220, m
           {g.bands.map((band) => <rect key={band.id} x={band.x} width={band.width} height={plotHeight} className="metric-incident-band" />)}
           {g.thresholdY !== null ? <line x1={0} x2={plotWidth} y1={g.thresholdY} y2={g.thresholdY} className="metric-threshold" /> : null}
           {g.paths.map((path, index) => path.d ? <path key={path.name} d={path.d} fill="none" stroke={COLORS[index % COLORS.length]} strokeWidth={2} vectorEffect="non-scaling-stroke" /> : null)}
-          {visibleMarkers.map((marker) => <line key={`${marker.at}-${marker.label}`} x1={x(new Date(marker.at).getTime())} x2={x(new Date(marker.at).getTime())} y1={0} y2={plotHeight} className="metric-event-marker"><title>{`${marker.label} · ${new Date(marker.at).toLocaleString()}`}</title></line>)}
+          {visibleMarkers.map((marker) => <line key={`${marker.at}-${marker.label}`} x1={x(new Date(marker.at).getTime())} x2={x(new Date(marker.at).getTime())} y1={0} y2={plotHeight} className="metric-event-marker"><title>{`${marker.label} · ${formatDisplayTime(marker.at, timeZone, "date")}`}</title></line>)}
           {cursor !== null ? <line x1={cursor * plotWidth} x2={cursor * plotWidth} y1={0} y2={plotHeight} className="metric-cursor" /> : null}
         </g>
         {[0, 0.5, 1].map((fraction) => <text key={fraction} x={left + fraction * plotWidth} y={height - 7}
