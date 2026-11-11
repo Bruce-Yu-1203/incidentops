@@ -132,3 +132,11 @@ explicitly; current readings never replace a historical window.
 Incident view tabs use native browser history and mounted client-side panels.
 Switching tabs does not navigate the server route or repeat incident API reads;
 query-string deep links and browser back/forward still select the right panel.
+
+The Metrics workspace groups signals by service, filters incident overlays to the
+matching service and polls a same-origin authenticated read proxy every 15 seconds.
+Range changes and polling replace chart data locally, preserving filters and layout.
+Plots show axes, thresholds, series legends, event markers and pointer/keyboard
+inspection. Missing samples break the line; empty, partial, stale and failed data
+are distinguished from healthy readings. Redis availability uses a below-threshold
+check rather than the above-threshold rule used for latency and CPU.

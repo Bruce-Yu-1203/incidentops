@@ -73,7 +73,7 @@ async function StoryChart({ incident }: { incident: IncidentDetail }) {
       {panel.status === "unavailable" || values.length === 0 ? (
         <p className="small muted">Historical metrics are unavailable or outside telemetry retention. Current data is not substituted.</p>
       ) : (
-        <LineChart panel={panel} startMs={new Date(view.start).getTime()} endMs={new Date(view.end).getTime()} height={180} tone="warm" />
+        <LineChart panel={panel} startMs={new Date(view.start).getTime()} endMs={new Date(view.end).getTime()} height={200} tone="warm" markers={view.markers} stepSeconds={view.step_seconds} />
       )}
       <div className="tiny muted">
         {view.markers.map((marker) => <span key={`${marker.at}-${marker.label}`} style={{ marginRight: 12 }}>{marker.label} · {new Date(marker.at).toLocaleTimeString()}</span>)}

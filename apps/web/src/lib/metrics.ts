@@ -9,7 +9,8 @@ export type PanelView = {
   title: string;
   unit: string;
   threshold: number | null;
-  status: "ok" | "over" | "unavailable";
+  threshold_direction?: "above" | "below";
+  status: "ok" | "over" | "unavailable" | "no_data" | "partial";
   latest: number | null;
   series: SeriesView[];
 };
@@ -41,7 +42,7 @@ export function parseRange(value: string | string[] | undefined): MetricRange {
 
 export const rangeLabel = (m: MetricRange) => (m < 60 ? `${m}m` : `${m / 60}h`);
 
-function isMetricsView(value: unknown): value is MetricsView {
+export function isMetricsView(value: unknown): value is MetricsView {
   if (typeof value !== "object" || value === null) return false;
   const v = value as Record<string, unknown>;
   return Array.isArray(v.panels) && Array.isArray(v.incidents) && typeof v.start === "string";
@@ -66,6 +67,7 @@ export type ChartGeometry = {
   paths: { name: string; d: string }[];
   thresholdY: number | null;
   max: number;
+  min: number;
   bands: { x: number; width: number; id: string }[];
 };
 
@@ -77,30 +79,47 @@ export function chartGeometry(
   windows: readonly IncidentWindow[] = [],
   width = 600,
   height = 160,
+  expectedStepSeconds?: number,
 ): ChartGeometry {
-  const values = panel.series.flatMap((s) => s.points.map(([, v]) => v)).filter(Number.isFinite);
-  const max = Math.max(...values, panel.threshold ?? 0, 1e-9) * 1.12;
+  const inRange = (ts: number) => ts * 1000 >= startMs && ts * 1000 <= endMs;
+  const values = panel.series.flatMap((s) => s.points.filter(([ts]) => inRange(ts)).map(([, v]) => v)).filter(Number.isFinite);
+  const min = Math.min(0, ...values, panel.threshold ?? 0);
+  const ceiling = Math.max(...values, panel.threshold ?? 0);
+  const max = (ceiling > 0 ? ceiling : 1) * 1.12;
   const span = Math.max(endMs - startMs, 1);
   const x = (ms: number) => ((ms - startMs) / span) * width;
-  const y = (v: number) => height - (v / max) * height;
-  const paths = panel.series.map((s) => ({
-    name: s.name,
-    d: s.points
-      .filter(([, v]) => Number.isFinite(v))
-      .map(([ts, v], i) => `${i === 0 ? "M" : "L"}${x(ts * 1000).toFixed(1)},${y(v).toFixed(1)}`)
-      .join(" "),
-  }));
-  const bands = windows
-    .map((w) => {
-      const from = Math.max(new Date(w.start).getTime(), startMs);
-      const to = Math.min(w.end ? new Date(w.end).getTime() : endMs, endMs);
-      return { x: x(from), width: Math.max(x(to) - x(from), 2), id: w.incident_id };
-    })
-    .filter((b) => b.x <= width && b.width > 0);
+  const y = (v: number) => height - ((v - min) / (max - min)) * height;
+  const paths = panel.series.map((s) => {
+    let connected = false;
+    let previous = 0;
+    const commands: string[] = [];
+    for (const [ts, value] of s.points) {
+      if (!inRange(ts) || !Number.isFinite(value)) { connected = false; continue; }
+      if (expectedStepSeconds && ts - previous > expectedStepSeconds * 3) connected = false;
+      commands.push(`${connected ? "L" : "M"}${x(ts * 1000).toFixed(1)},${y(value).toFixed(1)}`);
+      connected = true;
+      previous = ts;
+    }
+    return { name: s.name, d: commands.join(" ") };
+  });
+  const rawBands = windows.flatMap((w) => {
+    const from = Math.max(new Date(w.start).getTime(), startMs);
+    const to = Math.min(w.end ? new Date(w.end).getTime() : endMs, endMs);
+    if (to <= from) return [];
+    return [{ x: x(from), width: x(to) - x(from), id: w.incident_id }];
+  });
+  const bands: ChartGeometry["bands"] = [];
+  for (const band of rawBands.sort((a, b) => a.x - b.x)) {
+    const previous = bands.at(-1);
+    if (previous && band.x <= previous.x + previous.width) {
+      previous.width = Math.max(previous.x + previous.width, band.x + band.width) - previous.x;
+    } else bands.push({ ...band });
+  }
   return {
     paths,
     thresholdY: panel.threshold === null ? null : y(panel.threshold),
     max,
+    min,
     bands,
   };
 }
@@ -108,6 +127,14 @@ export function chartGeometry(
 export function formatValue(value: number | null, unit: string): string {
   if (value === null) return "no data";
   switch (unit) {
+    case "bool":
+      return value >= 0.5 ? "Available" : "Unavailable";
+    case "cores":
+      return `${value.toFixed(2)} cores`;
+    case "bytes/s":
+      return `${Number((value / 1e6).toFixed(2)).toFixed(2)} MB/s`;
+    case "messages/s":
+      return `${value.toFixed(1)} msg/s`;
     case "seconds":
       return value < 1 ? `${Math.round(value * 1000)} ms` : `${value.toFixed(2)} s`;
     case "ratio":
@@ -124,9 +151,13 @@ export function formatValue(value: number | null, unit: string): string {
 /** Which panel best shows an incident's service, for the Story chart. */
 export function panelForService(serviceId: string, title?: string | null): string | null {
   if (serviceId.includes("consumer")) return "consumer_lag";
-  if (serviceId === "lab-api") return title?.includes("error") ? "api_5xx" : "api_p95";
-  if (serviceId === "lab-postgres") return "pg_connections";
-  if (serviceId === "lab-redis") return "redis_memory";
+  if (serviceId === "lab-api") {
+    if (title?.includes("memory")) return "api_memory_growth";
+    if (title?.includes("cpu")) return "api_cpu";
+    return title?.includes("error") ? "api_5xx" : "api_p95";
+  }
+  if (serviceId === "lab-postgres") return "pg_locks";
+  if (serviceId === "lab-redis") return "redis_up";
   return null;
 }
 
@@ -150,4 +181,30 @@ export async function fetchIncidentMetrics(
   } catch {
     return { ok: false, error: "Could not load incident metrics" };
   }
+}
+
+
+export const METRIC_GROUPS = [
+  { title: "API", description: "Request health and process resources", service: "lab-api",
+    ids: ["api_p95", "api_5xx", "api_cpu", "api_memory", "api_memory_growth"] },
+  { title: "Messaging", description: "Consumer backlog and message throughput", service: "persist-demo-consumer",
+    ids: ["consumer_lag", "produce_consume"] },
+  { title: "PostgreSQL", description: "Connections and lock contention", service: "lab-postgres",
+    ids: ["pg_connections", "pg_locks"] },
+  { title: "Redis", description: "Dependency availability and memory", service: "lab-redis",
+    ids: ["redis_up", "redis_memory"] },
+] as const;
+
+export function panelWindows(panelId: string, windows: readonly IncidentWindow[]): IncidentWindow[] {
+  const group = METRIC_GROUPS.find((g) => (g.ids as readonly string[]).includes(panelId));
+  return windows.filter((w) => w.service_id === group?.service);
+}
+
+export function panelHealth(panel: PanelView, endMs: number, stepSeconds: number): string {
+  if (panel.status === "unavailable") return "Source unavailable";
+  if (panel.status === "no_data" || !panel.series.some((s) => s.points.length)) return "No data";
+  if (panel.status === "partial") return "Partial data";
+  const timestamps = panel.series.flatMap((s) => s.points.map(([ts]) => ts));
+  if (endMs - Math.max(...timestamps) * 1000 > Math.max(30, stepSeconds * 3) * 1000) return "Stale data";
+  return panel.status === "over" ? "Threshold crossed" : panel.threshold === null ? "Observed" : "Within range";
 }

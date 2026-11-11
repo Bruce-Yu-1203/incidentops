@@ -20,7 +20,7 @@ from sqlalchemy.orm import Session
 from incidentops.api.incidents import IncidentDetail, first_alert_names
 from incidentops.domain.catalog import ServiceCatalog
 from incidentops.domain.state_machines import INCIDENT_MACHINE
-from incidentops.persistence.models import IncidentRow
+from incidentops.persistence.models import AlertEventRow, AuditEventRow, IncidentRow
 from incidentops.tools.backends import TelemetryBackend
 from incidentops.tools.templates import TEMPLATES
 
@@ -54,6 +54,7 @@ class PanelSpec:
     queries: tuple[_Query, ...]
     # Matches the alert rule in infra/prometheus/rules/lab.rules.yml; None: no alert.
     threshold: float | None = None
+    threshold_direction: Literal["above", "below"] = "above"
 
 
 PANELS: Final[tuple[PanelSpec, ...]] = (
@@ -128,6 +129,8 @@ PANELS: Final[tuple[PanelSpec, ...]] = (
         "Redis availability",
         "bool",
         (_Query("available", _template("redis_up", "lab-redis")),),
+        threshold=0.5,
+        threshold_direction="below",
     ),
     PanelSpec(
         "pg_locks",
@@ -148,7 +151,8 @@ class PanelView(BaseModel):
     title: str
     unit: str
     threshold: float | None
-    status: Literal["ok", "over", "unavailable"]
+    threshold_direction: Literal["above", "below"] = "above"
+    status: Literal["ok", "over", "unavailable", "no_data", "partial"]
     latest: float | None
     series: list[SeriesView]
 
@@ -199,8 +203,20 @@ async def load_panels(
             series.append(SeriesView(name=query.name, points=points))
         latest = next((s.points[-1][1] for s in series if s.points), None)
         if failed and not any(s.points for s in series):
-            status: Literal["ok", "over", "unavailable"] = "unavailable"
-        elif spec.threshold is not None and latest is not None and latest > spec.threshold:
+            status: Literal["ok", "over", "unavailable", "no_data", "partial"] = "unavailable"
+        elif not any(s.points for s in series):
+            status = "no_data"
+        elif failed or any(not s.points for s in series):
+            status = "partial"
+        elif (
+            spec.threshold is not None
+            and latest is not None
+            and (
+                latest > spec.threshold
+                if spec.threshold_direction == "above"
+                else latest < spec.threshold
+            )
+        ):
             status = "over"
         else:
             status = "ok"
@@ -210,6 +226,7 @@ async def load_panels(
                 title=spec.title,
                 unit=spec.unit,
                 threshold=spec.threshold,
+                threshold_direction=spec.threshold_direction,
                 status=status,
                 latest=latest,
                 series=series,
@@ -231,17 +248,42 @@ def incident_windows(session: Session, start: datetime, end: datetime) -> list[I
             .limit(50)
         )
     )
-    titles = first_alert_names(session, [r.id for r in rows])
-    return [
-        IncidentWindow(
-            incident_id=row.id,
-            title=titles.get(row.id),
-            service_id=row.service_id,
-            start=row.created_at,
-            end=row.updated_at if row.state in terminal else None,
+    ids = [r.id for r in rows]
+    titles = first_alert_names(session, ids)
+    endings: dict[str, datetime] = {}
+    for audit in session.scalars(
+        select(AuditEventRow)
+        .where(AuditEventRow.resource_type == "incidents", AuditEventRow.resource_id.in_(ids))
+        .order_by(AuditEventRow.seq)
+    ):
+        target_state = audit.correlation_ids.get("to_state") or audit.decision
+        if target_state in terminal:
+            endings.setdefault(audit.resource_id, audit.occurred_at)
+    onsets: dict[str, datetime] = {r.id: r.created_at for r in rows}
+    for alert in session.scalars(select(AlertEventRow).where(AlertEventRow.incident_id.in_(ids))):
+        try:
+            onset = datetime.fromisoformat(
+                str(alert.payload.get("starts_at", "")).replace("Z", "+00:00")
+            )
+            if onset.tzinfo is not None:
+                onsets[alert.incident_id] = min(onsets[alert.incident_id], onset)
+        except ValueError:
+            continue
+    windows: list[IncidentWindow] = []
+    for row in rows:
+        boundary = endings.get(row.id, row.updated_at) if row.state in terminal else None
+        if boundary is not None and boundary < start:
+            continue
+        windows.append(
+            IncidentWindow(
+                incident_id=row.id,
+                title=titles.get(row.id),
+                service_id=row.service_id,
+                start=onsets[row.id],
+                end=boundary,
+            )
         )
-        for row in rows
-    ]
+    return windows
 
 
 def window(minutes: int, now: datetime) -> tuple[datetime, datetime]:
@@ -277,7 +319,7 @@ def incident_metric_window(
         (
             e.at
             for e in incident.timeline
-            if e.resource_type == "incidents" and e.decision in terminal
+            if e.resource_type == "incidents" and (e.target_state or e.decision) in terminal
         ),
         None,
     )

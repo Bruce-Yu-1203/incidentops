@@ -50,3 +50,39 @@ it("requests the incident replay endpoint without a moving minutes window", asyn
   expect(requested).toBe("http://api/api/v1/incidents/inc_123456/metrics");
   expect(result.ok).toBe(true);
 });
+
+it("keeps negative growth visible and breaks paths across missing samples", () => {
+  const g = chartGeometry({ series: [{ name: "growth", points: [[0, -2], [5, 3], [60, 2]] }], threshold: 1 }, 0, 60_000, [], 600, 100, 5);
+  expect(g.min).toBe(-2);
+  expect(g.paths[0].d.match(/M/g)).toHaveLength(2);
+  expect(g.paths[0].d).toContain("M600.0,");
+});
+
+it("does not shade incidents outside the requested time window", () => {
+  const g = chartGeometry({ series: [], threshold: null }, 60_000, 120_000,
+    [{ incident_id: "old", title: null, service_id: "lab-api", start: new Date(0).toISOString(), end: new Date(30_000).toISOString() }]);
+  expect(g.bands).toEqual([]);
+});
+
+it("filters incident overlays by the panel service and identifies stale or empty data", async () => {
+  const { panelWindows, panelHealth } = await import("./metrics");
+  const windows = [
+    { incident_id: "api", title: null, service_id: "lab-api", start: new Date(0).toISOString(), end: null },
+    { incident_id: "redis", title: null, service_id: "lab-redis", start: new Date(0).toISOString(), end: null },
+  ];
+  expect(panelWindows("api_cpu", windows).map((w) => w.incident_id)).toEqual(["api"]);
+  const panel = { panel_id: "api_cpu", title: "CPU", unit: "cores", latest: 0.2, threshold: 0.6, status: "ok" as const, series: [{ name: "cpu", points: [[0, 0.2]] as [number, number][] }] };
+  expect(panelHealth(panel, 120_000, 5)).toBe("Stale data");
+  expect(panelHealth({ ...panel, series: [] }, 120_000, 5)).toBe("No data");
+  expect(formatValue(0.6, "cores")).toBe("0.60 cores");
+  expect(formatValue(-2000000, "bytes/s")).toBe("-2.00 MB/s");
+});
+
+it("merges overlapping incident bands so opacity does not accumulate", () => {
+  const g = chartGeometry({ series: [], threshold: null }, 0, 100_000, [
+    { incident_id: "a", title: null, service_id: "lab-api", start: new Date(0).toISOString(), end: new Date(60_000).toISOString() },
+    { incident_id: "b", title: null, service_id: "lab-api", start: new Date(30_000).toISOString(), end: new Date(90_000).toISOString() },
+  ], 100, 100);
+  expect(g.bands).toEqual([{ id: "a", x: 0, width: 90 }]);
+  expect(g.max).toBeGreaterThan(1);
+});

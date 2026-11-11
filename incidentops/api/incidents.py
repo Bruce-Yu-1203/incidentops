@@ -62,6 +62,7 @@ class TimelineEntry(BaseModel):
     event_type: str | None = None
     decision: str | None = None
     resource_type: str | None = None
+    target_state: str | None = None
 
 
 class IncidentDetail(IncidentSummary):
@@ -185,6 +186,7 @@ def get_incident(session: Session, incident_id: str) -> IncidentDetail | None:
             event_type=e.event_type,
             decision=e.decision,
             resource_type=e.resource_type,
+            target_state=e.correlation_ids.get("to_state"),
         )
         for e in audits
     ]

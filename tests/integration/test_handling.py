@@ -284,3 +284,43 @@ def test_incident_metrics_requires_session_and_returns_replay(
     assert body["markers"][0]["label"] == "Alert started"
     assert len(body["panels"]) == 1
     assert client.get("/api/v1/incidents/inc_000000/metrics").status_code == 404
+
+
+def test_metric_overlays_ignore_late_manual_edits_to_old_incidents(
+    session_factory: sessionmaker[Session],
+) -> None:
+    from datetime import timedelta
+
+    from incidentops.api.metrics import incident_windows
+    from incidentops.domain.ids import new_id
+    from incidentops.time import utcnow
+
+    client = _client(session_factory)
+    incident_id = _incident(client, session_factory, "ESCALATED")
+    now = utcnow()
+    ended = now - timedelta(days=1)
+    with session_factory.begin() as session:
+        session.execute(
+            update(IncidentRow)
+            .where(IncidentRow.id == incident_id)
+            .values(created_at=ended - timedelta(minutes=5), updated_at=now)
+        )
+        session.add(
+            AuditEventRow(
+                id=new_id("aud"),
+                actor="service:verifier",
+                event_type="verification_completed",
+                resource_type="incidents",
+                resource_id=incident_id,
+                decision="UNKNOWN",
+                correlation_ids={"from_state": "VERIFYING", "to_state": "ESCALATED"},
+                occurred_at=ended,
+            )
+        )
+    with session_factory() as session:
+        assert incident_windows(session, now - timedelta(minutes=30), now) == []
+        old = incident_windows(
+            session, ended - timedelta(minutes=10), ended + timedelta(minutes=10)
+        )
+        assert len(old) == 1
+        assert old[0].end == ended
