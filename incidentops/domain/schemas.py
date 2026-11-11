@@ -24,6 +24,7 @@ ResourceId = Annotated[str, StringConstraints(pattern=r"^[a-z0-9][a-z0-9-]{0,62}
 TypeId = Annotated[str, StringConstraints(pattern=r"^[a-z][a-z0-9_]{0,63}$")]
 RecordId = Annotated[str, StringConstraints(pattern=r"^[a-z]+_[0-9a-f]{32}$")]
 ShortText = Annotated[str, StringConstraints(max_length=2000)]
+EvidenceNote = Annotated[str, StringConstraints(min_length=1, max_length=280)]
 
 # Action arguments are restricted to JSON scalars without floats so the
 # canonical encoding used for hashing is unambiguous.
@@ -155,6 +156,9 @@ class Diagnosis(_Contract):
     supporting_evidence_ids: list[RecordId]
     contradicting_evidence_ids: list[RecordId] = Field(default_factory=list)
     unresolved_questions: list[ShortText] = Field(default_factory=list)
+    # One plain-language sentence per cited evidence ID, for the console.
+    # Optional: the UI falls back to the stored evidence summary.
+    evidence_notes: dict[RecordId, EvidenceNote] = Field(default_factory=dict)
 
 
 class DiagnosisReport(_Contract):
@@ -169,6 +173,9 @@ class DiagnosisReport(_Contract):
         if self.proposed_action is None and not self.needs_human_review:
             # No-action reports must explicitly hand control back to a human.
             raise ValueError("a report without a proposed action must set needs_human_review")
+        unknown = set(self.diagnosis.evidence_notes) - self.cited_evidence_ids()
+        if unknown:
+            raise ValueError("evidence_notes may only describe cited evidence IDs")
 
     def cited_evidence_ids(self) -> set[str]:
         """All evidence IDs the report relies on; each must resolve in the store."""
