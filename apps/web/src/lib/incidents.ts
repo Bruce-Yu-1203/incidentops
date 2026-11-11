@@ -31,6 +31,32 @@ export type IncidentSummary = {
   version: number;
   created_at: string;
   updated_at: string;
+  /** Alert name of the first delivery; the incident's display title. */
+  title?: string | null;
+  owner_username?: string | null;
+  assigned_at?: string | null;
+  disposition?: Disposition | null;
+  disposition_note?: string | null;
+  disposed_by?: string | null;
+  disposed_at?: string | null;
+  /** Handed over to a person and not yet closed by one (ADR-021). */
+  needs_human?: boolean;
+};
+
+export const DISPOSITIONS = [
+  "FIXED_MANUALLY",
+  "RECOVERED_ON_ITS_OWN",
+  "FALSE_ALARM",
+  "WONT_FIX",
+] as const;
+
+export type Disposition = (typeof DISPOSITIONS)[number];
+
+export const DISPOSITION_LABEL: Record<Disposition, string> = {
+  FIXED_MANUALLY: "I fixed it by hand",
+  RECOVERED_ON_ITS_OWN: "It recovered on its own",
+  FALSE_ALARM: "False alarm",
+  WONT_FIX: "Won't fix",
 };
 
 export type AlertEventView = {
@@ -44,7 +70,16 @@ export type AlertEventView = {
   annotations: Record<string, string>;
 };
 
-export type TimelineEntry = { at: string; kind: string; summary: string; reference_id: string };
+export type TimelineEntry = {
+  at: string;
+  kind: string;
+  summary: string;
+  reference_id: string;
+  actor?: string | null;
+  event_type?: string | null;
+  decision?: string | null;
+  resource_type?: string | null;
+};
 
 export type RunSummary = {
   id: string;
@@ -68,6 +103,8 @@ export type Diagnosis = {
   supporting_evidence_ids: string[];
   contradicting_evidence_ids: string[];
   unresolved_questions: string[];
+  /** Optional plain-language sentence per cited evidence id. */
+  evidence_notes?: Record<string, string>;
 };
 
 export type ProposedAction = {
