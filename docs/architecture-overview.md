@@ -128,3 +128,7 @@ transition (capped at the current time), or at the current time for active incid
 Manual ownership and disposition edits do not move an audited historical boundary.
 Queries remain server-side and allowlisted. Missing historical telemetry is shown
 explicitly; current readings never replace a historical window.
+
+Incident view tabs use native browser history and mounted client-side panels.
+Switching tabs does not navigate the server route or repeat incident API reads;
+query-string deep links and browser back/forward still select the right panel.

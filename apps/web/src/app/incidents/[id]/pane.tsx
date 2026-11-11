@@ -1,5 +1,6 @@
 import Link from "next/link";
 
+import { IncidentTabs } from "@/components/incident-tabs";
 import { AutoRefresh } from "@/components/auto-refresh";
 import { LineChart } from "@/components/line-chart";
 import { type ActionDetail, fetchAction } from "@/lib/actions";
@@ -24,17 +25,9 @@ import { LoadError } from "@/app/load-error";
 import { ChatDock } from "@/components/chat-dock";
 import { assignToMe, closeHandover, recheckNow } from "./handling";
 
-export const TABS = [
-  { key: "story", label: "Story" },
-  { key: "investigation", label: "Investigation" },
-  { key: "evidence", label: "Evidence" },
-  { key: "timeline", label: "Timeline & alerts" },
-] as const;
-export type TabKey = (typeof TABS)[number]["key"];
-
-export function parseTab(value: string | undefined): TabKey {
-  return TABS.some((t) => t.key === value) ? (value as TabKey) : "story";
-}
+export { parseIncidentTab as parseTab } from "@/lib/incident-tabs";
+export type { IncidentTab as TabKey } from "@/lib/incident-tabs";
+import type { IncidentTab as TabKey } from "@/lib/incident-tabs";
 
 export type PaneFlash = { done?: string; error?: string; recheck?: string };
 
@@ -639,7 +632,6 @@ function TimelineTab({ incident }: { incident: IncidentDetail }) {
 
 export async function IncidentPane({
   incidentId,
-  tab,
   flash,
 }: {
   incidentId: string;
@@ -697,17 +689,12 @@ export async function IncidentPane({
           {incident.disposition_note ? ` · ${incident.disposition_note}` : ""}
         </p>
       ) : null}
-      <nav className="tabs" aria-label="Incident views">
-        {TABS.map((t) => (
-          <Link key={t.key} href={t.key === "story" ? "?" : `?tab=${t.key}`} aria-current={t.key === tab ? "page" : undefined} scroll={false}>
-            {t.label}
-          </Link>
-        ))}
-      </nav>
-      {tab === "story" ? <StoryTab incident={incident} action={action} notes={notes} /> : null}
-      {tab === "investigation" ? <InvestigationTab run={runDetail} notes={notes} incident={incident} /> : null}
-      {tab === "evidence" ? <EvidenceTab notes={notes} run={runDetail} /> : null}
-      {tab === "timeline" ? <TimelineTab incident={incident} /> : null}
+      <IncidentTabs incidentId={incident.id} panels={{
+        story: <StoryTab incident={incident} action={action} notes={notes} />,
+        investigation: <InvestigationTab run={runDetail} notes={notes} incident={incident} />,
+        evidence: <EvidenceTab notes={notes} run={runDetail} />,
+        timeline: <TimelineTab incident={incident} />,
+      }} />
       <ChatDock incidentId={incident.id} title={incidentTitle(incident)} />
     </main>
   );

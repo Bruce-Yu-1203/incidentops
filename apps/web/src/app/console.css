@@ -1203,3 +1203,6 @@ code {
     padding: 0;
   }
 }
+
+.incident-tabs-content { display: flex; flex-direction: column; gap: 20px; }
+.incident-tabs-content > [hidden] { display: none; }
