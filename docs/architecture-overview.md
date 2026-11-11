@@ -150,3 +150,11 @@ Interactive metric timestamps use an explicit English locale and a shared UTC
 snapshot for server rendering and initial hydration. After hydration they adopt
 the browser timezone, which is shown beside the displayed range. Different host
 locales or timezones cannot leave Metrics controls waiting on mismatched markup.
+
+The chat opening effect decodes a precomputed radial texture and warms the SVG
+filter during idle time (also on pointer/focus intent). An immediate cold click
+uses the lightweight ring instead of blocking on preparation. Filter bounds are
+limited to the viewport; ring and highlight layers animate transform/opacity.
+Chat history loads after the opening effect, and temporary layers are removed
+on completion, close, scroll, resize or unmount. Regenerate the lookup texture
+with `python scripts/generate_chat_displacement.py`.

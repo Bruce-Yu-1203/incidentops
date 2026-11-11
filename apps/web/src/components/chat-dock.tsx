@@ -5,9 +5,11 @@ import { createPortal } from "react-dom";
 
 import { answerFooter, type ChatMessage, type ChatThread, isChatThread, splitCitations, SUGGESTED_QUESTIONS } from "@/lib/chat";
 
+import { DISPLACEMENT_MAP_URL, SHOCKWAVE_DURATION_MS, LITE_DURATION_MS, displacementMapReady, prepareDisplacementMap, visibleFilterBounds, glowRange } from "@/lib/chat-motion";
+
 const POLL_MS = 1500;
 const POLL_LIMIT = 80;
-const DURATION_MS = 1150;
+const DURATION_MS = SHOCKWAVE_DURATION_MS;
 const SCALE = 52;
 
 type Mode = "full" | "lite" | "none";
@@ -19,129 +21,149 @@ function effectMode(): Mode {
   return "userAgentData" in navigator ? "full" : "lite";
 }
 
-let displacementMap: string | null = null;
-
-/** Radial displacement map: neutral gray inside, a ring that pushes pixels outward. */
-function makeDisplacementMap(): string {
-  if (displacementMap) return displacementMap;
-  const n = 256;
-  const canvas = document.createElement("canvas");
-  canvas.width = canvas.height = n;
-  const ctx = canvas.getContext("2d");
-  if (!ctx) return "";
-  const image = ctx.createImageData(n, n);
-  for (let y = 0; y < n; y++) {
-    for (let x = 0; x < n; x++) {
-      const u = ((x + 0.5) / n) * 2 - 1;
-      const v = ((y + 0.5) / n) * 2 - 1;
-      const d = Math.hypot(u, v);
-      let f = d > 0.62 && d < 1 ? Math.sin((Math.PI * (d - 0.62)) / 0.38) : 0;
-      // The inner edge squeezes and the outer edge stretches.
-      f *= 0.55 + 0.45 * Math.min(1, Math.max(0, (d - 0.62) / 0.38));
-      const dx = d ? u / d : 0;
-      const dy = d ? v / d : 0;
-      const i = (y * n + x) * 4;
-      image.data[i] = 128 - dx * f * 127;
-      image.data[i + 1] = 128 - dy * f * 127;
-      image.data[i + 2] = 128;
-      image.data[i + 3] = 255;
-    }
-  }
-  ctx.putImageData(image, 0, 0);
-  displacementMap = canvas.toDataURL("image/png");
-  return displacementMap;
-}
-
-type Glow = { el: HTMLElement; shadow: string; rect: DOMRect };
+type Glow = { el: HTMLDivElement; near: number; far: number };
+let warmed = false;
+let warming = false;
+let preparationGeneration = 0;
+let cancelWarmup: () => void = () => {};
 
 let frame = 0;
 let restore: () => void = () => {};
 
 const byId = <T extends Element>(id: string) => document.getElementById(id) as T | null;
 
-/** Six layers: lens displacement, RGB split, colour ring, edge stretch, highlights, then the drawer. */
-function playShockwave(origin: DOMRect) {
+function configureFilter(page: HTMLElement, filter: SVGFilterElement): DOMRect | null {
+  const rect = page.getBoundingClientRect();
+  const bounds = visibleFilterBounds(rect, window.innerWidth, window.innerHeight);
+  if (!bounds) return null;
+  for (const [name, value] of Object.entries(bounds)) filter.setAttribute(name, String(value));
+  return rect;
+}
+
+/** Paint the same filter at imperceptible strength during idle time to warm its first use. */
+async function prepareShockwave() {
+  if (effectMode() !== "full" || warmed || warming) return;
+  warming = true;
+  const generation = preparationGeneration;
+  const available = await prepareDisplacementMap();
+  if (generation !== preparationGeneration) { warming = false; return; }
+  const page = document.querySelector<HTMLElement>(".inbox-layout, .page");
+  const filter = byId<SVGFilterElement>("shockfx");
+  const channels = ["shock-r", "shock-g", "shock-b"].map((id) => byId<SVGFEDisplacementMapElement>(id));
+  if (!available || !page || !filter || frame || !configureFilter(page, filter)) { warming = false; return; }
+  const previousFilter = page.style.filter, previousWillChange = page.style.willChange;
+  const steps: number[] = [];
+  let cancelled = false;
+  const cleanup = () => {
+    cancelled = true;
+    steps.forEach(cancelAnimationFrame);
+    page.style.filter = previousFilter;
+    page.style.willChange = previousWillChange;
+    channels.forEach((channel) => channel?.setAttribute("scale", "0"));
+    warming = false;
+    cancelWarmup = () => {};
+  };
+  cancelWarmup = cleanup;
+  channels.forEach((channel) => channel?.setAttribute("scale", "0.01"));
+  page.style.willChange = "filter";
+  steps.push(requestAnimationFrame(() => {
+    if (cancelled) return;
+    page.style.filter = "url(#shockfx)";
+    steps.push(requestAnimationFrame(() => {
+      if (cancelled) return;
+      steps.push(requestAnimationFrame(() => { cleanup(); warmed = true; }));
+    }));
+  }));
+}
+
+/** Preserve the lens and RGB split; ring and highlight layers animate transform/opacity only. */
+function playShockwave(origin: DOMRect): number {
+  preparationGeneration += 1;
+  cancelWarmup();
   const mode = effectMode();
-  const ox = origin.left + origin.width / 2;
-  const oy = origin.top + origin.height / 2;
-  if (mode === "none") return;
-  if (mode === "lite") {
+  const ox = origin.left + origin.width / 2, oy = origin.top + origin.height / 2;
+  if (mode === "none") return 0;
+  if (mode === "lite" || !warmed || !displacementMapReady()) {
     const lite = byId<HTMLDivElement>("lite-ring");
-    if (!lite) return;
-    lite.style.left = `${ox}px`;
-    lite.style.top = `${oy}px`;
-    lite.classList.remove("on");
-    void lite.offsetWidth;
-    lite.classList.add("on");
-    return;
+    if (lite) {
+      lite.style.left = `${ox}px`;
+      lite.style.top = `${oy}px`;
+      lite.classList.remove("on");
+      frame = requestAnimationFrame(() => { frame = 0; lite.classList.add("on"); });
+    }
+    return LITE_DURATION_MS;
   }
   const page = document.querySelector<HTMLElement>(".inbox-layout, .page");
   const filter = byId<SVGFilterElement>("shockfx");
-  const image = byId<SVGFEImageElement>("shock-map");
+  const map = byId<SVGFEImageElement>("shock-map");
   const ring = byId<HTMLDivElement>("shock-ring");
   const [dR, dG, dB] = ["shock-r", "shock-g", "shock-b"].map((id) => byId<SVGFEDisplacementMapElement>(id));
-  if (!page || !filter || !image || !ring || !dR || !dG || !dB) return;
+  if (!page || !filter || !map || !ring || !dR || !dG || !dB) return 0;
   cancelAnimationFrame(frame);
   restore();
-  image.setAttribute("href", makeDisplacementMap());
-  const pageRect = page.getBoundingClientRect();
-  const cx = ox - pageRect.left;
-  const cy = oy - pageRect.top;
-  const w = window.innerWidth;
-  const h = window.innerHeight;
+  const pageRect = configureFilter(page, filter);
+  if (!pageRect) return 0;
+  const cx = ox - pageRect.left, cy = oy - pageRect.top;
+  const w = window.innerWidth, h = window.innerHeight;
   const maxR = Math.hypot(Math.max(ox, w - ox), Math.max(oy, h - oy)) * 1.05;
-  filter.setAttribute("width", String(Math.ceil(pageRect.width)));
-  filter.setAttribute("height", String(Math.ceil(pageRect.height)));
-  const glows: Glow[] = Array.from(
-    page.querySelectorAll<HTMLElement>(
-      ".inbox-card, .card, .tabs, .handover, .reason, .run-step, .stat-card, .chart-card, .ev-item",
-    ),
-  )
-    .map((el) => ({ el, shadow: el.style.boxShadow, rect: el.getBoundingClientRect() }))
-    .filter(({ rect }) => rect.bottom > 0 && rect.top < h);
-  restore = () => {
-    page.style.filter = "";
-    page.style.willChange = "";
+  // Complete layout reads before inserting any visual layers.
+  const bounds = Array.from(page.querySelectorAll<HTMLElement>(
+    ".inbox-card, .card, .tabs, .handover, .reason, .run-step, .stat-card, .chart-card, .ev-item",
+  )).map((el) => ({ rect: el.getBoundingClientRect(), radius: getComputedStyle(el).borderRadius }))
+    .filter(({ rect }) => rect.width > 0 && rect.bottom > 0 && rect.top < h).slice(0, 32);
+  const fragment = document.createDocumentFragment();
+  const glows: Glow[] = bounds.map(({ rect, radius }) => {
+    const el = document.createElement("div");
+    el.className = "shock-highlight";
+    Object.assign(el.style, { left: `${rect.left}px`, top: `${rect.top}px`, width: `${rect.width}px`, height: `${rect.height}px`, borderRadius: radius });
+    fragment.appendChild(el);
+    return { el, ...glowRange(rect, ox, oy) };
+  });
+  document.body.appendChild(fragment);
+  ring.style.left = `${ox - 128}px`;
+  ring.style.top = `${oy - 128}px`;
+  const previousFilter = page.style.filter, previousWillChange = page.style.willChange;
+  const cleanup = () => {
+    cancelAnimationFrame(frame);
+    frame = 0;
+    page.style.filter = previousFilter;
+    page.style.willChange = previousWillChange;
     ring.style.opacity = "0";
-    for (const g of glows) g.el.style.boxShadow = g.shadow;
+    ring.style.willChange = "";
+    glows.forEach((g) => g.el.remove());
+    window.removeEventListener("scroll", cleanup, true);
+    window.removeEventListener("resize", cleanup);
     restore = () => {};
   };
+  restore = cleanup;
+  window.addEventListener("scroll", cleanup, { capture: true, passive: true });
+  window.addEventListener("resize", cleanup);
   page.style.willChange = "filter";
   page.style.filter = "url(#shockfx)";
-  const t0 = performance.now();
+  ring.style.willChange = "transform, opacity";
+  let started: number | null = null;
   const step = (now: number) => {
-    const t = Math.min(1, (now - t0) / DURATION_MS);
-    const eased = 1 - Math.pow(1 - t, 3);
-    const radius = 24 + eased * maxR;
+    // Begin the clock on the first rendered frame, never skip the opening on a cold frame.
+    started ??= now;
+    const t = Math.min(1, (now - started) / DURATION_MS);
+    const radius = 24 + (1 - Math.pow(1 - t, 3)) * maxR;
     const k = Math.pow(1 - t, 1.4);
-    const fadeIn = Math.min(1, t / 0.06);
-    image.setAttribute("x", String(cx - radius));
-    image.setAttribute("y", String(cy - radius));
-    image.setAttribute("width", String(2 * radius));
-    image.setAttribute("height", String(2 * radius));
-    const scale = SCALE * k * fadeIn;
-    // Slightly different strengths per channel give the RGB split (±8 %).
+    const scale = SCALE * k * Math.min(1, t / 0.06);
+    map.setAttribute("x", String(cx - radius));
+    map.setAttribute("y", String(cy - radius));
+    map.setAttribute("width", String(2 * radius));
+    map.setAttribute("height", String(2 * radius));
     dR.setAttribute("scale", String(scale * 1.08));
     dG.setAttribute("scale", String(scale));
     dB.setAttribute("scale", String(scale * 0.92));
-    ring.style.left = `${ox - radius}px`;
-    ring.style.top = `${oy - radius}px`;
-    ring.style.width = ring.style.height = `${2 * radius}px`;
-    ring.style.opacity = String(0.6 * k * fadeIn);
-    for (const g of glows) {
-      const r = g.rect;
-      const nx = Math.max(r.left, Math.min(ox, r.right));
-      const ny = Math.max(r.top, Math.min(oy, r.bottom));
-      const near = Math.hypot(ox - nx, oy - ny);
-      const far = Math.hypot(Math.max(ox - r.left, r.right - ox), Math.max(oy - r.top, r.bottom - oy));
-      const a = radius > near - 40 && radius < far + 40 ? 0.85 * k : 0;
-      const halo = `0 0 0 1.5px rgba(167,139,250,${a.toFixed(3)}), 0 0 16px rgba(244,114,182,${(a * 0.45).toFixed(3)})`;
-      g.el.style.boxShadow = a > 0.01 ? (g.shadow ? `${g.shadow}, ${halo}` : halo) : g.shadow;
-    }
+    ring.style.transform = `scale(${radius / 128})`;
+    ring.style.opacity = String(0.6 * k);
+    for (const g of glows) g.el.style.opacity = radius > g.near - 40 && radius < g.far + 40 ? String(0.85 * k) : "0";
     if (t < 1) frame = requestAnimationFrame(step);
-    else restore();
+    else cleanup();
   };
   frame = requestAnimationFrame(step);
+  return DURATION_MS;
 }
 
 const subscribeNothing = () => () => {};
@@ -172,16 +194,27 @@ export function ChatDock({ incidentId, title }: { incidentId: string; title: str
   const [draft, setDraft] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [sending, setSending] = useState(false);
+  const [loading, setLoading] = useState(false);
   const pillRef = useRef<HTMLButtonElement>(null);
   const listRef = useRef<HTMLDivElement>(null);
   const polls = useRef(0);
+  const openingTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
+    const prepare = () => { void prepareShockwave(); };
+    const idle = "requestIdleCallback" in window ? window.requestIdleCallback(prepare, { timeout: 1000 }) : null;
+    const fallback = idle === null ? setTimeout(prepare, 150) : null;
     return () => {
+      if (idle !== null) window.cancelIdleCallback(idle);
+      if (fallback !== null) clearTimeout(fallback);
+      if (openingTimer.current !== null) clearTimeout(openingTimer.current);
+      preparationGeneration += 1;
+      cancelWarmup();
       cancelAnimationFrame(frame);
+      frame = 0;
       restore();
     };
-  }, []);
+  }, [incidentId]);
 
   const load = useCallback(async () => {
     try {
@@ -197,29 +230,45 @@ export function ChatDock({ incidentId, title }: { incidentId: string; title: str
       }
     } catch {
       setError("Could not reach the console.");
+    } finally {
+      setLoading(false);
     }
   }, [incidentId]);
 
   const show = useCallback(() => {
     setInstant(effectMode() === "none");
     setOpen(true);
-    void load();
-    if (pillRef.current) playShockwave(pillRef.current.getBoundingClientRect());
+    setLoading(true);
+    const delay = pillRef.current ? playShockwave(pillRef.current.getBoundingClientRect()) : 0;
+    if (openingTimer.current !== null) clearTimeout(openingTimer.current);
+    openingTimer.current = setTimeout(() => { openingTimer.current = null; void load(); }, delay);
   }, [load]);
+
+  const close = useCallback(() => {
+    setOpen(false);
+    if (openingTimer.current !== null) clearTimeout(openingTimer.current);
+    openingTimer.current = null;
+    preparationGeneration += 1;
+    cancelWarmup();
+    cancelAnimationFrame(frame);
+    frame = 0;
+    restore();
+    byId<HTMLDivElement>("lite-ring")?.classList.remove("on");
+  }, []);
 
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
       if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "j") {
         event.preventDefault();
-        if (open) setOpen(false);
+        if (open) close();
         else show();
       } else if (event.key === "Escape" && open) {
-        setOpen(false);
+        close();
       }
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [open, show]);
+  }, [open, show, close]);
 
   useEffect(() => {
     if (!open || !thread?.pending) {
@@ -279,7 +328,7 @@ export function ChatDock({ incidentId, title }: { incidentId: string; title: str
             height="100"
           >
             <feFlood floodColor="rgb(128,128,128)" result="neutral" />
-            <feImage id="shock-map" x="0" y="0" width="1" height="1" preserveAspectRatio="none" result="ringmap" />
+            <feImage id="shock-map" href={DISPLACEMENT_MAP_URL} x="0" y="0" width="1" height="1" preserveAspectRatio="none" result="ringmap" />
             <feComposite in="ringmap" in2="neutral" operator="over" result="map" />
             {(["dR", "dG", "dB"] as const).map((name, i) => (
               <feDisplacementMap
@@ -305,6 +354,8 @@ export function ChatDock({ incidentId, title }: { incidentId: string; title: str
         ref={pillRef}
         type="button"
         className={`ask-pill beside-inbox ${open ? "hidden" : ""}`}
+        onPointerEnter={() => { void prepareShockwave(); }}
+        onFocus={() => { void prepareShockwave(); }}
         onClick={show}
         aria-haspopup="dialog"
         aria-expanded={open}
@@ -324,7 +375,7 @@ export function ChatDock({ incidentId, title }: { incidentId: string; title: str
             <strong>Ask about this incident</strong>
             <span className="tiny muted">{title}</span>
           </span>
-          <button type="button" className="btn" onClick={() => setOpen(false)} aria-label="Close chat">
+          <button type="button" className="btn" onClick={close} aria-label="Close chat">
             ✕
           </button>
         </header>
@@ -333,7 +384,8 @@ export function ChatDock({ incidentId, title }: { incidentId: string; title: str
           this incident sees this chat.
         </p>
         <div className="ask-messages" ref={listRef}>
-          {messages.length === 0 && !thread?.pending ? (
+          {loading && messages.length === 0 ? <span className="typing" role="status">Loading conversation…</span> : null}
+          {messages.length === 0 && !thread?.pending && !loading ? (
             <div className="suggest">
               {SUGGESTED_QUESTIONS.map((q) => (
                 <button key={q} type="button" onClick={() => void ask(q)}>

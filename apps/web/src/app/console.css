@@ -987,8 +987,8 @@ code {
   position: fixed;
   left: 0;
   top: 0;
-  width: 0;
-  height: 0;
+  width: 256px;
+  height: 256px;
   pointer-events: none;
   border-radius: 50%;
   z-index: 19;
@@ -1268,3 +1268,13 @@ code {
 .full-diagnosis { border-block: 1px solid var(--border); padding: 12px 0; }
 .full-diagnosis summary { cursor: pointer; font-size: 14px; font-weight: 600; }
 .full-diagnosis p { margin: 12px 0 0; font-size: 14px; line-height: 1.7; white-space: pre-wrap; overflow-wrap: anywhere; }
+
+
+.shock-highlight {
+  position: fixed;
+  pointer-events: none;
+  z-index: 18;
+  opacity: 0;
+  box-shadow: 0 0 0 1.5px rgba(167, 139, 250, 1), 0 0 16px rgba(244, 114, 182, 0.45);
+  will-change: opacity;
+}
