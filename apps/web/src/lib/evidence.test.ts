@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { diagnosisRun, evidenceHref, shortId } from "./evidence";
+import { diagnosisRun, evidenceHref, formalRuns, shortId } from "./evidence";
 import type { RunSummary } from "./incidents";
 
 const run = (id: string, state: string, started_at: string): RunSummary => ({
@@ -30,6 +30,16 @@ describe("diagnosisRun", () => {
   it("falls back to the latest run, or null", () => {
     expect(diagnosisRun([run("run_a", "RUNNING", "2026-11-09T12:00:00Z")])?.id).toBe("run_a");
     expect(diagnosisRun([])).toBeNull();
+  });
+
+  it("ignores chat turns", () => {
+    const runs = [
+      run("run_a", "COMPLETED", "2026-11-09T12:00:00Z"),
+      { ...run("run_chat", "COMPLETED", "2026-11-09T12:30:00Z"), kind: "chat" },
+      { ...run("run_re", "RUNNING", "2026-11-09T12:40:00Z"), kind: "reinvestigation" },
+    ];
+    expect(diagnosisRun(runs)?.id).toBe("run_a");
+    expect(formalRuns(runs).map((r) => r.id)).toEqual(["run_a", "run_re"]);
   });
 });
 

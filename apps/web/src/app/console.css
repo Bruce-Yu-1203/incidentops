@@ -1159,6 +1159,142 @@ code {
   color: var(--faint);
   font-size: 13px;
 }
+/* ---------- chat agent (ADR-023): teal marks everything the chat agent did ---------- */
+.chat-pill {
+  display: inline-block;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--teal-ink);
+  background: var(--teal-soft);
+  border-radius: 999px;
+  padding: 1px 8px;
+}
+.chat-tag {
+  display: inline-block;
+  font-size: 11px;
+  color: var(--teal-ink);
+  border: 1px solid var(--teal-line);
+  border-radius: 6px;
+  padding: 0 5px;
+  white-space: nowrap;
+}
+.chat-tag-old {
+  display: table;
+  color: var(--amber-ink);
+  border-color: #fcd34d;
+  margin-bottom: 6px;
+}
+.chat-trace {
+  margin-top: 8px;
+  font-size: 12px;
+  white-space: normal;
+}
+.chat-trace summary {
+  cursor: pointer;
+  color: var(--muted);
+}
+.chat-steps {
+  list-style: none;
+  margin: 6px 0 0;
+  padding: 0 0 0 10px;
+  border-left: 2px dashed var(--teal-line);
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  white-space: normal;
+}
+.chat-steps li {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  align-items: baseline;
+  font-size: 12px;
+}
+.chat-step-tool {
+  font-family: var(--font-mono);
+  color: var(--teal-ink);
+}
+.chat-step-failed .chat-step-tool {
+  color: var(--danger);
+}
+.msg-running {
+  border: 1px dashed var(--teal-line);
+  box-shadow: none;
+}
+.reinvestigation-status {
+  margin: 0;
+  color: var(--teal-ink);
+}
+.ask-viewer {
+  margin: 0;
+}
+.run-switcher {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.run-option {
+  font: inherit;
+  font-size: 13px;
+  border: 1px solid var(--border);
+  background: var(--surface);
+  border-radius: 999px;
+  padding: 4px 12px;
+  cursor: pointer;
+  color: var(--muted);
+}
+.run-option.on {
+  color: var(--foreground);
+  border-color: var(--foreground);
+  font-weight: 600;
+}
+.run-option-chat {
+  border-style: dashed;
+  border-color: var(--teal-line);
+  color: var(--teal-ink);
+}
+.run-option-chat.on {
+  border-color: var(--teal);
+  color: var(--teal-ink);
+  background: var(--teal-soft);
+}
+.chat-run {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.chat-run-head {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: baseline;
+}
+.chat-run-steps .run-step {
+  background: transparent;
+  border: 1px dashed var(--teal-line);
+}
+.chat-run-steps .run-step .icon {
+  color: var(--teal);
+}
+.ev-dot-chat {
+  background: var(--teal);
+}
+.chat-toggle {
+  display: inline-flex;
+  gap: 6px;
+  align-items: center;
+  margin-bottom: 8px;
+  cursor: pointer;
+}
+.lane-chat {
+  display: none;
+}
+.show-chat .lane-chat {
+  display: grid;
+}
+.lane-chat-agent .actor {
+  color: var(--teal-ink);
+}
 @media (prefers-reduced-motion: reduce) {
   .ask-drawer,
   .ask-drawer.open {

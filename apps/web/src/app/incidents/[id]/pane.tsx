@@ -1,4 +1,5 @@
 import Link from "next/link";
+import type { ReactNode } from "react";
 
 import { IncidentTabLink } from "@/components/incident-tab-link";
 import { IncidentTabs } from "@/components/incident-tabs";
@@ -8,12 +9,12 @@ import { type ActionDetail, fetchAction } from "@/lib/actions";
 import { apiBaseUrl } from "@/lib/api";
 import { formatAge } from "@/lib/attention";
 import { fetchMe } from "@/lib/auth";
-import { diagnosisRun, shortId } from "@/lib/evidence";
+import { diagnosisRun, formalRuns, shortId } from "@/lib/evidence";
 import { byRole, evidenceNotes, type EvidenceNote } from "@/lib/evidence-notes";
 import { decodeRecheck } from "@/lib/handling";
 import { incidentTitle, inboxStatus } from "@/lib/inbox";
 import { DISPOSITION_LABEL, DISPOSITIONS, fetchIncident, type IncidentDetail } from "@/lib/incidents";
-import { fetchRun, type RunDetail } from "@/lib/investigations";
+import { type EvidenceView, fetchRun, type RunDetail } from "@/lib/investigations";
 import { alertClearedAt, lifecycleRows, mergeAlerts } from "@/lib/lifecycle-rows";
 import { fetchIncidentMetrics, formatValue } from "@/lib/metrics";
 import { incidentIsLive } from "@/lib/refresh";
@@ -24,6 +25,8 @@ import { formatDuration } from "@/lib/timeline";
 import { LoadError } from "@/app/load-error";
 
 import { ChatDock } from "@/components/chat-dock";
+import { ChatRowsToggle, type RunOption, RunSwitcher } from "@/components/run-switcher";
+import { fetchChatThread, questionsByRun } from "@/lib/chat";
 import { assignToMe, closeHandover, recheckNow } from "./handling";
 
 export { parseIncidentTab as parseTab } from "@/lib/incident-tabs";
@@ -337,8 +340,102 @@ function stepIcon(title: string, blocked: boolean, kind: string, final: boolean)
   return "●";
 }
 
-function InvestigationTab({ run, notes, incident }: { run: RunDetail | null; notes: EvidenceNote[]; incident: IncidentDetail }) {
-  if (!run) return <p className="muted">No investigation has run yet.</p>;
+const CHAT_KEY = "chat";
+const MAX_FORMAL_RUNS = 5;
+const MAX_CHAT_RUNS = 10;
+
+type FormalRun = { detail: RunDetail; notes: EvidenceNote[] };
+
+function runLabel(run: RunDetail): string {
+  const at = run.started_at ? ` · ${new Date(run.started_at).toLocaleTimeString()}` : "";
+  return `${run.kind === "reinvestigation" ? "Re-investigation" : "Investigation"}${at}`;
+}
+
+function InvestigationTab({
+  formal,
+  defaultRunId,
+  chatRuns,
+  questions,
+  incident,
+}: {
+  formal: FormalRun[];
+  defaultRunId: string | null;
+  chatRuns: RunDetail[];
+  questions: Map<string, string>;
+  incident: IncidentDetail;
+}) {
+  if (formal.length === 0 && chatRuns.length === 0) return <p className="muted">No investigation has run yet.</p>;
+  const options: RunOption[] = formal.map((f) => ({ key: f.detail.id, label: runLabel(f.detail), chat: false }));
+  const panels: Record<string, ReactNode> = Object.fromEntries(
+    formal.map((f) => [f.detail.id, <RunView key={f.detail.id} run={f.detail} notes={f.notes} incident={incident} latest={f.detail.id === defaultRunId} />]),
+  );
+  if (chatRuns.length) {
+    options.push({ key: CHAT_KEY, label: `Chat agent (${chatRuns.length} turn${chatRuns.length === 1 ? "" : "s"})`, chat: true });
+    panels[CHAT_KEY] = <ChatRunsView runs={chatRuns} questions={questions} />;
+  }
+  return <RunSwitcher options={options} initial={defaultRunId ?? options[0].key} panels={panels} />;
+}
+
+function ChatRunsView({ runs, questions }: { runs: RunDetail[]; questions: Map<string, string> }) {
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+      <p className="small muted" style={{ margin: 0 }}>
+        Read-only checks the chat agent made while answering questions. They cannot change a diagnosis or lead to an
+        action.
+      </p>
+      {[...runs].reverse().map((run) => (
+        <section key={run.id} className="chat-run">
+          <div className="chat-run-head">
+            <span className="chat-pill">Chat agent</span>
+            <span className="small">“{questions.get(run.id) || "question"}”</span>
+            <span className="tiny muted">
+              {run.requested_by ? `${run.requested_by.replace(/^user:/, "")} · ` : ""}
+              {run.started_at ? new Date(run.started_at).toLocaleTimeString() : ""} · {run.state.toLowerCase()}
+            </span>
+          </div>
+          <ol className="run-steps chat-run-steps">
+            {run.steps.filter((s) => s.kind === "tool_call").map(stepRow).map((r) => {
+              const ev = /→ (ev_[0-9a-zA-Z]+)/.exec(r.detail)?.[1];
+              return (
+                <li key={r.id} id={r.id} className={`run-step ${r.blocked ? "step-blocked" : ""}`}>
+                  <span className="icon">{r.blocked ? "✕" : "○"}</span>
+                  <span style={{ display: "flex", flexDirection: "column", gap: 2, minWidth: 0 }}>
+                    <span className="name">{r.title}</span>
+                    {r.args ? <span className="args">{r.args}</span> : null}
+                    <span className="tiny">
+                      {r.detail.replace(/→ ev_[0-9a-zA-Z]+/, "").replace(/ · $/, "")}
+                      {ev ? (
+                        <>
+                          {" "}
+                          <Link href={`?tab=evidence#${ev}`} className="mono">
+                            → {shortId(ev)}
+                          </Link>
+                        </>
+                      ) : null}
+                    </span>
+                  </span>
+                  <span className="tiny muted">{r.duration ?? ""}</span>
+                </li>
+              );
+            })}
+          </ol>
+        </section>
+      ))}
+    </div>
+  );
+}
+
+function RunView({
+  run,
+  notes,
+  incident,
+  latest,
+}: {
+  run: RunDetail;
+  notes: EvidenceNote[];
+  incident: IncidentDetail;
+  latest: boolean;
+}) {
   const rows = run.steps.map(stepRow);
   const isFinal = (r: (typeof rows)[number]) => r.title === "diagnosis";
   const duration =
@@ -349,9 +446,15 @@ function InvestigationTab({ run, notes, incident }: { run: RunDetail | null; not
   const against = byRole(notes, "against");
   const aside = byRole(notes, "set_aside");
   const total = supports.length + against.length || 1;
-  const d = run.diagnosis?.diagnosis ?? incident.diagnosis?.diagnosis ?? null;
+  const d = run.diagnosis?.diagnosis ?? (latest ? incident.diagnosis?.diagnosis : null) ?? null;
   return (
     <div className="stack-lg" style={{ display: "flex", flexDirection: "column", gap: 18 }}>
+      {run.kind === "reinvestigation" ? (
+        <p className="notice notice-info" style={{ margin: 0 }}>
+          Re-investigation{run.requested_by ? ` asked for by ${run.requested_by.replace(/^user:/, "")}` : ""}. Its
+          diagnosis is advice for the person handling the incident; any action it proposes was not sent to policy.
+        </p>
+      ) : null}
       <div className="run-summary">
         <span className="cell">
           <span className="tiny muted">Run</span>
@@ -416,7 +519,7 @@ function InvestigationTab({ run, notes, incident }: { run: RunDetail | null; not
           <h3 id="why-title" className="serif" style={{ margin: 0, fontSize: 18 }}>
             Why the agent believes it
           </h3>
-          <details id="full-diagnosis" className="full-diagnosis">
+          <details id={latest ? "full-diagnosis" : undefined} className="full-diagnosis">
             <summary>Full diagnosis</summary>
             <p>{d.summary}</p>
           </details>
@@ -487,8 +590,59 @@ const GROUPS = [
   { role: "set_aside", title: "Checked and set aside" },
 ] as const;
 
-function EvidenceTab({ notes, run }: { notes: EvidenceNote[]; run: RunDetail | null }) {
-  if (notes.length === 0) return <p className="muted">No evidence has been collected yet.</p>;
+type ChatEvidence = { evidence: EvidenceView; question: string };
+
+function ChatEvidenceSection({ items }: { items: ChatEvidence[] }) {
+  if (items.length === 0) return null;
+  return (
+    <section className="ev-group">
+      <h3>
+        Checked in chat <span className="tiny muted">· {items.length}</span>
+      </h3>
+      <p className="tiny muted" style={{ margin: "0 0 6px" }}>
+        Readings the chat agent took while answering. The diagnosis does not cite them; a re-investigation re-checks
+        them before it can use them.
+      </p>
+      {items.map(({ evidence: e, question }) => (
+        <details key={e.id} id={e.id} className="ev-item">
+          <summary>
+            <span className="ev-dot ev-dot-chat" aria-hidden="true" />
+            <span>
+              {e.summary.split("\n")[0].slice(0, 140)} <span className="chat-tag">from chat</span>
+            </span>
+            <span className="tiny faint mono">{shortId(e.id)}</span>
+          </summary>
+          <div className="ev-detail">
+            <dl>
+              <dt>ID</dt>
+              <dd className="mono">{e.id}</dd>
+              <dt>Source</dt>
+              <dd>{e.source}</dd>
+              <dt>Query</dt>
+              <dd className="mono">{`${e.template_id} ${JSON.stringify(e.parameters)}`}</dd>
+              <dt>Observed</dt>
+              <dd>{new Date(e.observed_at).toLocaleString()}</dd>
+              <dt>Asked</dt>
+              <dd>{question ? `“${question}”` : "—"}</dd>
+            </dl>
+            <pre>
+              {e.summary}
+              {e.truncated ? "\n… (truncated)" : ""}
+            </pre>
+            {e.source_url ? (
+              <a href={e.source_url} target="_blank" rel="noreferrer">
+                Open in Grafana ↗
+              </a>
+            ) : null}
+          </div>
+        </details>
+      ))}
+    </section>
+  );
+}
+
+function EvidenceTab({ notes, run, chat }: { notes: EvidenceNote[]; run: RunDetail | null; chat: ChatEvidence[] }) {
+  if (notes.length === 0 && chat.length === 0) return <p className="muted">No evidence has been collected yet.</p>;
   const stepFor = new Map(
     (run?.steps ?? [])
       .filter((s) => typeof s.metadata.evidence_id === "string")
@@ -555,6 +709,7 @@ function EvidenceTab({ notes, run }: { notes: EvidenceNote[]; run: RunDetail | n
           </section>
         );
       })}
+      <ChatEvidenceSection items={chat} />
     </div>
   );
 }
@@ -573,15 +728,20 @@ function TimelineTab({ incident }: { incident: IncidentDetail }) {
   const rows = lifecycleRows(incident.timeline, incident.state, incident.needs_human === true);
   const future = NEXT_STEPS[incident.state] ?? [];
   const alerts = mergeAlerts(incident.alert_events);
+  const chatRows = rows.filter((r) => r.chat).length;
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 22 }}>
       <section>
         <h3 className="serif" style={{ margin: "0 0 8px", fontSize: 17 }}>
           Lifecycle
         </h3>
+        <ChatRowsToggle count={chatRows}>
         <ol className="lanes">
           {rows.map((r) => (
-            <li key={`${r.reference}-${r.at}`} className={`lane ${r.waiting ? "lane-waiting" : ""}`}>
+            <li
+              key={`${r.reference}-${r.at}-${r.text}`}
+              className={`lane ${r.waiting ? "lane-waiting" : ""} ${r.chat ? "lane-chat" : ""} ${r.actor === "Chat agent" ? "lane-chat-agent" : ""}`}
+            >
               <span className="tiny mono">{r.waiting ? "now" : new Date(r.at).toLocaleTimeString()}</span>
               <span className="actor">{r.actor}</span>
               <span className="what">
@@ -597,6 +757,7 @@ function TimelineTab({ incident }: { incident: IncidentDetail }) {
             </li>
           ))}
         </ol>
+        </ChatRowsToggle>
       </section>
       <section>
         <h3 className="serif" style={{ margin: "0 0 8px", fontSize: 17 }}>
@@ -658,13 +819,30 @@ export async function IncidentPane({
   const incident = result.data;
   const lastAction = incident.actions.at(-1);
   const run = diagnosisRun(incident.runs);
-  const [actionResult, runResult] = await Promise.all([
+  const formalSummaries = formalRuns(incident.runs).slice(-MAX_FORMAL_RUNS);
+  const chatSummaries = incident.runs
+    .filter((r) => r.kind === "chat")
+    .sort((a, b) => (a.started_at ?? "").localeCompare(b.started_at ?? ""))
+    .slice(-MAX_CHAT_RUNS);
+  const details = async (ids: string[]) =>
+    (await Promise.all(ids.map((id) => fetchRun(apiBaseUrl(), id, authed)))).flatMap((r) => (r.ok ? [r.data] : []));
+  const [actionResult, formalDetails, chatDetails, thread] = await Promise.all([
     lastAction ? fetchAction(apiBaseUrl(), lastAction.id, authed) : Promise.resolve(null),
-    run ? fetchRun(apiBaseUrl(), run.id, authed) : Promise.resolve(null),
+    details(formalSummaries.map((r) => r.id)),
+    details(chatSummaries.map((r) => r.id)),
+    chatSummaries.length ? fetchChatThread(apiBaseUrl(), incidentId, authed) : Promise.resolve(null),
   ]);
   const action = actionResult?.ok ? actionResult.data : null;
-  const runDetail = runResult?.ok ? runResult.data : null;
+  const runDetail = formalDetails.find((r) => r.id === run?.id) ?? null;
   const notes = evidenceNotes(incident.diagnosis?.diagnosis ?? null, runDetail?.evidence ?? []);
+  const formal: FormalRun[] = formalDetails.map((detail) => ({
+    detail,
+    notes: detail.id === runDetail?.id ? notes : evidenceNotes(detail.diagnosis?.diagnosis ?? null, detail.evidence),
+  }));
+  const questions = questionsByRun(thread);
+  const chatEvidence: ChatEvidence[] = chatDetails.flatMap((r) =>
+    r.evidence.map((evidence) => ({ evidence, question: questions.get(r.id) ?? "" })),
+  );
   const status = inboxStatus(incident);
   const story = buildStory(incident, action);
   const canOperate = me !== null && OPERATE.has(me.role);
@@ -698,11 +876,19 @@ export async function IncidentPane({
       ) : null}
       <IncidentTabs incidentId={incident.id} panels={{
         story: <StoryTab incident={incident} action={action} notes={notes} />,
-        investigation: <InvestigationTab run={runDetail} notes={notes} incident={incident} />,
-        evidence: <EvidenceTab notes={notes} run={runDetail} />,
+        investigation: (
+          <InvestigationTab
+            formal={formal}
+            defaultRunId={runDetail?.id ?? null}
+            chatRuns={chatDetails}
+            questions={questions}
+            incident={incident}
+          />
+        ),
+        evidence: <EvidenceTab notes={notes} run={runDetail} chat={chatEvidence} />,
         timeline: <TimelineTab incident={incident} />,
       }} />
-      <ChatDock incidentId={incident.id} title={incidentTitle(incident)} />
+      <ChatDock incidentId={incident.id} title={incidentTitle(incident)} canAsk={canOperate} />
     </main>
   );
 }

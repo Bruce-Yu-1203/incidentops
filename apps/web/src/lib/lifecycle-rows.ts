@@ -9,7 +9,8 @@ export type Actor =
   | "Policy"
   | "Human"
   | "Executor"
-  | "Verifier";
+  | "Verifier"
+  | "Chat agent";
 
 export type LifecycleRow = {
   at: string;
@@ -18,6 +19,8 @@ export type LifecycleRow = {
   /** A person must act now (approval or handover); highlighted. */
   waiting: boolean;
   reference: string;
+  /** A chat question or answer: hidden unless the reader asks for them. */
+  chat?: boolean;
 };
 
 // Events that repeat what another row already says are hidden.
@@ -33,6 +36,9 @@ const EVENT_TEXT: Record<string, string> = {
   incident_assigned: "Took ownership",
   incident_disposed: "Closed the incident",
   incident_rechecked: "Re-checked the metrics",
+  reinvestigation_requested: "Asked for a re-investigation",
+  reinvestigation_started: "Started a re-investigation",
+  reinvestigation_finished: "Finished the re-investigation",
 };
 
 const DECISION_TEXT: Record<string, string> = {
@@ -60,6 +66,7 @@ const DECISION_TEXT: Record<string, string> = {
 export function actorOf(actor: string | null | undefined, eventType: string | null | undefined): Actor {
   const a = actor ?? "";
   if (a.startsWith("user:")) return "Human";
+  if (a === "chat-agent" || a.includes("chat-worker")) return "Chat agent";
   if (a.includes("verifier")) return "Verifier";
   if (a.includes("executor")) return "Executor";
   if (a.includes("policy") || a.includes("evaluator") || (eventType ?? "").startsWith("policy")) return "Policy";
@@ -68,6 +75,26 @@ export function actorOf(actor: string | null | undefined, eventType: string | nu
 }
 
 const lower = (v: string) => v.toLowerCase().replace(/_/g, " ");
+
+const clip = (v: string, n = 80) => (v.length > n ? `${v.slice(0, n - 1)}…` : v);
+
+/** Chat entries (ADR-023): questions and answers are optional rows; evidence and suggestions always show. */
+function chatRow(entry: TimelineEntry): { actor: Actor; text: string; chat: boolean } | null {
+  switch (entry.event_type) {
+    case "chat_question":
+      return { actor: "Human", text: `Asked: “${clip(entry.summary)}”`, chat: true };
+    case "chat_answer":
+      return { actor: "Chat agent", text: `Answered (${entry.summary.replace(/^answered /, "")})`, chat: true };
+    case "chat_evidence_added": {
+      const n = Number(entry.decision ?? 0) || 0;
+      return { actor: "Chat agent", text: `Added ${n} evidence record${n === 1 ? "" : "s"} from chat`, chat: false };
+    }
+    case "chat_suggested_reinvestigation":
+      return { actor: "Chat agent", text: "Suggested a re-investigation", chat: false };
+    default:
+      return null;
+  }
+}
 
 function auditRow(entry: TimelineEntry): { actor: Actor; text: string } | null {
   const event = entry.event_type ?? entry.summary.split(":")[0].trim();
@@ -99,6 +126,11 @@ export function lifecycleRows(
   let firstAlert = true;
   for (const entry of timeline) {
     if (entry.kind === "tool") continue; // tool calls live in the Investigation tab
+    if (entry.kind === "chat") {
+      const row = chatRow(entry);
+      if (row) rows.push({ at: entry.at, ...row, waiting: false, reference: entry.reference_id });
+      continue;
+    }
     if (entry.kind === "alert") {
       if (!firstAlert) continue; // repeats are merged into the alerts table
       firstAlert = false;

@@ -93,6 +93,9 @@ export type RunSummary = {
   output_tokens: number;
   started_at: string | null;
   finished_at: string | null;
+  /** "investigation" | "reinvestigation" | "chat" (ADR-023); older APIs omit it. */
+  kind?: string;
+  requested_by?: string | null;
 };
 
 export type Diagnosis = {

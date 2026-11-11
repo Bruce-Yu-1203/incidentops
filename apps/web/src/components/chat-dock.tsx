@@ -3,7 +3,22 @@
 import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from "react";
 import { createPortal } from "react-dom";
 
-import { answerFooter, type ChatMessage, type ChatThread, isChatThread, splitCitations, SUGGESTED_QUESTIONS } from "@/lib/chat";
+import {
+  answerFooter,
+  argumentLine,
+  basedOnOlderDiagnosis,
+  type ChatMessage,
+  type ChatStep,
+  type ChatThread,
+  isChatThread,
+  reinvestigationOpen,
+  reinvestigationText,
+  runningLabel,
+  splitCitations,
+  SUGGESTED_QUESTIONS,
+  toolLabel,
+  traceSummary,
+} from "@/lib/chat";
 
 import { DISPLACEMENT_MAP_URL, SHOCKWAVE_DURATION_MS, LITE_DURATION_MS, displacementMapReady, prepareDisplacementMap, visibleFilterBounds, glowRange } from "@/lib/chat-motion";
 
@@ -168,9 +183,37 @@ function playShockwave(origin: DOMRect): number {
 
 const subscribeNothing = () => () => {};
 
-function Answer({ message, incidentId }: { message: ChatMessage; incidentId: string }) {
+function StepList({ steps }: { steps: readonly ChatStep[] }) {
+  return (
+    <ol className="chat-steps">
+      {steps.map((step, i) => (
+        <li key={i} className={step.status === "SUCCEEDED" ? "" : "chat-step-failed"}>
+          <span className="chat-step-tool">{toolLabel(step.tool)}</span>
+          {argumentLine(step.arguments) ? <code className="tiny">{argumentLine(step.arguments)}</code> : null}
+          {step.summary ? <span className="tiny muted">{step.summary}</span> : null}
+          {step.evidence_id ? <span className="chat-tag">saved {step.evidence_id.slice(-6)}</span> : null}
+          {step.duration_ms !== null ? <span className="tiny muted">{(step.duration_ms / 1000).toFixed(1)} s</span> : null}
+        </li>
+      ))}
+    </ol>
+  );
+}
+
+function Answer({
+  message,
+  incidentId,
+  latestDiagnosis,
+}: {
+  message: ChatMessage;
+  incidentId: string;
+  latestDiagnosis: string | null | undefined;
+}) {
+  const steps = message.steps ?? [];
   return (
     <div className="msg msg-assistant">
+      {basedOnOlderDiagnosis(message, latestDiagnosis) ? (
+        <span className="chat-tag chat-tag-old">Based on an earlier diagnosis</span>
+      ) : null}
       {splitCitations(message.content).map((part, i) =>
         part.evidence ? (
           <a key={i} className="cite" href={`/incidents/${incidentId}?tab=evidence#${part.text}`}>
@@ -180,12 +223,29 @@ function Answer({ message, incidentId }: { message: ChatMessage; incidentId: str
           <span key={i}>{part.text}</span>
         ),
       )}
+      {steps.length ? (
+        <details className="chat-trace">
+          <summary>
+            <span className="chat-pill">Chat agent</span> {traceSummary(steps)}
+          </summary>
+          <StepList steps={steps} />
+        </details>
+      ) : null}
       <div className="msg-footer">{answerFooter(message)}</div>
     </div>
   );
 }
 
-export function ChatDock({ incidentId, title }: { incidentId: string; title: string }) {
+export function ChatDock({
+  incidentId,
+  title,
+  canAsk = true,
+}: {
+  incidentId: string;
+  title: string;
+  /** Operators and above may ask (a question can read live systems); viewers only read. */
+  canAsk?: boolean;
+}) {
   // True only in the browser, where the portal target exists.
   const mounted = useSyncExternalStore(subscribeNothing, () => true, () => false);
   const [open, setOpen] = useState(false);
@@ -195,6 +255,7 @@ export function ChatDock({ incidentId, title }: { incidentId: string; title: str
   const [error, setError] = useState<string | null>(null);
   const [sending, setSending] = useState(false);
   const [loading, setLoading] = useState(false);
+  const [requesting, setRequesting] = useState(false);
   const pillRef = useRef<HTMLButtonElement>(null);
   const listRef = useRef<HTMLDivElement>(null);
   const polls = useRef(0);
@@ -271,7 +332,8 @@ export function ChatDock({ incidentId, title }: { incidentId: string; title: str
   }, [open, show, close]);
 
   useEffect(() => {
-    if (!open || !thread?.pending) {
+    const busy = Boolean(thread?.pending || thread?.running || reinvestigationOpen(thread?.reinvestigation));
+    if (!open || !busy) {
       polls.current = 0;
       return;
     }
@@ -285,7 +347,31 @@ export function ChatDock({ incidentId, title }: { incidentId: string; title: str
 
   useEffect(() => {
     listRef.current?.scrollTo({ top: listRef.current.scrollHeight });
-  }, [thread?.messages.length, thread?.pending]);
+  }, [thread?.messages.length, thread?.pending, thread?.running?.steps.length]);
+
+  async function reinvestigate(fromMessage: string) {
+    if (requesting) return;
+    setRequesting(true);
+    try {
+      const response = await fetch(`/api/chat/${incidentId}/reinvestigate`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ from_message_id: fromMessage }),
+      });
+      if (!response.ok) {
+        setError(
+          response.status === 403
+            ? "Only operators can start a re-investigation."
+            : response.status === 409
+              ? "A re-investigation is already running, or the incident is no longer waiting for a person."
+              : "The re-investigation was not started.",
+        );
+      }
+      await load();
+    } finally {
+      setRequesting(false);
+    }
+  }
 
   async function ask(question: string) {
     const text = question.trim();
@@ -298,7 +384,13 @@ export function ChatDock({ incidentId, title }: { incidentId: string; title: str
         body: JSON.stringify({ question: text }),
       });
       if (!response.ok) {
-        setError(response.status === 401 ? "Sign in to ask questions." : "The question was not sent.");
+        setError(
+          response.status === 401
+            ? "Sign in to ask questions."
+            : response.status === 403
+              ? "Only operators can ask the agent."
+              : "The question was not sent.",
+        );
       } else {
         setDraft("");
         await load();
@@ -380,12 +472,12 @@ export function ChatDock({ incidentId, title }: { incidentId: string; title: str
           </button>
         </header>
         <p className="ask-banner">
-          Read-only. Answers come from what was recorded for this incident and cannot change anything. Everyone on
-          this incident sees this chat.
+          Read-only. The chat agent reads what was recorded and may check live telemetry; it cannot change anything
+          or propose an action. Everyone on this incident sees this chat.
         </p>
         <div className="ask-messages" ref={listRef}>
           {loading && messages.length === 0 ? <span className="typing" role="status">Loading conversation…</span> : null}
-          {messages.length === 0 && !thread?.pending && !loading ? (
+          {messages.length === 0 && !thread?.pending && !loading && canAsk ? (
             <div className="suggest">
               {SUGGESTED_QUESTIONS.map((q) => (
                 <button key={q} type="button" onClick={() => void ask(q)}>
@@ -400,50 +492,83 @@ export function ChatDock({ incidentId, title }: { incidentId: string; title: str
                 {m.content}
               </div>
             ) : (
-              <Answer key={m.id} message={m} incidentId={incidentId} />
+              <Answer key={m.id} message={m} incidentId={incidentId} latestDiagnosis={thread?.latest_diagnosis_id} />
             ),
           )}
-          {thread?.pending ? <span className="typing">Reading the incident record…</span> : null}
-          {lastAnswer?.suggest_reinvestigation && !thread?.pending ? (
+          {thread?.pending ? (
+            <div className="msg msg-assistant msg-running">
+              <span className="typing" role="status">
+                {runningLabel(thread.running)}
+              </span>
+              {thread.running?.steps.length ? <StepList steps={thread.running.steps} /> : null}
+            </div>
+          ) : null}
+          {lastAnswer?.suggest_reinvestigation && !thread?.pending && !reinvestigationOpen(thread?.reinvestigation) ? (
             <div className="reinvestigate">
               <strong>A fresh investigation could help</strong>
               <span className="muted">
                 An operator starts it. Any action it proposes still goes through policy and approval.
               </span>
               <span>
-                <button type="button" className="btn" disabled title="Not available in this version yet">
-                  Start re-investigation
+                <button
+                  type="button"
+                  className="btn"
+                  disabled={!canAsk || !thread?.can_reinvestigate || requesting}
+                  title={
+                    !canAsk
+                      ? "Only operators can start a re-investigation"
+                      : !thread?.can_reinvestigate
+                        ? "Available while the incident waits for a person"
+                        : undefined
+                  }
+                  onClick={() => void reinvestigate(lastAnswer.id)}
+                >
+                  {requesting ? "Starting…" : "Start re-investigation"}
                 </button>
               </span>
             </div>
           ) : null}
+          {thread?.reinvestigation ? (
+            <p className="reinvestigation-status tiny" role="status">
+              {reinvestigationText(thread.reinvestigation)}
+              {reinvestigationOpen(thread.reinvestigation)
+                ? ". The new diagnosis will appear on the Investigation tab."
+                : ""}
+            </p>
+          ) : null}
           {error ? <p className="notice notice-error">{error}</p> : null}
         </div>
-        <form
-          className="ask-composer"
-          onSubmit={(event) => {
-            event.preventDefault();
-            void ask(draft);
-          }}
-        >
-          <textarea
-            value={draft}
-            onChange={(event) => setDraft(event.target.value)}
-            onKeyDown={(event) => {
-              if (event.key === "Enter" && !event.shiftKey) {
-                event.preventDefault();
-                void ask(draft);
-              }
+        {canAsk ? (
+          <form
+            className="ask-composer"
+            onSubmit={(event) => {
+              event.preventDefault();
+              void ask(draft);
             }}
-            placeholder="Ask a question…"
-            maxLength={2000}
-            rows={1}
-            aria-label="Your question"
-          />
-          <button type="submit" className="btn btn-primary" disabled={sending || !draft.trim()}>
-            Ask
-          </button>
-        </form>
+          >
+            <textarea
+              value={draft}
+              onChange={(event) => setDraft(event.target.value)}
+              onKeyDown={(event) => {
+                if (event.key === "Enter" && !event.shiftKey) {
+                  event.preventDefault();
+                  void ask(draft);
+                }
+              }}
+              placeholder="Ask a question…"
+              maxLength={2000}
+              rows={1}
+              aria-label="Your question"
+            />
+            <button type="submit" className="btn btn-primary" disabled={sending || !draft.trim()}>
+              Ask
+            </button>
+          </form>
+        ) : (
+          <p className="ask-composer ask-viewer tiny muted">
+            You can read this chat. Asking needs an operator role, because a question can query live systems.
+          </p>
+        )}
       </aside>
     </>
   );

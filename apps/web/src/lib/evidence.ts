@@ -2,9 +2,16 @@
 
 import type { RunSummary } from "./incidents";
 
-/** The run whose evidence a diagnosis cites: the latest completed run, else the latest run. */
+/** Investigations and re-investigations, oldest first; chat turns are left out (ADR-023). */
+export function formalRuns(runs: readonly RunSummary[]): RunSummary[] {
+  return [...runs]
+    .filter((r) => r.kind !== "chat")
+    .sort((a, b) => (a.started_at ?? "").localeCompare(b.started_at ?? ""));
+}
+
+/** The run whose evidence a diagnosis cites: the latest completed formal run, else the latest formal run. */
 export function diagnosisRun(runs: readonly RunSummary[]): RunSummary | null {
-  const byStart = [...runs].sort((a, b) => (a.started_at ?? "").localeCompare(b.started_at ?? ""));
+  const byStart = formalRuns(runs);
   return byStart.filter((r) => r.state === "COMPLETED").at(-1) ?? byStart.at(-1) ?? null;
 }
 
