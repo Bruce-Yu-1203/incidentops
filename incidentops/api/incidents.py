@@ -6,7 +6,7 @@ from datetime import datetime
 from typing import Any
 
 from pydantic import BaseModel
-from sqlalchemy import and_, or_, select
+from sqlalchemy import and_, func, or_, select
 from sqlalchemy.orm import Session
 
 from incidentops.api.actions import ActionSummary, actions_for_incident
@@ -17,6 +17,8 @@ from incidentops.persistence.models import (
     AgentStepRow,
     AlertEventRow,
     AuditEventRow,
+    EvidenceRow,
+    IncidentChatMessageRow,
     IncidentRow,
     InvestigationRunRow,
 )
@@ -142,6 +144,82 @@ def _alert_view(row: AlertEventRow) -> AlertEventView:
     )
 
 
+def chat_timeline(session: Session, incident_id: str) -> list[TimelineEntry]:
+    """One entry per chat question and per answer, with what the answer added."""
+    messages = session.scalars(
+        select(IncidentChatMessageRow)
+        .where(IncidentChatMessageRow.incident_id == incident_id)
+        .order_by(IncidentChatMessageRow.created_at)
+    ).all()
+    run_ids = [m.run_id for m in messages if m.run_id]
+    calls: dict[str, int] = {}
+    found: dict[str, int] = {}
+    if run_ids:
+        for run_id, count in session.execute(
+            select(InvestigationRunRow.id, InvestigationRunRow.tool_call_count).where(
+                InvestigationRunRow.id.in_(run_ids)
+            )
+        ):
+            calls[run_id] = count
+        for run_id, count in session.execute(
+            select(EvidenceRow.run_id, func.count())
+            .where(EvidenceRow.run_id.in_(run_ids))
+            .group_by(EvidenceRow.run_id)
+        ):
+            found[run_id] = count
+    entries: list[TimelineEntry] = []
+    for m in messages:
+        if m.role == "user":
+            entries.append(
+                TimelineEntry(
+                    at=m.created_at,
+                    kind="chat",
+                    summary=m.content[:200],
+                    reference_id=m.id,
+                    actor=m.author,
+                    event_type="chat_question",
+                )
+            )
+            continue
+        checks = calls.get(m.run_id or "", 0)
+        added = found.get(m.run_id or "", 0)
+        entries.append(
+            TimelineEntry(
+                at=m.created_at,
+                kind="chat",
+                summary=f"answered after {checks} checks, added {added} evidence",
+                reference_id=m.id,
+                actor="chat-agent",
+                event_type="chat_answer",
+                decision="SUGGEST_REINVESTIGATION" if m.suggest_reinvestigation else None,
+            )
+        )
+        if added:
+            entries.append(
+                TimelineEntry(
+                    at=m.created_at,
+                    kind="chat",
+                    summary=f"added {added} evidence",
+                    reference_id=m.run_id or m.id,
+                    actor="chat-agent",
+                    event_type="chat_evidence_added",
+                    decision=str(added),
+                )
+            )
+        if m.suggest_reinvestigation:
+            entries.append(
+                TimelineEntry(
+                    at=m.created_at,
+                    kind="chat",
+                    summary="suggested a re-investigation",
+                    reference_id=m.id,
+                    actor="chat-agent",
+                    event_type="chat_suggested_reinvestigation",
+                )
+            )
+    return entries
+
+
 def get_incident(session: Session, incident_id: str) -> IncidentDetail | None:
     row = session.get(IncidentRow, incident_id)
     if row is None:
@@ -189,11 +267,18 @@ def get_incident(session: Session, incident_id: str) -> IncidentDetail | None:
             target_state=e.correlation_ids.get("to_state"),
         )
         for e in audits
+        # Chat turns appear once each, as chat entries below, not as run audits.
+        if not e.event_type.startswith("chat_turn_")
     ]
+    timeline += chat_timeline(session, incident_id)
     tool_steps = session.scalars(
         select(AgentStepRow)
         .join(InvestigationRunRow, InvestigationRunRow.id == AgentStepRow.run_id)
-        .where(InvestigationRunRow.incident_id == incident_id, AgentStepRow.kind == "tool_call")
+        .where(
+            InvestigationRunRow.incident_id == incident_id,
+            InvestigationRunRow.kind != "chat",
+            AgentStepRow.kind == "tool_call",
+        )
         .order_by(AgentStepRow.started_at)
     ).all()
     timeline += [

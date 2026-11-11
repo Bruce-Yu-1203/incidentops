@@ -83,6 +83,18 @@ def release_for_retry(
         job.available_at = func.now() + timedelta(seconds=retry_delay_seconds)
 
 
+def defer(session: Session, job_id: str, owner: str, delay_seconds: int) -> None:
+    """Put a claimed job back without counting the attempt (the work was not tried)."""
+    job = session.get(OutboxJobRow, job_id, with_for_update=True)
+    if job is None or job.lease_owner != owner:
+        return
+    job.lease_owner = None
+    job.lease_until = None
+    job.status = "PENDING"
+    job.attempts = max(job.attempts - 1, 0)
+    job.available_at = func.now() + timedelta(seconds=delay_seconds)
+
+
 def heartbeat(session: Session, job_id: str, owner: str, lease_seconds: int) -> bool:
     """Extend a held lease; returns False if this worker no longer owns the job."""
     result = session.execute(

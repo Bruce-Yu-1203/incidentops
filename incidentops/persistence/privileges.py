@@ -40,6 +40,7 @@ PRIVILEGES: Final[dict[str, dict[str, frozenset[str]]]] = {
         "users": frozenset({S, I}),
         "sessions": frozenset({S, I, U}),
         "incident_chat_messages": frozenset({S, I}),
+        "incident_chat_summaries": frozenset({S}),
     },
     # Investigation worker: its own run, steps, evidence and diagnosis, plus the
     # incident lifecycle up to DIAGNOSED. No action/approval/execution writes.
@@ -54,6 +55,7 @@ PRIVILEGES: Final[dict[str, dict[str, frozenset[str]]]] = {
         "outbox_jobs": frozenset({S, I, U}),
         # Answers to the incident chat; questions are written by the API.
         "incident_chat_messages": frozenset({S, I}),
+        "incident_chat_summaries": frozenset({S, I}),
     },
     # Executor: action execution state, external operations, follow-up jobs.
     EXECUTOR_ROLE: {

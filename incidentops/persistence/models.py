@@ -141,6 +141,10 @@ class InvestigationRunRow(Base):
     model_id: Mapped[str | None] = mapped_column(String(128))
     prompt_version: Mapped[str | None] = mapped_column(String(64))
     error_code: Mapped[str | None] = mapped_column(String(64))
+    # "investigation" (alert-driven), "reinvestigation" (a person asked for a new
+    # look at a handed-over incident) or "chat" (one answered chat question).
+    kind: Mapped[str] = mapped_column(String(16), nullable=False, server_default="investigation")
+    requested_by: Mapped[str | None] = mapped_column(String(128))
     # Observed usage, recorded for benchmark cost/latency reporting.
     step_count: Mapped[int] = mapped_column(Integer, nullable=False, server_default="0")
     tool_call_count: Mapped[int] = mapped_column(Integer, nullable=False, server_default="0")
@@ -153,7 +157,20 @@ class InvestigationRunRow(Base):
 
     __table_args__ = (
         _state_check(RUN_MACHINE),
+        CheckConstraint("kind IN ('investigation', 'reinvestigation', 'chat')", name="kind_valid"),
         Index("ix_investigation_runs_incident", "incident_id", "created_at"),
+        Index(
+            "uq_investigation_runs_one_open_chat",
+            "incident_id",
+            unique=True,
+            postgresql_where=text("kind = 'chat' AND state IN ('QUEUED', 'RUNNING')"),
+        ),
+        Index(
+            "uq_investigation_runs_one_open_reinvestigation",
+            "incident_id",
+            unique=True,
+            postgresql_where=text("kind = 'reinvestigation' AND state IN ('QUEUED', 'RUNNING')"),
+        ),
     )
 
 
@@ -325,6 +342,9 @@ class IncidentChatMessageRow(Base):
     suggest_reinvestigation: Mapped[bool] = mapped_column(
         Boolean, nullable=False, server_default="false"
     )
+    # The chat run that produced an answer and the diagnosis it was based on.
+    run_id: Mapped[str | None] = mapped_column(ForeignKey("investigation_runs.id"))
+    diagnosis_id: Mapped[str | None] = mapped_column(ForeignKey("diagnoses.id"))
     created_at: Mapped[datetime] = _now()
 
     __table_args__ = (
@@ -333,6 +353,29 @@ class IncidentChatMessageRow(Base):
         CheckConstraint("(role = 'user') = (reply_to IS NULL)", name="answers_reply_to_a_question"),
         Index("ix_incident_chat_messages_incident", "incident_id", "created_at"),
         UniqueConstraint("reply_to", name="uq_incident_chat_messages_one_answer"),
+    )
+
+
+class IncidentChatSummaryRow(Base):
+    """Rolling summary of an incident's older chat turns, written by the chat agent."""
+
+    __tablename__ = "incident_chat_summaries"
+
+    id: Mapped[str] = mapped_column(ID, primary_key=True)
+    incident_id: Mapped[str] = mapped_column(ForeignKey("incidents.id"), nullable=False)
+    # The newest message this summary covers; later turns are kept verbatim.
+    through_message_id: Mapped[str] = mapped_column(
+        ForeignKey("incident_chat_messages.id"), nullable=False
+    )
+    covered_messages: Mapped[int] = mapped_column(Integer, nullable=False)
+    content: Mapped[str] = mapped_column(Text, nullable=False)
+    author: Mapped[str] = mapped_column(String(128), nullable=False)
+    created_at: Mapped[datetime] = _now()
+
+    __table_args__ = (
+        CheckConstraint("octet_length(content) <= 4000", name="content_budget"),
+        Index("ix_incident_chat_summaries_incident", "incident_id", "created_at"),
+        UniqueConstraint("through_message_id", name="uq_incident_chat_summaries_through_message"),
     )
 
 

@@ -98,6 +98,11 @@ class CloseRequest(BaseModel):
     note: str | None = Field(default=None, max_length=2000)
 
 
+class ReinvestigateRequest(BaseModel):
+    reason: str | None = Field(default=None, max_length=chat.MAX_REASON_CHARS)
+    from_message_id: str | None = Field(default=None, max_length=40)
+
+
 class ChatQuestion(BaseModel):
     question: str = Field(min_length=1, max_length=chat.MAX_QUESTION_CHARS)
 
@@ -438,12 +443,44 @@ def create_app(
     def ask_incident_chat(
         incident_id: str, body: ChatQuestion, user: User, factory: Sessions
     ) -> chat.ChatMessageView:
-        # Any signed-in role may ask: answers are read-only and change nothing.
+        # Asking runs live read-only checks and spends model budget (ADR-023),
+        # so it needs an operator role; viewers can read the thread.
+        if user.role not in auth.OPERATE_ROLES:
+            raise HTTPException(status.HTTP_403_FORBIDDEN, "operator role required")
         with factory.begin() as session:
             message = chat.ask(session, incident_id, user, body.question)
         if message is None:
             raise HTTPException(status.HTTP_404_NOT_FOUND, "incident not found")
         return message
+
+    @app.post(
+        "/api/v1/incidents/{incident_id}/reinvestigate",
+        tags=["chat"],
+        status_code=status.HTTP_202_ACCEPTED,
+    )
+    def reinvestigate_incident(
+        incident_id: str, body: ReinvestigateRequest, user: User, factory: Sessions
+    ) -> chat.ReinvestigationView:
+        if user.role not in auth.OPERATE_ROLES:
+            raise HTTPException(status.HTTP_403_FORBIDDEN, "operator role required")
+        with factory.begin() as session:
+            outcome = chat.request_reinvestigation(
+                session, incident_id, user, body.reason, body.from_message_id
+            )
+        if outcome is chat.ReinvestigationOutcome.NOT_FOUND:
+            raise HTTPException(status.HTTP_404_NOT_FOUND, "incident not found")
+        if outcome is chat.ReinvestigationOutcome.NOT_HANDED_OVER:
+            raise HTTPException(
+                status.HTTP_409_CONFLICT,
+                "only an incident waiting for a person can be re-investigated",
+            )
+        if outcome is chat.ReinvestigationOutcome.ALREADY_RUNNING:
+            raise HTTPException(status.HTTP_409_CONFLICT, "a re-investigation is already running")
+        with factory() as session:
+            view = chat.reinvestigation_status(session, incident_id)
+        if view is None:  # pragma: no cover - the job was just written
+            raise HTTPException(status.HTTP_500_INTERNAL_SERVER_ERROR, "not queued")
+        return view
 
     @app.get("/api/v1/history", tags=["history"], dependencies=[Depends(require_viewer)])
     def incident_history(
