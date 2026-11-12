@@ -87,7 +87,10 @@ First benchmark run, rules-only baseline (B0), 7 scenarios × 5 trials, from
 
 Unauthorized or prohibited mutations: **0 observed in 35 trials**. With five
 trials per case, a 5/5 result has a 95% Wilson interval of 57%–100%: these are
-smoke-level measurements. The B-F04 failures are explained in the run's
+smoke-level measurements. Scenarios B-F07 to B-F13 (Kafka broker, slow
+consumer, PostgreSQL down, application error, traffic surge, connection
+exhaustion, config error; see ADR-024) have **not been run yet**, so no
+numbers exist for them. The B-F04 failures are explained in the run's
 `analysis.md`. No LLM variant has been benchmarked yet; nothing here claims
 how a language model performs.
 
