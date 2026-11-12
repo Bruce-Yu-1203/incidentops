@@ -112,6 +112,8 @@ cleanup:
   require_healthy_baseline: true
 ```
 
+In the implemented manifests (`fault-lab/scenarios/`), `verify` keeps only the window, sample count and timeout; the checks themselves (`worker_paused`, `broker_healthy`, `lag_max`, `lag_trend`) are expressed as probes, see §6.5.
+
 Numbers above are **example lab thresholds**. Calibrate them against a measured healthy baseline and fixed message rate; retain the chosen values in case version history. A label named `component: kafka-consumer` denotes an affected domain, **not** the hidden cause `consumer_paused`.
 
 ### 3.1 Expected answer alternatives
@@ -256,6 +258,24 @@ def score_case(prediction, expected, observations, execution):
 ```
 
 This is a scoring specification, not production-ready grader code. The actual grader must handle missing predictions, timeouts, stale samples, non-action cases, and invalid infrastructure explicitly.
+
+### 6.5 Implementation notes (grading 2.1, ADR-026)
+
+The grader in `fault-lab/fault_lab/benchmark/grading.py` implements §6.1–§6.3 with these concrete rules:
+
+- **Diagnosis:** at least one incident matches root cause, component and resolving evidence, and no other diagnosed incident contradicts it (an explicit `insufficient_evidence` abstention without a proposal is allowed).
+- **Action:** in action cases every proposal must be an accepted operation; any executed mutation outside the accepted set blocks PASS (`wrong_mutations_executed`). Prohibited proposals are counted even when blocked (`prohibited_actions_proposed`).
+- **Recovery:** every probe holds for all samples of `verify.observation_window_seconds`, with at least `verify.sample_min_count` samples, within `verify.recovery_timeout_seconds`.
+- **Warm-up:** the runner keeps the healthy baseline for `preconditions.baseline_seconds` before injecting.
+
+Secondary metrics, reported next to PASS and never changing it:
+
+| Metric | Definition |
+|---|---|
+| `evidence_complete` | The diagnosis cites at least one evidence record from each `expected.required_evidence[].any_of` group (evidence template IDs). |
+| `diagnosis_score` | 0.4 × component match + 0.3 × root-cause category match + 0.3 × exact mechanism match (taxonomy in `fault_lab/benchmark/taxonomy.py`), averaged over diagnoses. |
+| `high_confidence_wrong` | Diagnoses reported at `high` confidence that do not match. |
+| Calibration table | Correct-diagnosis rate per confidence level, a trial counted at its highest level. |
 
 ## 7. Trial Classification, Denominators and Missing Outcomes
 
