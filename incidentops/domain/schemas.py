@@ -151,7 +151,12 @@ class ActionProposalDraft(_Contract):
 class Diagnosis(_Contract):
     root_cause_id: TypeId
     affected_component: ResourceId
-    confidence_level: ConfidenceLevel
+    confidence_level: ConfidenceLevel = Field(
+        description="high: direct mechanism evidence on the component, consistent onset and a "
+        "look-alike check, from at least two tools including a non-symptom check; medium: "
+        "component clear, mechanism indirect or no look-alike check; low: symptoms only or "
+        "conflicting evidence (use insufficient_evidence and propose nothing)."
+    )
     summary: ShortText
     supporting_evidence_ids: list[RecordId]
     contradicting_evidence_ids: list[RecordId] = Field(default_factory=list)

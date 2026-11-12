@@ -268,3 +268,16 @@ def test_prompt_states_root_cause_action_contract() -> None:
     assert contract["insufficient_evidence"] == []
     assert text.index("Root-cause action contract") < text.index("<untrusted_alert_data>")
     assert "root-cause action contract" in SYSTEM_PROMPT
+
+
+def test_prompt_has_rules_method_and_confidence_sections() -> None:
+    for tag in ("rules", "investigation_method", "confidence_rubric"):
+        assert f"<{tag}>" in SYSTEM_PROMPT
+        assert f"</{tag}>" in SYSTEM_PROMPT
+    method = SYSTEM_PROMPT.split("<investigation_method>")[1].split("</investigation_method>")[0]
+    # Required coverage and a stop condition, not a numbered script.
+    assert "no fixed order" in method
+    assert "Stop as soon as" in method
+    assert "1." not in method
+    rubric = SYSTEM_PROMPT.split("<confidence_rubric>")[1].split("</confidence_rubric>")[0]
+    assert all(f"- {level}:" in rubric for level in ("high", "medium", "low"))
