@@ -32,6 +32,7 @@ from incidentops.domain.catalog import load_catalog
 from incidentops.evidence.store import DatabaseEvidenceSink
 from incidentops.persistence import outbox
 from incidentops.persistence.db import make_engine, make_session_factory
+from incidentops.persistence.models import OutboxJobRow
 from incidentops.security.identities import Role
 from incidentops.tools.backends import HttpTelemetryBackend
 from incidentops.tools.gateway import ToolGateway
@@ -71,6 +72,9 @@ async def process_chat_one(
                 retry_delay_seconds=5,
                 max_attempts=MAX_ATTEMPTS,
             )
+            dead = session.get_one(OutboxJobRow, job_id).status == "DEAD"
+        if dead:
+            answerer.give_up(message_id, type(exc).__name__)
         return True
     with factory.begin() as session:
         outbox.complete(session, job_id, owner)

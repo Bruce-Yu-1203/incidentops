@@ -331,3 +331,38 @@ def test_chat_requires_sign_in_and_known_incident(session_factory: sessionmaker[
     assert missing.status_code == 404
     assert client.post("/api/v1/incidents/inc_x/chat", json={"question": ""}).status_code == 422
     assert client.post("/api/v1/incidents/inc_x/reinvestigate", json={}).status_code == 404
+
+
+async def test_a_failing_turn_is_closed_and_answered_when_the_job_gives_up(
+    session_factory: sessionmaker[Session], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import incidentops.chat.answerer as answerer_module
+    import incidentops.workers.chat as chat_worker
+
+    incident_id, _ = await diagnosed_incident(session_factory)
+    client = _client(session_factory)
+    sign_in(client, session_factory, HumanRole.OPERATOR)
+    question = _ask(client, incident_id, "What should I check?")
+
+    def broken(*_: Any) -> None:
+        raise PermissionError("permission denied for table action_proposals")
+
+    monkeypatch.setattr(answerer_module, "load_context", broken)
+    monkeypatch.setattr(chat_worker, "MAX_ATTEMPTS", 1)
+    assert await process_chat_one(session_factory, ChatAnswerer(session_factory, None), "w", 30)
+
+    thread = client.get(f"/api/v1/incidents/{incident_id}/chat").json()
+    assert thread["pending"] is False
+    assert thread["running"] is None
+    answer = thread["messages"][-1]
+    assert answer["reply_to"] == question["id"]
+    assert "PermissionError" in answer["content"]
+    with session_factory() as session:
+        run = session.scalars(
+            select(InvestigationRunRow).where(InvestigationRunRow.kind == "chat")
+        ).one()
+        assert (run.state, run.error_code) == ("FAILED", "harness_error")
+        job = session.scalars(
+            select(OutboxJobRow).where(OutboxJobRow.kind == ANSWER_CHAT_JOB)
+        ).one()
+        assert job.status == "DEAD"
