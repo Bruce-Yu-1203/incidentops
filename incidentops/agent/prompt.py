@@ -15,7 +15,7 @@ from incidentops.domain.schemas import DiagnosisReport
 from incidentops.evidence.redaction import redact, truncate_utf8
 from incidentops.policy.engine import PolicyConfig, load_policy
 
-PROMPT_VERSION: Final = "investigation-v4"
+PROMPT_VERSION: Final = "investigation-v5"
 
 # The label space of root causes the diagnosis may use. This is the generic
 # taxonomy, not the answer to any particular case.
@@ -54,6 +54,9 @@ Rules you must follow:
 - Only propose an action that the service catalog lists for that service, with exactly
   the argument names and values given in its `action_arguments` contract. Any other
   argument is denied by policy.
+- Only propose an action type that the root-cause action contract lists for your
+  root_cause_id. A root cause with no listed action gets no proposed_action and
+  needs_human_review=true; any other combination is denied by policy.
 
 Allowed root_cause_id values: {", ".join(ROOT_CAUSE_TAXONOMY)}.
 """
@@ -96,6 +99,12 @@ def catalog_context(
     ]
 
 
+def root_cause_contract(policy: PolicyConfig | None = None) -> dict[str, list[str]]:
+    """Root cause -> the only action types policy accepts for it (ADR-024)."""
+    config = policy or load_policy()
+    return {cause: list(config.actions_for_root_cause(cause)) for cause in ROOT_CAUSE_TAXONOMY}
+
+
 def initial_message(
     incident: dict[str, Any], alerts: list[dict[str, Any]], catalog: ServiceCatalog
 ) -> dict[str, Any]:
@@ -106,6 +115,8 @@ def initial_message(
     text = (
         "Investigate this incident.\n"
         f"Registered services:\n{json.dumps(catalog_context(catalog), sort_keys=True)}\n"
+        "Root-cause action contract:\n"
+        f"{json.dumps(root_cause_contract(), sort_keys=True)}\n"
         f"<untrusted_alert_data>\n{bounded}\n</untrusted_alert_data>"
     )
     return {"role": "user", "content": [{"type": "text", "text": text}]}

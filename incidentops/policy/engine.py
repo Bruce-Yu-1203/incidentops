@@ -38,6 +38,7 @@ class ReasonCode(StrEnum):
     MISSING_TARGET_REVISION = "missing_target_revision"
     POLICY_ERROR = "policy_error"
     DUPLICATE_ACTIVE_ACTION = "duplicate_active_action"
+    ACTION_NOT_ALLOWED_FOR_ROOT_CAUSE = "action_not_allowed_for_root_cause"
 
 
 class PolicyRule(BaseModel):
@@ -64,13 +65,27 @@ class PolicyConfig(BaseModel):
     approval_ttl_seconds: Annotated[int, Field(ge=60, le=3600)]
     require_separation_of_duties: bool
     rules: tuple[PolicyRule, ...]
+    # Diagnosed root cause -> the only action types that may remediate it
+    # (ADR-024). Missing root causes allow nothing.
+    root_cause_actions: dict[TypeId, tuple[TypeId, ...]] = Field(default_factory=dict)
 
     @model_validator(mode="after")
     def _unique_rules(self) -> Self:
         names = [r.action_type for r in self.rules]
         if len(names) != len(set(names)):
             raise ValueError("duplicate action_type rules")
+        unknown = {
+            action
+            for actions in self.root_cause_actions.values()
+            for action in actions
+            if action not in names
+        }
+        if unknown:
+            raise ValueError(f"root_cause_actions name actions without a rule: {sorted(unknown)}")
         return self
+
+    def actions_for_root_cause(self, root_cause_id: str) -> tuple[str, ...]:
+        return tuple(self.root_cause_actions.get(root_cause_id, ()))
 
     def digest(self) -> str:
         canonical = json.dumps(self.model_dump(mode="json"), sort_keys=True, separators=(",", ":"))
@@ -88,6 +103,10 @@ class PolicyRequest(BaseModel):
     target_id: str
     arguments: dict[str, Any]
     target_revision: str | None
+    # The diagnosis the proposal remediates. The proposal evaluator always
+    # sets it; the executor's pre-dispatch re-check passes None because the
+    # diagnosis is immutable and the policy version is pinned in the envelope.
+    root_cause_id: str | None = None
 
 
 class PolicyDecision(BaseModel):
@@ -129,6 +148,10 @@ class PolicyEngine:
             return self._deny(ReasonCode.UNKNOWN_OPERATION)
         if request.environment not in {e.value for e in rule.environments}:
             return self._deny(ReasonCode.ENVIRONMENT_NOT_ALLOWED)
+        if request.root_cause_id is not None and (
+            request.action_type not in self.config.actions_for_root_cause(request.root_cause_id)
+        ):
+            return self._deny(ReasonCode.ACTION_NOT_ALLOWED_FOR_ROOT_CAUSE)
         if not self._catalog.allows_action(request.target_id, request.action_type):
             return self._deny(ReasonCode.TARGET_NOT_ALLOWLISTED)
         target = self._catalog.get(request.target_id)

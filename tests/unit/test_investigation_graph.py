@@ -256,3 +256,15 @@ async def test_spent_tool_budget_ends_the_run() -> None:
     final, _ = await run(model, budgets=Budgets(max_tool_calls=4))
     assert (final["status"], final["error_code"]) == ("BUDGET_EXCEEDED", "tool_budget")
     assert final["tool_call_count"] == 4
+
+
+def test_prompt_states_root_cause_action_contract() -> None:
+    # The agent is told which action types policy accepts per root cause, so it
+    # does not propose a valid action for the wrong diagnosis (ADR-024).
+    message = initial_message({"id": "inc_x"}, [], load_catalog())
+    text = message["content"][0]["text"]
+    contract = json.loads(text.split("Root-cause action contract:\n", 1)[1].split("\n", 1)[0])
+    assert contract["consumer_paused"] == ["resume_test_consumer"]
+    assert contract["insufficient_evidence"] == []
+    assert text.index("Root-cause action contract") < text.index("<untrusted_alert_data>")
+    assert "root-cause action contract" in SYSTEM_PROMPT

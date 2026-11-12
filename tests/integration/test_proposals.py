@@ -2,11 +2,14 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 import pytest
 from sqlalchemy import select
 from sqlalchemy.orm import Session, sessionmaker
 
 from incidentops.actions.proposals import ProposalEvaluator
+from incidentops.agent.model import ModelTurn
 from incidentops.domain.actions import ActionEnvelope
 from incidentops.domain.catalog import load_catalog
 from incidentops.persistence.models import (
@@ -19,6 +22,7 @@ from incidentops.persistence.models import (
 )
 from incidentops.policy.engine import Decision, PolicyEngine, load_policy
 from tests.integration.helpers import FakeInspector, diagnosed_incident, production_proposal
+from tests.unit.test_investigation_graph import submit
 
 pytestmark = pytest.mark.integration
 
@@ -54,7 +58,7 @@ async def test_valid_proposal_opens_approval_with_frozen_envelope(
         "PENDING",
         "AWAITING_APPROVAL",
     )
-    assert (policy_audit.decision, policy_audit.policy_version) == ("REQUIRES_APPROVAL", "p2")
+    assert (policy_audit.decision, policy_audit.policy_version) == ("REQUIRES_APPROVAL", "p3")
 
 
 async def test_production_proposal_is_denied(session_factory: sessionmaker[Session]) -> None:
@@ -70,6 +74,43 @@ async def test_production_proposal_is_denied(session_factory: sessionmaker[Sessi
     assert (incident.state, incident.escalation_reason) == (
         "DIAGNOSED_ONLY",
         "policy_production_disabled",
+    )
+
+
+def mismatched_proposal(messages: list[dict[str, Any]]) -> ModelTurn:
+    # A valid, allowlisted action that does not remediate the diagnosed cause.
+    turn = submit(messages)
+    turn.tool_calls[0].arguments["diagnosis"]["root_cause_id"] = "kafka_broker_unavailable"
+    return turn
+
+
+def no_action_root_cause_proposal(messages: list[dict[str, Any]]) -> ModelTurn:
+    turn = submit(messages)
+    turn.tool_calls[0].arguments["diagnosis"]["root_cause_id"] = "insufficient_evidence"
+    return turn
+
+
+@pytest.mark.parametrize("final", [mismatched_proposal, no_action_root_cause_proposal])
+async def test_action_inconsistent_with_root_cause_is_denied(
+    session_factory: sessionmaker[Session], final: Any
+) -> None:
+    incident_id, diagnosis_id = await diagnosed_incident(session_factory, final)
+    outcome = await _evaluator(session_factory, FakeInspector("gen-2")).evaluate(
+        incident_id, diagnosis_id
+    )
+    assert (outcome.decision, outcome.reason) == (Decision.DENY, "policy_denied")
+    with session_factory() as session:
+        action = session.get_one(ActionProposalRow, outcome.action_id)
+        incident = session.get_one(IncidentRow, incident_id)
+        assert session.scalars(select(ApprovalRequestRow)).all() == []
+    assert (action.state, action.reason_code) == (
+        "POLICY_DENIED",
+        "action_not_allowed_for_root_cause",
+    )
+    # Denied proposals hand the incident to a human.
+    assert (incident.state, incident.escalation_reason) == (
+        "DIAGNOSED_ONLY",
+        "policy_action_not_allowed_for_root_cause",
     )
 
 

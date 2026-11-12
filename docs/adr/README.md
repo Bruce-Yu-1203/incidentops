@@ -23,3 +23,4 @@ it with a new ADR that supersedes the old one.
 | [ADR-021](ADR-021-human-disposition.md) | Humans close handed-over incidents with a disposition, not a state | Accepted |
 | [ADR-022](ADR-022-incident-chat.md) | A read-only incident chat answered by the agent worker | Superseded in part by ADR-023 |
 | [ADR-023](ADR-023-chat-agent.md) | A separate chat agent with read tools, and human-requested re-investigation | Accepted |
+| [ADR-024](ADR-024-root-cause-coverage.md) | Root-cause/action consistency and expanded root-cause coverage | Accepted |

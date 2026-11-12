@@ -104,6 +104,7 @@ class ProposalEvaluator:
                 target_id=draft.target_id,
                 arguments=dict(draft.arguments),
                 target_revision=revision,
+                root_cause_id=report.diagnosis.root_cause_id,
             )
         )
         if decision.decision is Decision.REQUIRES_APPROVAL and self._has_active_action(

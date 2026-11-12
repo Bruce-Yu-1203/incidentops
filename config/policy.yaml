@@ -3,7 +3,7 @@
 # Write operations can only be DENY or REQUIRES_APPROVAL: the MVP never
 # executes a mutation without a human approval.
 schema_version: 1
-policy_version: p2
+policy_version: p3
 approval_ttl_seconds: 900
 require_separation_of_duties: true
 rules:
@@ -37,3 +37,20 @@ rules:
     decision: REQUIRES_APPROVAL
     risk_class: low
     allowed_arguments: {}
+
+# Consistency check (ADR-024): an action is only acceptable as remediation for
+# the diagnosed root cause it is listed under. A root cause with an empty list
+# (or a root cause missing here) never gets an automated proposal: the
+# proposal is denied and the incident is handed to a human.
+root_cause_actions:
+  consumer_paused: [resume_test_consumer]
+  consumer_slow: []
+  kafka_broker_unavailable: [restart_lab_dependency]
+  postgres_lock_contention: [release_lab_db_blocker]
+  postgres_unavailable: [restart_lab_dependency]
+  redis_unavailable: [restart_lab_dependency]
+  application_error: []
+  bad_deployment: [rollback_demo_api]
+  application_memory_leak: [rollback_demo_api]
+  cpu_saturation: [stop_lab_cpu_load]
+  insufficient_evidence: []

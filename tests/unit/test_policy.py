@@ -39,7 +39,7 @@ def test_resume_requires_human_approval() -> None:
     decision = _engine().evaluate(_request())
     assert decision.decision is Decision.REQUIRES_APPROVAL
     assert decision.reason_code is ReasonCode.APPROVAL_REQUIRED
-    assert decision.policy_version == "p2"
+    assert decision.policy_version == "p3"
     assert decision.risk_class == "low"
 
 
@@ -151,3 +151,67 @@ def test_p5_remediations(
         _request(action_type=action_type, target_id=target_id, arguments=arguments)
     )
     assert (decision.decision is Decision.REQUIRES_APPROVAL) is allowed
+
+
+@pytest.mark.parametrize(
+    ("root_cause_id", "action_type", "target_id", "arguments", "allowed"),
+    [
+        ("consumer_paused", "resume_test_consumer", "persist-demo-consumer", None, True),
+        ("redis_unavailable", "restart_lab_dependency", "lab-redis", {}, True),
+        ("postgres_lock_contention", "release_lab_db_blocker", "lab-postgres", {}, True),
+        ("bad_deployment", "rollback_demo_api", "lab-api", {"target_release": "rel-1"}, True),
+        ("cpu_saturation", "stop_lab_cpu_load", "lab-cpu-load", {}, True),
+        # A valid, allowlisted action that does not fit the diagnosis.
+        ("cpu_saturation", "rollback_demo_api", "lab-api", {"target_release": "rel-1"}, False),
+        ("redis_unavailable", "resume_test_consumer", "persist-demo-consumer", None, False),
+        # Root causes without an allowed action never get one.
+        ("insufficient_evidence", "resume_test_consumer", "persist-demo-consumer", None, False),
+        ("consumer_slow", "resume_test_consumer", "persist-demo-consumer", None, False),
+        ("application_error", "rollback_demo_api", "lab-api", {"target_release": "rel-1"}, False),
+        # Unknown root causes allow nothing (fail closed).
+        ("made_up_cause", "resume_test_consumer", "persist-demo-consumer", None, False),
+    ],
+)
+def test_root_cause_action_consistency(
+    root_cause_id: str,
+    action_type: str,
+    target_id: str,
+    arguments: dict[str, Any] | None,
+    allowed: bool,
+) -> None:
+    overrides: dict[str, Any] = {
+        "root_cause_id": root_cause_id,
+        "action_type": action_type,
+        "target_id": target_id,
+    }
+    if arguments is not None:
+        overrides["arguments"] = arguments
+    decision = _engine().evaluate(_request(**overrides))
+    if allowed:
+        assert decision.decision is Decision.REQUIRES_APPROVAL
+    else:
+        assert (decision.decision, decision.reason_code) == (
+            Decision.DENY,
+            ReasonCode.ACTION_NOT_ALLOWED_FOR_ROOT_CAUSE,
+        )
+
+
+def test_root_cause_check_is_skipped_without_a_root_cause() -> None:
+    # The executor's pre-dispatch re-check has no diagnosis; the policy version
+    # pinned in the envelope guarantees the mapping is the one checked before.
+    assert _engine().evaluate(_request(root_cause_id=None)).decision is Decision.REQUIRES_APPROVAL
+
+
+def test_every_taxonomy_root_cause_has_an_explicit_mapping() -> None:
+    from incidentops.agent.prompt import ROOT_CAUSE_TAXONOMY
+
+    mapping = load_policy().root_cause_actions
+    assert set(mapping) == set(ROOT_CAUSE_TAXONOMY)
+    assert mapping["insufficient_evidence"] == ()
+
+
+def test_root_cause_mapping_must_name_known_actions() -> None:
+    raw = _raw_policy()
+    raw["root_cause_actions"] = {"consumer_paused": ["drop_topic"]}
+    with pytest.raises(ValidationError, match="without a rule"):
+        PolicyConfig.model_validate(raw)

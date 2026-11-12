@@ -37,3 +37,10 @@ def test_emitted_set_matches_source_literals() -> None:
 
 def test_lifecycle_diagrams_present() -> None:
     assert GUIDE.count("stateDiagram-v2") == 2
+
+
+def test_every_policy_reason_code_is_documented() -> None:
+    from incidentops.policy.engine import ReasonCode
+
+    missing = sorted(c.value for c in ReasonCode if f"`{c.value}`" not in GUIDE)
+    assert missing in ([], ["approval_required"])

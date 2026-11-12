@@ -168,7 +168,7 @@ async def test_policy_version_change_blocks_dispatch(
 ) -> None:
     action_id = await _queued_action(session_factory)
     raw = load_policy().model_dump(mode="json")
-    raw["policy_version"] = "p3"
+    raw["policy_version"] = "p99"
     adapter = FakeAdapter()
     executor = _executor(
         session_factory, adapter, PolicyEngine(PolicyConfig.model_validate(raw), load_catalog())
