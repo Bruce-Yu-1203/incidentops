@@ -110,3 +110,19 @@ def test_api_uses_an_ordinary_role_and_monitoring_keeps_reserved_slots() -> None
     assert "pg_use_reserved_connections" in init
     assert "CREATE ROLE lab_app LOGIN" in init
     assert "SUPERUSER" not in init.split("CREATE ROLE lab_app", 1)[1].split(";", 1)[0]
+
+
+def test_lab_roles_are_bootstrapped_on_every_start() -> None:
+    # Compose keeps lab-postgres' data volume across recreation, so initdb
+    # scripts alone would never create roles added later (lab_app).
+    services = _services(LAB)
+    bootstrap = services["lab-db-bootstrap"]
+    assert bootstrap["image"] == services["lab-postgres"]["image"]
+    assert "./postgres/init.sql:/bootstrap/init.sql:ro" in bootstrap["volumes"]
+    assert services["lab-api"]["depends_on"]["lab-db-bootstrap"] == {
+        "condition": "service_completed_successfully"
+    }
+    init = (REPO_ROOT / "fault-lab" / "postgres" / "init.sql").read_text(encoding="utf-8")
+    assert "CREATE ROLE lab_app" in init
+    # Idempotent: every CREATE ROLE is guarded.
+    assert init.count("CREATE ROLE") == init.count("IF NOT EXISTS (SELECT FROM pg_roles")

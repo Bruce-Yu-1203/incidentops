@@ -41,6 +41,20 @@ services:
       timeout: 3s
       retries: 30
 
+  # Applies postgres/init.sql (idempotent) on every start, so roles added
+  # after a data volume was first initialised still exist (ADR-024).
+  lab-db-bootstrap:
+    image: postgres:17.6-alpine@sha256:ef257d85f76e48da1c64832459b59fcaba1a4dac97bf5d7450c77753542eee94
+    environment:
+      PGPASSWORD: ${LAB_DB_PASSWORD:-lab}
+    volumes:
+      - ./postgres/init.sql:/bootstrap/init.sql:ro
+    command: ["psql", "-v", "ON_ERROR_STOP=1", "-h", "lab-postgres", "-U", "lab", "-d", "lab", "-f", "/bootstrap/init.sql"]
+    depends_on:
+      lab-postgres: {condition: service_healthy}
+    networks: [lab]
+    restart: "no"
+
   lab-redis:
     image: redis:7.4.12-alpine@sha256:c5d34a98396a4775e223c74e929162c35c5a2182901ba26b50ade939941ce14b
     command: ["redis-server", "--maxmemory", "64mb", "--maxmemory-policy", "allkeys-lru"]
@@ -125,7 +139,7 @@ services:
       # the same resident memory instead of reusing earlier trials' heap.
       MALLOC_MMAP_THRESHOLD_: "131072"
     depends_on:
-      lab-postgres: {condition: service_healthy}
+      lab-db-bootstrap: {condition: service_completed_successfully}
       lab-redis: {condition: service_healthy}
     ports: ["127.0.0.1:18080:8080"]
     healthcheck:
