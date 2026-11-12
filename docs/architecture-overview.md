@@ -19,7 +19,10 @@ flowchart TB
     FC[fault-controller<br/>deployments, fixtures, remediations]
     LABDB[(lab PostgreSQL)]
     REDIS[(lab Redis)]
+    KPROXY[lab-kafka-proxy<br/>partitionable, no metrics]
     KAFKA[(Kafka)]
+    LOADGEN[lab-loadgen<br/>load profile]
+    KPROXY --> KAFKA
   end
   subgraph OBS[Observability]
     PROM[(Prometheus)] --> AM[Alertmanager]
@@ -122,6 +125,60 @@ audit_events: append-only, insert-only for every application role
 | Lab services and fault controller | `fault-lab/fault_lab/` |
 | Scenarios and benchmark | `fault-lab/scenarios/`, `fault-lab/fault_lab/benchmark/` |
 
+## Root causes, policy and lab coverage (ADR-024)
+
+**Root-cause/action consistency.** `config/policy.yaml` (`p4`) maps each of
+the 14 taxonomy root causes to the only action types that may remediate it.
+The proposal evaluator passes the diagnosis' `root_cause_id` to the policy
+engine; any other action type is denied with
+`action_not_allowed_for_root_cause` and the incident goes to a human
+(`DIAGNOSED_ONLY`). `consumer_slow`, `application_error` and
+`insufficient_evidence` map to no action. The executor's pre-dispatch
+re-check relies on the policy version pinned in the envelope. The prompt
+(`investigation-v6`) states the mapping.
+
+| Root cause | Allowed action (target) | Scenario | Kept apart from |
+|---|---|---|---|
+| `postgres_lock_contention` | `release_lab_db_blocker` (`lab-postgres`) | B-F01 | B-F09, B-F12 |
+| `redis_unavailable` | `restart_lab_dependency` (`lab-redis`) | B-F02 | |
+| `consumer_paused` | `resume_test_consumer` (`persist-demo-consumer`) | B-F03 | B-F07, B-F08 |
+| `application_memory_leak` | `rollback_demo_api` (`lab-api`) | B-F04 | |
+| `bad_deployment` | `rollback_demo_api` (`lab-api`) | B-F05 | B-F10, B-F13 |
+| `cpu_saturation` | `stop_lab_cpu_load` (`lab-cpu-load`) | B-F06 | B-F11 |
+| `kafka_broker_unavailable` | `restart_lab_dependency` (`lab-kafka`) | B-F07 | B-F03 |
+| `consumer_slow` | none (human review) | B-F08 | B-F03 |
+| `postgres_unavailable` | `restart_lab_dependency` (`lab-postgres`) | B-F09 | B-F01 |
+| `application_error` | none (human review) | B-F10 | B-F05, B-N01 |
+| `traffic_surge` | `reset_lab_load_profile` (`lab-loadgen`) | B-F11 | B-F06 |
+| `connection_pool_exhausted` | `release_lab_idle_connections` (`lab-postgres`) | B-F12 | B-F01, B-F09 |
+| `config_error` | `revert_lab_config` (`lab-api-config`, `target_config: cfg-1`) | B-F13 | B-F05, B-F10 |
+| `insufficient_evidence` | none | B-N01 | |
+
+Every write action is approval-required, fault-lab only and argument
+allowlisted; the three newest (`reset_lab_load_profile`,
+`release_lab_idle_connections`, `revert_lab_config`) have no free-form
+arguments. Verification specs may be keyed per target
+(`restart_lab_dependency:lab-kafka`, `...:lab-postgres`, `...:lab-redis`).
+B-F07 to B-F13 have **not been run yet**; no benchmark numbers exist for them.
+
+**Read tools.** `search_logs` covers the API and the Kafka consumer and
+producer (both export logs over OTLP with their catalog `service_id`).
+`get_redis_health` reads up, memory, clients and command rate.
+`get_recent_config_changes` reads the lab config timeline (revisions, actors,
+changed keys). `get_postgres_health` adds `connections=<used>/<max> idle=<n>`.
+New templates: `api_memory_growth_rate` (B-F04 now uses the peak growth rate),
+`api_request_rate_vs_baseline`, `producer_send_error_rate`,
+`postgres_connection_utilization`, `postgres_max_connections`,
+`redis_connected_clients`, `redis_commands_per_second`.
+
+**Lab topology.** Kafka clients (producer, consumer, lag exporter) reach the
+broker only through `lab-kafka-proxy`, which the fault controller can
+partition for a bounded time (B-F07). The lab API connects as the ordinary
+role `lab_app`; PostgreSQL keeps reserved slots for superusers and the
+monitoring role, so idle `lab_app` sessions can exhaust ordinary slots
+(B-F12). `lab-postgres` reports a composite revision
+`pg-gen-<n>.lock-<digest>.pool-<digest>`. No fixture uses container control.
+
 ## Console metric replay
 
 The Story chart uses the authenticated incident metrics endpoint. Its range starts
@@ -140,8 +197,12 @@ matching service and polls a same-origin authenticated read proxy every 15 secon
 Range changes and polling replace chart data locally, preserving filters and layout.
 Plots show axes, thresholds, series legends, event markers and pointer/keyboard
 inspection. Missing samples break the line; empty, partial, stale and failed data
-are distinguished from healthy readings. Redis availability uses a below-threshold
-check rather than the above-threshold rule used for latency and CPU.
+are distinguished from healthy readings. Redis and PostgreSQL availability and
+visible Kafka brokers use a below-threshold check rather than the above-threshold
+rule used for latency and CPU. Panels added for ADR-024: API request rate vs its
+30-minute median, memory growth rate (recording rule), Kafka brokers visible,
+PostgreSQL availability and connection usage (threshold 90%). Every alert rule
+maps to the panel that explains it.
 
 The incident header uses the root cause and affected component as a short title,
 with a bounded preview of the recorded diagnosis in normal body text. The complete

@@ -80,6 +80,20 @@ curl -X POST -H "$B" -H 'content-type: application/json' \
 | `/faults/deploy` `{"action_id":"d","profile":"leaky"}` | Memory leak | `rollback_demo_api` to `rel-1` |
 | `/faults/cpu-load` `{"action_id":"d"}` | CPU saturation | `stop_lab_cpu_load` |
 | `/faults/noise` `{"action_id":"d","seconds":70}` | Transient errors | none: the correct outcome is to escalate without acting |
+| `/faults/kafka-outage` `{"action_id":"d","seconds":300}` | Kafka broker unreachable (proxy partition) | `restart_lab_dependency` on `lab-kafka` |
+| consumer `POST :18081/control/processing-delay` `{"action_id":"d","delay_ms":100}` | Slow consumer | none: `consumer_slow`, handed to a human |
+| `/faults/postgres-outage` `{"action_id":"d","seconds":300}` | PostgreSQL refuses connections | `restart_lab_dependency` on `lab-postgres` |
+| `/faults/error-path` `{"action_id":"d"}` | Application error in the running release | none: `application_error`, handed to a human |
+| `/faults/traffic-surge` `{"action_id":"d","rate_per_second":60}` | Traffic surge | `reset_lab_load_profile` on `lab-loadgen` |
+| `/faults/connection-hoard` `{"action_id":"d","hold_seconds":300}` | Connection slots exhausted | `release_lab_idle_connections` on `lab-postgres` |
+| `/faults/config` `{"action_id":"d","profile":"bad_items_database"}` | Bad runtime config (no deploy) | `revert_lab_config` to `cfg-1` |
+
+Policy (`p4`, ADR-024) only accepts the action listed for the diagnosed root
+cause; any other proposal is denied as `action_not_allowed_for_root_cause`
+and the incident is handed to a human. These scenarios (B-F07 to B-F13) have
+not been benchmarked yet. After pulling them, rebuild the lab and telemetry
+(`make lab-up infra-up`): the Kafka proxy, PostgreSQL settings and the API's
+database role changed.
 
 ## 3. Failure paths worth showing
 
@@ -107,6 +121,7 @@ the same paused generation) and the incident escalates with
 
 ```bash
 make benchmark CASES=B-F03 TRIALS=3
+make benchmark CASES=B-F07 TRIALS=1   # any of B-F01..B-F13, B-N01
 ```
 
 The runner resets the lab, checks a healthy baseline, injects the fault,
