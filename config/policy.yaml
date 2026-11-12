@@ -3,9 +3,12 @@
 # Write operations can only be DENY or REQUIRES_APPROVAL: the MVP never
 # executes a mutation without a human approval.
 schema_version: 1
-policy_version: p4
+policy_version: p5
 approval_ttl_seconds: 900
 require_separation_of_duties: true
+# A diagnosis below this confidence never leads to an approval request
+# (ADR-025). Medium still may: it goes to a human like every proposal.
+minimum_action_confidence: medium
 rules:
   - action_type: resume_test_consumer
     environments: [fault-lab]

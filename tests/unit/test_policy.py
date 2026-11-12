@@ -39,7 +39,7 @@ def test_resume_requires_human_approval() -> None:
     decision = _engine().evaluate(_request())
     assert decision.decision is Decision.REQUIRES_APPROVAL
     assert decision.reason_code is ReasonCode.APPROVAL_REQUIRED
-    assert decision.policy_version == "p4"
+    assert decision.policy_version == "p5"
     assert decision.risk_class == "low"
 
 
@@ -242,3 +242,31 @@ def test_root_cause_mapping_must_name_known_actions() -> None:
     raw["root_cause_actions"] = {"consumer_paused": ["drop_topic"]}
     with pytest.raises(ValidationError, match="without a rule"):
         PolicyConfig.model_validate(raw)
+
+
+@pytest.mark.parametrize(
+    ("confidence", "allowed"),
+    [("high", True), ("medium", True), ("low", False), ("certain", False), (None, True)],
+)
+def test_low_confidence_diagnoses_never_get_an_action(
+    confidence: str | None, allowed: bool
+) -> None:
+    decision = _engine().evaluate(
+        _request(root_cause_id="consumer_paused", confidence_level=confidence)
+    )
+    if allowed:
+        assert decision.decision is Decision.REQUIRES_APPROVAL
+    else:
+        assert (decision.decision, decision.reason_code) == (
+            Decision.DENY,
+            ReasonCode.CONFIDENCE_BELOW_MINIMUM,
+        )
+
+
+def test_minimum_action_confidence_is_configurable() -> None:
+    raw = load_policy().model_dump(mode="json")
+    raw["minimum_action_confidence"] = "high"
+    engine = PolicyEngine(PolicyConfig.model_validate(raw), load_catalog())
+    medium = engine.evaluate(_request(root_cause_id="consumer_paused", confidence_level="medium"))
+    assert medium.reason_code is ReasonCode.CONFIDENCE_BELOW_MINIMUM
+    assert load_policy().minimum_action_confidence == "medium"

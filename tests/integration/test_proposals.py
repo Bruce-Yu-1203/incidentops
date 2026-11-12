@@ -58,7 +58,7 @@ async def test_valid_proposal_opens_approval_with_frozen_envelope(
         "PENDING",
         "AWAITING_APPROVAL",
     )
-    assert (policy_audit.decision, policy_audit.policy_version) == ("REQUIRES_APPROVAL", "p4")
+    assert (policy_audit.decision, policy_audit.policy_version) == ("REQUIRES_APPROVAL", "p5")
 
 
 async def test_production_proposal_is_denied(session_factory: sessionmaker[Session]) -> None:
@@ -85,8 +85,10 @@ def mismatched_proposal(messages: list[dict[str, Any]]) -> ModelTurn:
 
 
 def no_action_root_cause_proposal(messages: list[dict[str, Any]]) -> ModelTurn:
+    # A root cause whose mapping allows no action (insufficient_evidence with an
+    # action is already rejected earlier by the confidence rules).
     turn = submit(messages)
-    turn.tool_calls[0].arguments["diagnosis"]["root_cause_id"] = "insufficient_evidence"
+    turn.tool_calls[0].arguments["diagnosis"]["root_cause_id"] = "consumer_slow"
     return turn
 
 

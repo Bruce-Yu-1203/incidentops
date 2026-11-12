@@ -127,7 +127,7 @@ audit_events: append-only, insert-only for every application role
 
 ## Root causes, policy and lab coverage (ADR-024)
 
-**Root-cause/action consistency.** `config/policy.yaml` (`p4`) maps each of
+**Root-cause/action consistency.** `config/policy.yaml` (`p4`, now `p5`) maps each of
 the 14 taxonomy root causes to the only action types that may remediate it.
 The proposal evaluator passes the diagnosis' `root_cause_id` to the policy
 engine; any other action type is denied with
@@ -135,7 +135,7 @@ engine; any other action type is denied with
 (`DIAGNOSED_ONLY`). `consumer_slow`, `application_error` and
 `insufficient_evidence` map to no action. The executor's pre-dispatch
 re-check relies on the policy version pinned in the envelope. The prompt
-(`investigation-v6`) states the mapping.
+states the mapping.
 
 | Root cause | Allowed action (target) | Scenario | Kept apart from |
 |---|---|---|---|
@@ -178,6 +178,17 @@ role `lab_app`; PostgreSQL keeps reserved slots for superusers and the
 monitoring role, so idle `lab_app` sessions can exhaust ordinary slots
 (B-F12). `lab-postgres` reports a composite revision
 `pg-gen-<n>.lock-<digest>.pool-<digest>`. No fixture uses container control.
+
+## Prompt, tools and confidence (ADR-025)
+
+The investigation prompt (`investigation-v7`) has `<rules>`,
+`<investigation_method>` (required evidence coverage and a stop condition, no
+fixed order) and `<confidence_rubric>` sections. Every read tool description
+states purpose, when to use it, what it returns and its limits, and every
+parameter is described. Validation rejects `high` confidence without readings
+from two tools including one non-symptom check, `low` confidence with an
+action, and `insufficient_evidence` above `low`; policy `p5` also denies
+proposals below `medium` (`confidence_below_minimum`).
 
 ## Console metric replay
 

@@ -22,6 +22,7 @@ from langgraph.graph import END, START, StateGraph
 from pydantic import ValidationError
 
 from incidentops import telemetry
+from incidentops.agent.confidence import ConfidenceRuleError, check_confidence
 from incidentops.agent.model import SUBMIT_DIAGNOSIS, ModelAdapter, ModelError, ModelTurn
 from incidentops.agent.prompt import SYSTEM_PROMPT, submit_diagnosis_tool
 from incidentops.domain.schemas import DiagnosisReport
@@ -225,15 +226,17 @@ def build_graph(
             payload = dict(call["input"]) if isinstance(call["input"], dict) else {}
             payload["incident_id"] = state["incident_id"]
             report = DiagnosisReport.model_validate(payload)
-            evidence.resolve(state["run_id"], report.cited_evidence_ids())
+            resolved = evidence.resolve(state["run_id"], report.cited_evidence_ids())
             if not report.diagnosis.supporting_evidence_ids and report.proposed_action:
                 raise ValueError("a proposed action requires supporting evidence")
+            check_confidence(report, resolved)
         except (ValidationError, ValueError, TypeError) as exc:
-            error = (
-                f"unresolved evidence ids: {sorted(exc.missing)}"
-                if isinstance(exc, UnresolvedEvidenceError)
-                else f"invalid diagnosis: {type(exc).__name__}"
-            )
+            if isinstance(exc, UnresolvedEvidenceError):
+                error = f"unresolved evidence ids: {sorted(exc.missing)}"
+            elif isinstance(exc, ConfidenceRuleError):
+                error = f"confidence rule: {exc}"
+            else:
+                error = f"invalid diagnosis: {type(exc).__name__}"
         trajectory.record(
             StepRecord(
                 state["run_id"],

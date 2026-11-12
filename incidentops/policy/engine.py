@@ -11,7 +11,7 @@ import hashlib
 import json
 from enum import StrEnum
 from pathlib import Path
-from typing import Annotated, Any, Literal, Self
+from typing import Annotated, Any, Final, Literal, Self
 
 import yaml
 from pydantic import BaseModel, ConfigDict, Field, model_validator
@@ -39,6 +39,10 @@ class ReasonCode(StrEnum):
     POLICY_ERROR = "policy_error"
     DUPLICATE_ACTIVE_ACTION = "duplicate_active_action"
     ACTION_NOT_ALLOWED_FOR_ROOT_CAUSE = "action_not_allowed_for_root_cause"
+    CONFIDENCE_BELOW_MINIMUM = "confidence_below_minimum"
+
+
+_CONFIDENCE_RANK: Final = {"low": 0, "medium": 1, "high": 2}
 
 
 class PolicyRule(BaseModel):
@@ -68,6 +72,9 @@ class PolicyConfig(BaseModel):
     # Diagnosed root cause -> the only action types that may remediate it
     # (ADR-024). Missing root causes allow nothing.
     root_cause_actions: dict[TypeId, tuple[TypeId, ...]] = Field(default_factory=dict)
+    # Lowest diagnosis confidence that may still lead to an approval request
+    # (ADR-025). "medium": low-confidence diagnoses never get an action.
+    minimum_action_confidence: Literal["low", "medium", "high"] = "medium"
 
     @model_validator(mode="after")
     def _unique_rules(self) -> Self:
@@ -107,6 +114,9 @@ class PolicyRequest(BaseModel):
     # sets it; the executor's pre-dispatch re-check passes None because the
     # diagnosis is immutable and the policy version is pinned in the envelope.
     root_cause_id: str | None = None
+    # The diagnosis' confidence_level; None on the executor's re-check, for the
+    # same reason as root_cause_id.
+    confidence_level: str | None = None
 
 
 class PolicyDecision(BaseModel):
@@ -152,6 +162,13 @@ class PolicyEngine:
             request.action_type not in self.config.actions_for_root_cause(request.root_cause_id)
         ):
             return self._deny(ReasonCode.ACTION_NOT_ALLOWED_FOR_ROOT_CAUSE)
+        if (
+            request.confidence_level is not None
+            and _CONFIDENCE_RANK.get(request.confidence_level, -1)
+            < _CONFIDENCE_RANK[self.config.minimum_action_confidence]
+        ):
+            # Unknown levels rank below everything (fail closed).
+            return self._deny(ReasonCode.CONFIDENCE_BELOW_MINIMUM)
         if not self._catalog.allows_action(request.target_id, request.action_type):
             return self._deny(ReasonCode.TARGET_NOT_ALLOWLISTED)
         target = self._catalog.get(request.target_id)
