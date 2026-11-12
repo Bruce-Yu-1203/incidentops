@@ -2,7 +2,7 @@ import { connection } from "next/server";
 import { Suspense } from "react";
 
 import { apiBaseUrl } from "@/lib/api";
-import { CASE_NAMES, fetchBenchmarks, runSummary } from "@/lib/benchmarks";
+import { CASE_NAMES, fetchBenchmarks, runSummary, unmeasuredCases } from "@/lib/benchmarks";
 import { formatSeconds } from "@/lib/history";
 import { sessionFetch } from "@/lib/session";
 import { LoadError } from "@/app/load-error";
@@ -12,7 +12,13 @@ async function BenchmarksView() {
   const result = await fetchBenchmarks(apiBaseUrl(), await sessionFetch());
   if (!result.ok) return <LoadError what="benchmarks" error={result.error} next="/benchmarks" />;
   const run = result.data[0];
-  if (!run) return <p className="muted">No published benchmark runs yet.</p>;
+  if (!run)
+    return (
+      <>
+        <p className="muted">No published benchmark runs yet.</p>
+        <NotRunYet cases={unmeasuredCases(null)} />
+      </>
+    );
   const s = runSummary(run);
   const failing = run.cases.filter((c) => c.passed < c.trials.length);
   return (
@@ -107,6 +113,7 @@ async function BenchmarksView() {
         5/5 has a 95% interval of roughly 57–100%. Restart, rollback and CPU faults are simulated. These numbers show the
         loop works end to end and stays safe; they do not compare models.
       </div>
+      <NotRunYet cases={unmeasuredCases(run)} />
       <div className="placeholder">
         <strong>B1 · model-driven agent</strong>
         <br />
@@ -114,6 +121,25 @@ async function BenchmarksView() {
         next to B0.
       </div>
     </>
+  );
+}
+
+function NotRunYet({ cases }: { cases: { id: string; name: string }[] }) {
+  if (cases.length === 0) return null;
+  return (
+    <section className="panel stack" aria-labelledby="not-run-heading">
+      <h2 id="not-run-heading">Scenarios without a published run</h2>
+      <p className="small muted" style={{ margin: 0 }}>
+        These scenarios exist in the fault lab but have no committed results yet, so no numbers are shown for them.
+      </p>
+      <ul className="small">
+        {cases.map((c) => (
+          <li key={c.id}>
+            <strong>{c.id}</strong> <span className="muted">{c.name}</span> · not run yet
+          </li>
+        ))}
+      </ul>
+    </section>
   );
 }
 

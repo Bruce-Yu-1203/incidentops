@@ -135,6 +135,10 @@ export function formatValue(value: number | null, unit: string): string {
       return `${Number((value / 1e6).toFixed(2)).toFixed(2)} MB/s`;
     case "messages/s":
       return `${value.toFixed(1)} msg/s`;
+    case "requests/s":
+      return `${value.toFixed(1)} req/s`;
+    case "brokers":
+      return `${Math.round(value)} broker${Math.round(value) === 1 ? "" : "s"}`;
     case "seconds":
       return value < 1 ? `${Math.round(value * 1000)} ms` : `${value.toFixed(2)} s`;
     case "ratio":
@@ -150,13 +154,19 @@ export function formatValue(value: number | null, unit: string): string {
 
 /** Which panel best shows an incident's service, for the Story chart. */
 export function panelForService(serviceId: string, title?: string | null): string | null {
-  if (serviceId.includes("consumer")) return "consumer_lag";
+  if (serviceId.includes("consumer")) return title?.includes("processing") ? "produce_consume" : "consumer_lag";
+  if (serviceId === "lab-kafka") return "kafka_brokers";
   if (serviceId === "lab-api") {
     if (title?.includes("memory")) return "api_memory_growth";
     if (title?.includes("cpu")) return "api_cpu";
+    if (title?.includes("request_rate")) return "api_request_rate";
     return title?.includes("error") ? "api_5xx" : "api_p95";
   }
-  if (serviceId === "lab-postgres") return "pg_locks";
+  if (serviceId === "lab-postgres") {
+    if (title?.includes("down")) return "pg_up";
+    if (title?.includes("connections")) return "pg_pool_usage";
+    return "pg_locks";
+  }
   if (serviceId === "lab-redis") return "redis_up";
   return null;
 }
@@ -186,11 +196,11 @@ export async function fetchIncidentMetrics(
 
 export const METRIC_GROUPS = [
   { title: "API", description: "Request health and process resources", service: "lab-api",
-    ids: ["api_p95", "api_5xx", "api_cpu", "api_memory", "api_memory_growth"] },
-  { title: "Messaging", description: "Consumer backlog and message throughput", service: "persist-demo-consumer",
-    ids: ["consumer_lag", "produce_consume"] },
-  { title: "PostgreSQL", description: "Connections and lock contention", service: "lab-postgres",
-    ids: ["pg_connections", "pg_locks"] },
+    ids: ["api_p95", "api_5xx", "api_request_rate", "api_cpu", "api_memory", "api_memory_growth"] },
+  { title: "Messaging", description: "Consumer backlog, throughput and broker visibility", service: "persist-demo-consumer",
+    ids: ["consumer_lag", "produce_consume", "kafka_brokers"] },
+  { title: "PostgreSQL", description: "Availability, connection usage and lock contention", service: "lab-postgres",
+    ids: ["pg_up", "pg_pool_usage", "pg_connections", "pg_locks"] },
   { title: "Redis", description: "Dependency availability and memory", service: "lab-redis",
     ids: ["redis_up", "redis_memory"] },
 ] as const;

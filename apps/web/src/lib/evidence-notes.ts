@@ -2,6 +2,7 @@
 
 import type { Diagnosis } from "./incidents";
 import type { EvidenceView } from "./investigations";
+import { templateLabel } from "./vocabulary";
 
 export type EvidenceRole = "supports" | "against" | "set_aside";
 
@@ -19,7 +20,9 @@ const SOURCE_NOUN: Record<string, string> = {
   loki: "Logs",
   tempo: "Traces",
   consumer_status: "Consumer status",
+  worker_status: "Consumer status",
   controller: "Lab controller",
+  deployment_controller: "Lab controller",
 };
 
 const firstSentence = (text: string) => {
@@ -33,7 +36,7 @@ const firstSentence = (text: string) => {
 export function templateSentence(evidence: EvidenceView | null, id: string): string {
   if (!evidence) return `Record ${id} is cited but was not found in this run.`;
   const noun = SOURCE_NOUN[evidence.source] ?? "Record";
-  const template = evidence.template_id ? evidence.template_id.replace(/_/g, " ") : evidence.source;
+  const template = evidence.template_id ? templateLabel(evidence.template_id) : evidence.source;
   const summary = firstSentence(evidence.summary);
   return summary ? `${noun} (${template}): ${summary}` : `${noun} (${template}) was checked.`;
 }

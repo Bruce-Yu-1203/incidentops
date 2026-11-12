@@ -23,7 +23,7 @@ describe("buildStory", () => {
       { state: "AWAITING_APPROVAL", diagnosis, actions: [pending], title: null, dedup_key: "k" },
       null,
     );
-    expect(story.headline).toBe("consumer paused · c");
+    expect(story.headline).toBe("Consumer paused · c");
     expect(story.summary).toBe("The consumer stopped reading.");
     expect(story.steps.map((s) => s.status)).toEqual(["done", "done", "current", "upcoming"]);
   });
@@ -64,7 +64,7 @@ describe("compact incident summary", () => {
     const full = "Requests began failing after the database acquired an exclusive lock. " + "Detailed evidence and telemetry readings. ".repeat(80);
     const report = { ...diagnosis, diagnosis: { ...diagnosis.diagnosis, summary: full } };
     const story = buildStory({ state: "AWAITING_APPROVAL", diagnosis: report, actions: [pending], title: "latency", dedup_key: "k" }, null);
-    expect(story.headline).toBe("consumer paused · c");
+    expect(story.headline).toBe("Consumer paused · c");
     expect(story.summary.length).toBeLessThanOrEqual(220);
     expect(story.summary).toContain("exclusive lock.");
     expect(report.diagnosis.summary).toBe(full);

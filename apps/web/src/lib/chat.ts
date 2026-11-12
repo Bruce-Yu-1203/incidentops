@@ -1,5 +1,7 @@
 // Incident chat: shapes shared by the route handler and the drawer.
 
+import { toolLabel } from "./vocabulary";
+
 export type ChatStep = {
   tool: string;
   status: string;
@@ -86,22 +88,8 @@ export function answerFooter(
   return parts.join(" · ");
 }
 
-const TOOL_LABELS: Record<string, string> = {
-  get_kafka_consumer_lag: "consumer lag",
-  get_consumer_status: "consumer status",
-  query_metrics: "metrics",
-  search_logs: "logs",
-  search_traces: "traces",
-  get_postgres_health: "PostgreSQL health",
-  get_recent_deployments: "deployments",
-  get_target_revision: "running version",
-  get_evidence: "recorded evidence",
-};
-
 /** Plain name of a tool: "consumer lag" for get_kafka_consumer_lag. */
-export function toolLabel(tool: string): string {
-  return TOOL_LABELS[tool] ?? tool.replace(/^get_/, "").replace(/_/g, " ");
-}
+export { toolLabel };
 
 /** "3 checks · consumer lag, consumer status, logs · 4.1 s" for the folded trace line. */
 export function traceSummary(steps: readonly ChatStep[]): string {

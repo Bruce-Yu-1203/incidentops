@@ -46,8 +46,23 @@ export const CASE_NAMES: Record<string, string> = {
   "B-F04": "API memory leak",
   "B-F05": "Bad deployment",
   "B-F06": "CPU saturation",
+  "B-F07": "Kafka broker unavailable",
+  "B-F08": "Slow consumer (should hand over)",
+  "B-F09": "PostgreSQL unavailable",
+  "B-F10": "Application error (should hand over)",
+  "B-F11": "Traffic surge",
+  "B-F12": "Database connections exhausted",
+  "B-F13": "Configuration error",
   "B-N01": "Transient noise (should do nothing)",
 };
+
+/** Scenarios in the catalog that the published run has no trials for. */
+export function unmeasuredCases(run: Pick<RunView, "cases"> | null | undefined): { id: string; name: string }[] {
+  const measured = new Set((run?.cases ?? []).filter((c) => c.trials.length > 0).map((c) => c.case_id));
+  return Object.entries(CASE_NAMES)
+    .filter(([id]) => !measured.has(id))
+    .map(([id, name]) => ({ id, name }));
+}
 
 export function runSummary(run: RunView) {
   const fullyPassing = run.cases.filter((c) => c.trials.length > 0 && c.passed === c.trials.length);

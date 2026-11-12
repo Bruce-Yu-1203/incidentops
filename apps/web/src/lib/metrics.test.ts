@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { chartGeometry, formatValue, panelForService, parseRange } from "./metrics";
+import { METRIC_GROUPS, chartGeometry, formatValue, panelForService, parseRange } from "./metrics";
 
 describe("chartGeometry", () => {
   it("scales points into the view box and keeps the threshold visible", () => {
@@ -36,7 +36,8 @@ describe("helpers", () => {
     expect(parseRange("7")).toBe(30);
     expect(panelForService("persist-demo-consumer")).toBe("consumer_lag");
     expect(panelForService("lab-api", "lab_api_error_ratio_high")).toBe("api_5xx");
-    expect(panelForService("lab-kafka")).toBeNull();
+    expect(panelForService("lab-kafka")).toBe("kafka_brokers");
+    expect(panelForService("demo-producer")).toBeNull();
   });
 });
 
@@ -85,4 +86,28 @@ it("merges overlapping incident bands so opacity does not accumulate", () => {
   ], 100, 100);
   expect(g.bands).toEqual([{ id: "a", x: 0, width: 90 }]);
   expect(g.max).toBeGreaterThan(1);
+});
+
+
+describe("panels for the new root causes", () => {
+  it("chooses the panel that explains each new alert", () => {
+    expect(panelForService("lab-postgres", "lab_postgres_down")).toBe("pg_up");
+    expect(panelForService("lab-postgres", "lab_postgres_connections_near_limit")).toBe("pg_pool_usage");
+    expect(panelForService("lab-postgres")).toBe("pg_locks");
+    expect(panelForService("lab-api", "lab_api_request_rate_surge")).toBe("api_request_rate");
+    expect(panelForService("persist-demo-consumer", "lab_consumer_processing_slow")).toBe("produce_consume");
+  });
+
+  it("groups the new panels on the Metrics page", () => {
+    const ids = METRIC_GROUPS.flatMap((g) => [...g.ids]);
+    for (const id of ["api_request_rate", "api_memory_growth", "kafka_brokers", "pg_up", "pg_pool_usage"]) {
+      expect(ids).toContain(id);
+    }
+  });
+
+  it("formats request rates and broker counts", () => {
+    expect(formatValue(61.04, "requests/s")).toBe("61.0 req/s");
+    expect(formatValue(1, "brokers")).toBe("1 broker");
+    expect(formatValue(0, "brokers")).toBe("0 brokers");
+  });
 });

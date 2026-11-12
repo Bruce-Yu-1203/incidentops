@@ -4,6 +4,7 @@
 import type { ActionDetail } from "./actions";
 import type { IncidentDetail } from "./incidents";
 import { incidentTitle } from "./inbox";
+import { rootCauseLabel } from "./vocabulary";
 
 export type StoryStatus = "done" | "current" | "upcoming" | "failed";
 
@@ -72,7 +73,7 @@ export function buildStory(
     },
   ];
   const headline = diagnosis
-    ? `${diagnosis.root_cause_id.replace(/_/g, " ")} · ${diagnosis.affected_component}`
+    ? `${rootCauseLabel(diagnosis.root_cause_id)} · ${diagnosis.affected_component}`
     : incidentTitle(incident);
   const summary = diagnosis?.summary?.trim()
     ? compactSummary(diagnosis.summary)

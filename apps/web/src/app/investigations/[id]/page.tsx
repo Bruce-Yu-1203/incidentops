@@ -11,6 +11,7 @@ import { runIsLive } from "@/lib/refresh";
 import { sessionFetch } from "@/lib/session";
 import { evidenceGraph, type GraphNode, stepRow } from "@/lib/trajectory";
 import { LoadError } from "@/app/load-error";
+import { rootCauseLabel } from "@/lib/vocabulary";
 
 function EvidenceCard({ node, kind }: { node: GraphNode; kind: "supporting" | "contradicting" }) {
   const e = node.evidence;
@@ -115,7 +116,7 @@ async function RunView({ params }: { params: Promise<{ id: string }> }) {
             </div>
             <div className="graph-center">
               <span className="eyebrow">Diagnosis (hypothesis)</span>
-              <strong>{diagnosis.root_cause_id}</strong>
+              <strong title={diagnosis.root_cause_id}>{rootCauseLabel(diagnosis.root_cause_id)}</strong>
               <code className="small-text">{diagnosis.affected_component}</code>
               <span className="subtitle small-text">confidence {diagnosis.confidence_level}</span>
             </div>

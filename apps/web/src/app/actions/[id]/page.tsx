@@ -20,6 +20,7 @@ import { sessionFetch } from "@/lib/session";
 
 import { approveAction, cancelAction, rejectAction } from "./decisions";
 import { LoadError } from "@/app/load-error";
+import { actionDescription, actionLabel } from "@/lib/vocabulary";
 
 const CANCELLABLE = new Set(["PENDING_APPROVAL", "APPROVED", "QUEUED"]);
 
@@ -65,8 +66,11 @@ async function ActionView({
       </p>
       <section className="panel stack" aria-labelledby="action-title">
         <div className="row-between">
-          <h1 id="action-title" className="mono">
-            {String(envelope.action_type)} → {String(envelope.target_id)}
+          <h1 id="action-title">
+            {actionLabel(String(envelope.action_type))}{" "}
+            <span className="mono muted" style={{ fontSize: "0.6em" }}>
+              {String(envelope.action_type)} → {String(envelope.target_id)}
+            </span>
           </h1>
           <span className="row-wrap">
             <StateBadge machine="action" state={action.state} />
@@ -114,6 +118,9 @@ async function ActionView({
               <code>{String(envelope.target_id)}</code> in{" "}
               <strong>{String(envelope.environment)}</strong>
             </p>
+            {actionDescription(String(envelope.action_type)) ? (
+              <p className="small muted">{actionDescription(String(envelope.action_type))}</p>
+            ) : null}
             <div className="fact-grid">
               <div>
                 <span className="subtitle">Expires</span>

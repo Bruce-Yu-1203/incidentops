@@ -17,6 +17,7 @@ import {
 import { incidentTitle } from "@/lib/inbox";
 import { sessionFetch } from "@/lib/session";
 import { LoadError } from "@/app/load-error";
+import { rootCauseLabel, rootCauseOptions } from "@/lib/vocabulary";
 
 type Search = Promise<Record<string, string | string[] | undefined>>;
 const PAGE_SIZE = 25;
@@ -78,9 +79,9 @@ async function HistoryView({ searchParams }: { searchParams: Search }) {
           Root cause
           <select name="root_cause_id" defaultValue={query.root_cause_id ?? ""}>
             <option value="">Any</option>
-            {page.root_causes.map((r) => (
-              <option key={r} value={r}>
-                {r.replace(/_/g, " ")}
+            {rootCauseOptions(page.root_causes).map((r) => (
+              <option key={r.id} value={r.id}>
+                {r.label}
               </option>
             ))}
           </select>
@@ -165,7 +166,7 @@ async function HistoryView({ searchParams }: { searchParams: Search }) {
                   <span className={`pill ${OUTCOME_PILL[r.outcome]}`}>{OUTCOME_LABEL[r.outcome]}</span>
                 </td>
                 <td className="small">
-                  {r.root_cause_id ? r.root_cause_id.replace(/_/g, " ") : "—"}
+                  {r.root_cause_id ? rootCauseLabel(r.root_cause_id) : "—"}
                   {r.confidence ? <span className="muted"> · {r.confidence}</span> : null}
                 </td>
                 <td className="small">{formatSeconds(r.time_to_diagnosis_s)}</td>

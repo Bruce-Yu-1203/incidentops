@@ -15,6 +15,7 @@ import { fetchRun } from "@/lib/investigations";
 import { buildReport, reportDurations, reportMarkdown } from "@/lib/report";
 import { sessionFetch } from "@/lib/session";
 import { LoadError } from "@/app/load-error";
+import { rootCauseLabel } from "@/lib/vocabulary";
 
 type Search = Promise<Record<string, string | string[] | undefined>>;
 const one = (v: string | string[] | undefined) => (Array.isArray(v) ? v[0] : v);
@@ -96,7 +97,7 @@ async function ReportDoc({ id }: { id: string }) {
         {d ? (
           <>
             <p>
-              {d.summary} We read this as <strong>{d.root_cause_id.replace(/_/g, " ")}</strong> on{" "}
+              {d.summary} We read this as <strong>{rootCauseLabel(d.root_cause_id)}</strong> on{" "}
               <code>{d.affected_component}</code>, with {d.confidence_level} confidence. It is the agent&apos;s hypothesis;
               only a passed independent verification confirms recovery.
             </p>
@@ -203,7 +204,7 @@ async function ReportsView({ searchParams }: { searchParams: Search }) {
               <span className="age">{new Date(r.opened_at).toLocaleDateString()}</span>
             </span>
             <strong>{incidentTitle({ title: r.title, dedup_key: r.id })}</strong>
-            <span className="sub">{r.root_cause_id?.replace(/_/g, " ") ?? r.service_id}</span>
+            <span className="sub">{r.root_cause_id ? rootCauseLabel(r.root_cause_id) : r.service_id}</span>
           </Link>
         ))}
       </aside>

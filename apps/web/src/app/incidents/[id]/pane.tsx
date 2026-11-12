@@ -32,6 +32,7 @@ import { assignToMe, closeHandover, recheckNow } from "./handling";
 export { parseIncidentTab as parseTab } from "@/lib/incident-tabs";
 export type { IncidentTab as TabKey } from "@/lib/incident-tabs";
 import type { IncidentTab as TabKey } from "@/lib/incident-tabs";
+import { actionLabel, rootCauseDescription, rootCauseLabel } from "@/lib/vocabulary";
 
 export type PaneFlash = { done?: string; error?: string; recheck?: string };
 
@@ -138,8 +139,14 @@ function StoryTab({
           {d ? (
             <>
               <p className="small" style={{ margin: 0 }}>
-                <strong>{d.root_cause_id.replace(/_/g, " ")}</strong> on <code>{d.affected_component}</code>
+                <strong title={d.root_cause_id}>{rootCauseLabel(d.root_cause_id)}</strong> on{" "}
+                <code>{d.affected_component}</code>
               </p>
+              {rootCauseDescription(d.root_cause_id) ? (
+                <p className="small muted" style={{ margin: 0 }}>
+                  {rootCauseDescription(d.root_cause_id)}
+                </p>
+              ) : null}
               {reasons.length > 0 ? (
                 <div className="reason-grid">
                   {reasons.map((n) => (
@@ -168,8 +175,11 @@ function StoryTab({
           {last ? (
             <div className={`card row between ${pending ? "card-violet" : ""}`}>
               <span style={{ display: "flex", flexDirection: "column", gap: 4, minWidth: 0 }}>
-                <span className="mono" style={{ fontSize: 14 }}>
-                  {last.action_type} → {last.target_id}
+                <span style={{ fontSize: 14 }}>
+                  {actionLabel(last.action_type)}{" "}
+                  <span className="mono tiny muted">
+                    {last.action_type} → {last.target_id}
+                  </span>
                 </span>
                 <span className="tiny muted">
                   {pending
@@ -183,7 +193,8 @@ function StoryTab({
             </div>
           ) : proposed ? (
             <p className="small" style={{ margin: 0 }}>
-              Proposed <code>{proposed.action_type} → {proposed.target_id}</code>; waiting for policy.
+              Proposed {actionLabel(proposed.action_type).toLowerCase()} (
+              <code>{proposed.action_type} → {proposed.target_id}</code>); waiting for policy.
             </p>
           ) : (
             <p className="small muted" style={{ margin: 0 }}>
@@ -524,7 +535,7 @@ function RunView({
             <p>{d.summary}</p>
           </details>
           <div className="conclusion">
-            {d.root_cause_id.replace(/_/g, " ")} · {d.confidence_level} confidence
+            {rootCauseLabel(d.root_cause_id)} · {d.confidence_level} confidence
           </div>
           <div>
             <div className="ratio" aria-label={`${supports.length} for, ${against.length} against`}>
