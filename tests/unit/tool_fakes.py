@@ -49,7 +49,8 @@ class FakeBackend:
         self.queries.append(query)
         if "kafka_consumergroup_lag" in query:
             return [Series({"partition": "0"}, self.lag)]
-        for fragment, values in self.overrides.items():
+        # The most specific (longest) matching fragment wins.
+        for fragment, values in sorted(self.overrides.items(), key=lambda kv: -len(kv[0])):
             if fragment in query:
                 return [Series({}, [(NOW.timestamp() - 60 + i, v) for i, v in enumerate(values)])]
         if "kafka_brokers" in query:

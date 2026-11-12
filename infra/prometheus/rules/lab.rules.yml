@@ -57,9 +57,14 @@ groups:
 
   - name: lab-resources
     rules:
+      # Growth rate rather than level: a leak that stops at a cap is still
+      # visible as a growth burst within the investigation lookback.
+      - record: lab_api:memory_growth_bytes_per_second:deriv1m
+        expr: deriv(process_resident_memory_bytes{service_id="lab-api"}[1m])
+
       - alert: lab_api_memory_growth
-        expr: deriv(process_resident_memory_bytes{service_id="lab-api"}[2m]) > 1000000
-        for: 1m
+        expr: lab_api:memory_growth_bytes_per_second:deriv1m > 1000000
+        for: 30s
         labels:
           severity: warning
           service_id: lab-api

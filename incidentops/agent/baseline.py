@@ -128,6 +128,7 @@ class RulesBaselineAdapter:
                     metric("latency", "api_latency_p95", "lab-api"),
                     metric("cpu", "api_cpu_cores", "lab-api"),
                     metric("memory", "api_memory_bytes", "lab-api"),
+                    metric("memory_growth", "api_memory_growth_rate", "lab-api"),
                     metric("redis", "redis_up", "lab-redis"),
                     ToolCall("pg", "get_postgres_health", {"service_id": "lab-postgres"}),
                     ToolCall("deploys", "get_recent_deployments", {"service_id": "lab-api"}),
@@ -183,6 +184,11 @@ class RulesBaselineAdapter:
         errors_last = _last(results.get("errors", {}).get("summary", ""))
         memory = results.get("memory", {}).get("summary", "")
         memory_growth = (_last(memory) or 0.0) - (_first(memory) or 0.0)
+        # Peak growth rate in the lookback: a leak that already hit a cap (or a
+        # window that still holds an earlier peak) shows no level increase but
+        # still shows the growth burst (B-F04 evidence gap).
+        growth_rate_max = _max(results.get("memory_growth", {}).get("summary", "")) or 0.0
+        leaking = memory_growth > MEMORY_GROWTH_BYTES or growth_rate_max > MEMORY_GROWTH_RATE
         deploys = _data(results.get("deploys", {}))
         new_release = bool(
             deploys
@@ -233,12 +239,13 @@ class RulesBaselineAdapter:
                     "Stop the registered background load generator.",
                 ),
             )
-        if new_release and memory_growth > MEMORY_GROWTH_BYTES:
+        if new_release and leaking:
             return _report(
                 "application_memory_leak",
                 "lab-api",
                 "medium",
-                f"Memory grew {memory_growth / 1e6:.0f} MB after release "
+                f"Memory grew up to {growth_rate_max / 1e6:.1f} MB/s "
+                f"({memory_growth / 1e6:.0f} MB in the window) after release "
                 f"{deploys.get('current_release')}.",
                 evidence,
                 _action(
@@ -273,9 +280,12 @@ class RulesBaselineAdapter:
 
 CPU_SATURATED_CORES: Final = 0.6
 MEMORY_GROWTH_BYTES: Final = 30_000_000
+# Sustained leaks in the lab grow by MB/s; normal request churn stays far below.
+MEMORY_GROWTH_RATE: Final = 500_000
 ERROR_RATIO: Final = 0.05
 _LAST = re.compile(r"last=([-0-9.e+]+)")
 _FIRST = re.compile(r"first=([-0-9.e+]+)")
+_MAX = re.compile(r"max=([-0-9.e+]+)")
 
 
 def _last(summary: str) -> float | None:
@@ -285,6 +295,11 @@ def _last(summary: str) -> float | None:
 
 def _first(summary: str) -> float | None:
     match = _FIRST.search(summary)
+    return float(match.group(1)) if match else None
+
+
+def _max(summary: str) -> float | None:
+    match = _MAX.search(summary)
     return float(match.group(1)) if match else None
 
 

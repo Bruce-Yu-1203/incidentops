@@ -134,6 +134,28 @@ tests:
               summary: "lab-api resident memory growing faster than 1 MB/s"
               observed_value: "1.907MiB/s"
 
+  - name: memory growth is detected within 90 seconds of a leak starting
+    interval: 5s
+    input_series:
+      # Flat for one minute, then about 2.5 MB/s (a leaky release under load).
+      - series: 'process_resident_memory_bytes{service_id="lab-api"}'
+        values: "100000000x12 112500000+12500000x40"
+    alert_rule_test:
+      - eval_time: 55s
+        alertname: lab_api_memory_growth
+        exp_alerts: []
+      - eval_time: 150s
+        alertname: lab_api_memory_growth
+        exp_alerts:
+          - exp_labels:
+              severity: warning
+              service_id: lab-api
+              environment: fault-lab
+              component: http-api
+            exp_annotations:
+              summary: "lab-api resident memory growing faster than 1 MB/s"
+              observed_value: "2.384MiB/s"
+
   - name: stable memory stays quiet
     interval: 15s
     input_series:

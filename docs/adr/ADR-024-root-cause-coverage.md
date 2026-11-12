@@ -35,3 +35,16 @@ spots (logs only for the HTTP API, no Redis health view).
 
 Later sections of this ADR record the remaining coverage decisions as they are
 implemented.
+
+### Memory leak evidence (B-F04)
+
+- New template `api_memory_growth_rate` (`deriv(process_resident_memory_bytes[1m])`,
+  bytes/s) and recording rule `lab_api:memory_growth_bytes_per_second:deriv1m`;
+  the `lab_api_memory_growth` alert uses the recording rule with `for: 30s`
+  (was a 2m deriv with `for: 1m`).
+- The B0 baseline reads the growth rate and treats a new release whose peak
+  growth rate in the lookback exceeds 500 KB/s as a leak, in addition to the
+  existing level-growth rule. This covers the two failure modes in the
+  2026-11-10 analysis: the leak cap flattening memory before investigation,
+  and a lookback that still holds an earlier trial's peak. The leak cap stays
+  in place to protect the lab host.

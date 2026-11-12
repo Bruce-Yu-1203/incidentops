@@ -149,6 +149,13 @@ _ALL: Final = (
         "bytes",
     ),
     MetricTemplate(
+        "api_memory_growth_rate",
+        "Resident memory growth rate of the API process (1m deriv; peaks show leaks)",
+        _API,
+        lambda s: f"deriv(process_resident_memory_bytes{{{_sid(s)}}}[1m])",
+        "bytes/s",
+    ),
+    MetricTemplate(
         "api_cpu_cores",
         "CPU cores used by the API process (1m rate)",
         _API,

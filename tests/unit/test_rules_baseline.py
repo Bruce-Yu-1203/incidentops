@@ -72,6 +72,7 @@ def _api_backend(**overrides: list[float]) -> FakeBackend:
         "redis_up": [1, 1, 1],
         "process_cpu_seconds_total": [0.05, 0.05],
         "process_resident_memory_bytes": [1.0e8, 1.0e8],
+        "deriv(process_resident_memory_bytes": [0.0, 0.0],
         "lab_api_http_requests_total": [0.0, 0.0],
     }
     backend.overrides.update(overrides)
@@ -116,6 +117,33 @@ def _deployed(backend: FakeBackend) -> FakeBackend:
             "lab-api",
             _deployed(_api_backend(process_resident_memory_bytes=[1.0e8, 3.0e8])),
             "application_memory_leak",
+            "rollback_demo_api",
+            "lab-api",
+        ),
+        # B-F04 after the leak capped: memory is flat or lower than an earlier
+        # peak in the window, but the growth burst is still in the lookback.
+        (
+            "lab-api",
+            _deployed(
+                _api_backend(
+                    process_resident_memory_bytes=[4.17e8, 3.97e8],
+                    **{"deriv(process_resident_memory_bytes": [2.5e6, 2.4e6, 0.0, -1.0e5]},
+                )
+            ),
+            "application_memory_leak",
+            "rollback_demo_api",
+            "lab-api",
+        ),
+        # A new release whose memory merely fluctuates is not a leak.
+        (
+            "lab-api",
+            _deployed(
+                _api_backend(
+                    lab_api_http_requests_total=[0.3, 0.3],
+                    **{"deriv(process_resident_memory_bytes": [2.0e4, -3.0e4, 1.0e4]},
+                )
+            ),
+            "bad_deployment",
             "rollback_demo_api",
             "lab-api",
         ),
