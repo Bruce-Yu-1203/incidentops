@@ -211,8 +211,14 @@ def test_metric_panels_use_the_allowlist(session_factory: sessionmaker[Session])
         "api_memory_growth",
         "redis_up",
         "pg_locks",
+        "api_request_rate",
+        "kafka_brokers",
+        "pg_up",
+        "pg_pool_usage",
     }
     assert panels["api_p95"]["status"] == "over"
+    assert len(panels["api_request_rate"]["series"]) == 2
+    assert panels["kafka_brokers"]["threshold_direction"] == "below"
     assert panels["api_5xx"]["status"] == "ok"
     assert len(panels["produce_consume"]["series"]) == 2
     assert body["grafana_dashboard_url"].endswith("/d/incidentops-lab")

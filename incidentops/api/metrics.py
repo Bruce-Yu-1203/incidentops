@@ -117,12 +117,41 @@ PANELS: Final[tuple[PanelSpec, ...]] = (
         "api_memory_growth",
         "API memory growth",
         "bytes/s",
-        (
-            _Query(
-                "growth", _fixed('deriv(process_resident_memory_bytes{service_id="lab-api"}[2m])')
-            ),
-        ),
+        # The recording rule the memory alert uses (ADR-024).
+        (_Query("growth", _fixed("lab_api:memory_growth_bytes_per_second:deriv1m")),),
         threshold=1000000,
+    ),
+    PanelSpec(
+        "api_request_rate",
+        "API request rate vs baseline",
+        "requests/s",
+        (
+            _Query("requests", _fixed("lab_api:request_rate:rate1m")),
+            _Query("baseline", _fixed("lab_api:request_rate:baseline30m")),
+        ),
+    ),
+    PanelSpec(
+        "kafka_brokers",
+        "Kafka brokers visible",
+        "brokers",
+        (_Query("brokers", _template("kafka_broker_count", "lab-kafka")),),
+        threshold=1,
+        threshold_direction="below",
+    ),
+    PanelSpec(
+        "pg_up",
+        "PostgreSQL availability",
+        "bool",
+        (_Query("available", _template("postgres_up", "lab-postgres")),),
+        threshold=0.5,
+        threshold_direction="below",
+    ),
+    PanelSpec(
+        "pg_pool_usage",
+        "PostgreSQL connection usage",
+        "ratio",
+        (_Query("used", _template("postgres_connection_utilization", "lab-postgres")),),
+        threshold=0.9,
     ),
     PanelSpec(
         "redis_up",
@@ -343,10 +372,16 @@ def incident_panel_id(service_id: str, title: str | None) -> str | None:
         "lab_api_cpu_high": "api_cpu",
         "lab_redis_down": "redis_up",
         "lab_kafka_consumer_lag_high": "consumer_lag",
+        "lab_consumer_processing_slow": "produce_consume",
+        "lab_kafka_broker_unreachable": "kafka_brokers",
+        "lab_postgres_down": "pg_up",
+        "lab_postgres_connections_near_limit": "pg_pool_usage",
+        "lab_api_request_rate_surge": "api_request_rate",
     }
     return by_alert.get(title or "") or {
         "lab-api": "api_p95",
         "lab-postgres": "pg_locks",
         "lab-redis": "redis_up",
+        "lab-kafka": "kafka_brokers",
         "persist-demo-consumer": "consumer_lag",
     }.get(service_id)

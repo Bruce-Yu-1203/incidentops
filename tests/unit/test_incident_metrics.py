@@ -64,7 +64,16 @@ def test_alert_selects_explanatory_metric() -> None:
     assert incident_panel_id("lab-api", "lab_api_cpu_high") == "api_cpu"
     assert incident_panel_id("lab-api", "lab_api_memory_growth") == "api_memory_growth"
     assert incident_panel_id("lab-redis", "lab_redis_down") == "redis_up"
-    assert incident_panel_id("lab-kafka", None) is None
+    assert incident_panel_id("lab-kafka", None) == "kafka_brokers"
+    assert incident_panel_id("lab-postgres", "lab_postgres_down") == "pg_up"
+    assert (
+        incident_panel_id("lab-postgres", "lab_postgres_connections_near_limit") == "pg_pool_usage"
+    )
+    assert incident_panel_id("lab-api", "lab_api_request_rate_surge") == "api_request_rate"
+    assert incident_panel_id("persist-demo-consumer", "lab_consumer_processing_slow") == (
+        "produce_consume"
+    )
+    assert incident_panel_id("demo-producer", None) is None
 
 
 async def test_empty_partial_and_redis_down_are_distinct() -> None:
@@ -98,3 +107,29 @@ async def test_empty_partial_and_redis_down_are_distinct() -> None:
 
     panels = await load_panels(PartialBackend(), load_catalog(), NOW, NOW, 5, {"produce_consume"})
     assert panels[0].status == "partial"
+
+
+def test_every_alert_rule_maps_to_a_panel_and_every_panel_query_renders() -> None:
+    from pathlib import Path
+
+    import yaml
+
+    from incidentops.api.metrics import PANELS
+    from incidentops.domain.catalog import load_catalog
+
+    rules = Path(__file__).resolve().parents[2] / "infra" / "prometheus" / "rules" / "lab.rules.yml"
+    groups = yaml.safe_load(rules.read_text(encoding="utf-8"))["groups"]
+    records = {r["record"] for g in groups for r in g["rules"] if "record" in r}
+    panel_ids = {p.panel_id for p in PANELS}
+    for group in groups:
+        for rule in group["rules"]:
+            if "alert" in rule:
+                panel = incident_panel_id(rule["labels"]["service_id"], rule["alert"])
+                assert panel in panel_ids, rule["alert"]
+    catalog = load_catalog()
+    for spec in PANELS:
+        for query in spec.queries:
+            promql = query.build(catalog)
+            # Fixed queries name recording rules that exist.
+            if ":" in promql and "(" not in promql:
+                assert promql.removeprefix("sum(").removesuffix(")") in records, promql
