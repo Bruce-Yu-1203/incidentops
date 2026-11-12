@@ -55,4 +55,27 @@ describe("mergeAlerts", () => {
     expect(alertClearedAt(events)).toBe("2026-01-01T00:02:00Z");
     expect(alertClearedAt(events.slice(0, 2))).toBeNull();
   });
+
+  it("keeps chat evidence and suggestions, and marks questions and answers as optional", () => {
+    const timeline: TimelineEntry[] = [
+      { at: "1", kind: "chat", summary: "is the consumer reading again?", reference_id: "m1", actor: "user:amy", event_type: "chat_question" },
+      { at: "2", kind: "chat", summary: "answered after 3 checks, added 2 evidence", reference_id: "m2", actor: "chat-agent", event_type: "chat_answer" },
+      { at: "2", kind: "chat", summary: "added 2 evidence", reference_id: "r1", actor: "chat-agent", event_type: "chat_evidence_added", decision: "2" },
+      { at: "2", kind: "chat", summary: "", reference_id: "m2", actor: "chat-agent", event_type: "chat_suggested_reinvestigation" },
+      { at: "3", kind: "audit", summary: "", reference_id: "i", actor: "user:amy", event_type: "reinvestigation_requested", decision: "QUEUED" },
+      { at: "4", kind: "audit", summary: "", reference_id: "i", actor: "service:investigation-worker", event_type: "reinvestigation_started" },
+      { at: "5", kind: "audit", summary: "", reference_id: "i", actor: "service:investigation-worker", event_type: "reinvestigation_finished", decision: "COMPLETED" },
+    ];
+    const rows = lifecycleRows(timeline, "ESCALATED");
+    expect(rows.map((r) => [r.actor, r.text, Boolean(r.chat)])).toEqual([
+      ["Human", "Asked: “is the consumer reading again?”", true],
+      ["Chat agent", "Answered (after 3 checks, added 2 evidence)", true],
+      ["Chat agent", "Added 2 evidence records from chat", false],
+      ["Chat agent", "Suggested a re-investigation", false],
+      ["Human", "Asked for a re-investigation", false],
+      ["Agent", "Started a re-investigation", false],
+      ["Agent", "Finished the re-investigation", false],
+    ]);
+    expect(actorOf("chat-agent", null)).toBe("Chat agent");
+  });
 });

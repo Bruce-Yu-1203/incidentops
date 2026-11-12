@@ -14,7 +14,7 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 RUN_DIR="$ROOT/.run"
 LOG_DIR="$RUN_DIR/logs"
-PROCESSES=(api control executor verifier worker web)
+PROCESSES=(api control executor verifier worker chat web)
 
 cd "$ROOT"
 
@@ -25,6 +25,7 @@ target_for() {
     executor) echo "executor-run" ;;
     verifier) echo "verifier-run" ;;
     worker) echo "worker-run" ;;
+    chat) echo "chat-run" ;;
     *) return 1 ;;
   esac
 }
@@ -76,7 +77,7 @@ up() {
   echo "==> processes"
   start_process api
   wait_for http://127.0.0.1:8000/healthz 90
-  for name in control executor verifier worker; do
+  for name in control executor verifier worker chat; do
     start_process "$name"
   done
   # SKIP_WEB=1 (e.g. in CI) runs the backend only.

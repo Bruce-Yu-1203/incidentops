@@ -1,6 +1,6 @@
 # ADR-022: A read-only incident chat answered by the agent worker
 
-- **Status:** Accepted
+- **Status:** Superseded in part by ADR-023 (live read tools, separate worker, operator-only asking)
 - **Relates to:** ADR-008, ADR-019, ADR-021, architecture §15
 
 ## Context

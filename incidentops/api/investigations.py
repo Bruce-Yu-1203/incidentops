@@ -52,6 +52,8 @@ class RunSummary(BaseModel):
     id: str
     incident_id: str
     state: str
+    kind: str = "investigation"
+    requested_by: str | None = None
     model_id: str | None
     prompt_version: str | None
     error_code: str | None
@@ -74,6 +76,8 @@ def run_summary(row: InvestigationRunRow) -> RunSummary:
         id=row.id,
         incident_id=row.incident_id,
         state=row.state,
+        kind=row.kind,
+        requested_by=row.requested_by,
         model_id=row.model_id,
         prompt_version=row.prompt_version,
         error_code=row.error_code,

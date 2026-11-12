@@ -30,6 +30,7 @@ flowchart TB
     APIP[API process<br/>role: api, db: io_api]
     CTRL[control worker<br/>policy + expiry, db: io_api]
     AGENT[investigation worker<br/>read tools only, db: io_agent]
+    CHAT[chat worker<br/>chat agent, read tools only, db: io_agent]
     EXEC[executor<br/>only remediation token, db: io_executor]
     VER[verifier<br/>read-only checks, db: io_verifier]
     CDB[(Control PostgreSQL<br/>workflow, outbox, audit)]
@@ -40,9 +41,9 @@ flowchart TB
   LAB --> OBS
   AM -->|bearer token| APIP
   UI -->|session| APIP
-  APIP & CTRL & AGENT & EXEC & VER --- CDB
-  AGENT -->|templated queries| PROM & LOKI & TEMPO
-  AGENT -->|read token| CONSUMER & FC
+  APIP & CTRL & AGENT & CHAT & EXEC & VER --- CDB
+  AGENT & CHAT -->|templated queries| PROM & LOKI & TEMPO
+  AGENT & CHAT -->|read token| CONSUMER & FC
   VER -->|read token| CONSUMER & FC
   VER --> PROM
   EXEC -->|executor token, allowlisted calls| CONSUMER & FC
@@ -111,6 +112,7 @@ audit_events: append-only, insert-only for every application role
 | Read tools, templates, gateway | `incidentops/tools/` |
 | Evidence and redaction | `incidentops/evidence/` |
 | Agent graph, prompt, rules baseline | `incidentops/agent/` |
+| Chat agent, chat memory, re-investigation requests (ADR-023) | `incidentops/chat/` |
 | Policy | `incidentops/policy/`, `config/policy.yaml` |
 | Proposals and approvals | `incidentops/actions/` |
 | Executor and adapters | `incidentops/execution/` |

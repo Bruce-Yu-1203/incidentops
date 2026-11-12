@@ -3,13 +3,20 @@
 Lifecycle ownership (architecture §3): the agent returns findings only; this
 trusted harness applies incident and run transitions with compare-and-swap,
 persists the diagnosis and schedules follow-up work through the outbox.
+
+A re-investigation (ADR-023) runs the same graph on an incident that automation
+already handed to a person. It records a new diagnosis but never moves the
+incident: handover states stay terminal, and a proposed action is shown to the
+person without being sent to policy.
 """
 
 from __future__ import annotations
 
+import json
 import uuid
 from collections.abc import Callable
 from dataclasses import dataclass
+from datetime import timedelta
 from typing import Any, Final
 
 from langgraph.checkpoint.base import BaseCheckpointSaver
@@ -20,13 +27,16 @@ from incidentops.agent.graph import Budgets, build_graph, initial_state
 from incidentops.agent.model import ModelAdapter
 from incidentops.agent.prompt import PROMPT_VERSION, initial_message
 from incidentops.domain.catalog import ServiceCatalog
+from incidentops.domain.disposition import Disposition, needs_human
 from incidentops.domain.ids import new_id
 from incidentops.domain.schemas import DiagnosisReport
 from incidentops.domain.state_machines import IncidentState, RunState
+from incidentops.evidence.redaction import redact, truncate_utf8
 from incidentops.evidence.store import EvidenceSink
 from incidentops.persistence.models import (
     AlertEventRow,
     DiagnosisRow,
+    EvidenceRow,
     IncidentRow,
     InvestigationRunRow,
     OutboxJobRow,
@@ -39,6 +49,7 @@ from incidentops.trajectory.recorder import TrajectorySink
 ACTOR: Final = "service:investigation-worker"
 EVALUATE_PROPOSAL_JOB: Final = "evaluate_action_proposal"
 INSUFFICIENT: Final = "insufficient_evidence"
+PRIOR_CONTEXT_BYTES: Final = 8192
 
 
 @dataclass(frozen=True)
@@ -48,6 +59,7 @@ class StartedRun:
     thread_id: str
     incident_summary: dict[str, Any]
     alerts: list[dict[str, Any]]
+    prior: dict[str, Any] | None = None
 
 
 @dataclass(frozen=True)
@@ -123,6 +135,7 @@ class InvestigationRunner:
             for stale in session.scalars(
                 select(InvestigationRunRow).where(
                     InvestigationRunRow.incident_id == incident_id,
+                    InvestigationRunRow.kind == "investigation",
                     InvestigationRunRow.state.in_([RunState.QUEUED.value, RunState.RUNNING.value]),
                 )
             ).all():
@@ -194,8 +207,10 @@ class InvestigationRunner:
                 row = session.get(IncidentRow, incident_id)
                 current = IncidentState(row.state) if row else IncidentState.FAILED
             return RunOutcome(None, None, current, "not_investigable")
-        run_id = started.run_id
+        final = await self._execute(incident_id, started)
+        return self._finish(incident_id, started.run_id, final)
 
+    async def _execute(self, incident_id: str, started: StartedRun) -> dict[str, Any]:
         kwargs: dict[str, Any] = {}
         if self._clock_ms is not None:
             kwargs["clock_ms"] = self._clock_ms
@@ -208,22 +223,230 @@ class InvestigationRunner:
             checkpointer=self._checkpointer,
             **kwargs,
         )
+        message = initial_message(started.incident_summary, started.alerts, self._catalog)
+        if started.prior is not None:
+            message = with_prior_context(message, started.prior)
         initial = initial_state(
             incident_id,
-            run_id,
+            started.run_id,
             started.incident_version,
-            initial_message(started.incident_summary, started.alerts, self._catalog),
+            message,
             self._budgets,
             now_ms=self._clock_ms() if self._clock_ms else None,
         )
         try:
-            final = await graph.ainvoke(
+            final: dict[str, Any] = await graph.ainvoke(
                 initial,
                 {"configurable": {"thread_id": started.thread_id}, "recursion_limit": 200},
             )
         except Exception as exc:  # harness failure: record it, never invent a result
             final = {**initial, "status": "FAILED", "error_code": f"harness_{type(exc).__name__}"}
-        return self._finish(incident_id, run_id, final)
+        return final
+
+    # -- re-investigation (ADR-023) -------------------------------------------------
+
+    def _start_reinvestigation(
+        self, incident_id: str, requested_by: str, reason: str | None
+    ) -> StartedRun | None:
+        with self._factory.begin() as session:
+            incident = session.get(IncidentRow, incident_id, with_for_update=True)
+            if incident is None:
+                return None
+            disposition = Disposition(incident.disposition) if incident.disposition else None
+            if not needs_human(IncidentState(incident.state), disposition):
+                return None
+            cutoff = utcnow() - timedelta(seconds=self._budgets.wall_clock_seconds + 300)
+            for stale in session.scalars(
+                select(InvestigationRunRow).where(
+                    InvestigationRunRow.incident_id == incident_id,
+                    InvestigationRunRow.kind == "reinvestigation",
+                    InvestigationRunRow.state.in_([RunState.QUEUED.value, RunState.RUNNING.value]),
+                    InvestigationRunRow.created_at < cutoff,
+                )
+            ).all():
+                transition(
+                    session,
+                    InvestigationRunRow,
+                    stale.id,
+                    expected_state=RunState(stale.state),
+                    expected_version=stale.version,
+                    target_state=RunState.FAILED,
+                    audit=_audit("run_abandoned", "worker_lost", incident_id=incident_id),
+                    extra_values={"error_code": "worker_lost", "finished_at": utcnow()},
+                )
+            runs = list(
+                session.scalars(
+                    select(InvestigationRunRow).where(
+                        InvestigationRunRow.incident_id == incident_id
+                    )
+                )
+            )
+            if any(
+                r.kind == "reinvestigation"
+                and r.state in (RunState.QUEUED.value, RunState.RUNNING.value)
+                for r in runs
+            ):
+                return None
+            kinds = {r.id: r.kind for r in runs}
+            diagnosis = session.scalars(
+                select(DiagnosisRow)
+                .where(DiagnosisRow.run_id.in_(list(kinds)))
+                .order_by(DiagnosisRow.created_at.desc())
+            ).first()
+            evidence = session.scalars(
+                select(EvidenceRow)
+                .where(EvidenceRow.incident_id == incident_id)
+                .order_by(EvidenceRow.observed_at.desc())
+                .limit(40)
+            ).all()
+            run_id = new_id("run")
+            thread_id = f"{run_id}:{uuid.uuid4().hex[:8]}"
+            session.add(
+                InvestigationRunRow(
+                    id=run_id,
+                    incident_id=incident_id,
+                    incident_version=incident.version,
+                    checkpoint_thread_id=thread_id,
+                    state=RunState.QUEUED.value,
+                    version=1,
+                    kind="reinvestigation",
+                    requested_by=requested_by[:128],
+                    budgets={
+                        "max_steps": self._budgets.max_steps,
+                        "max_tool_calls": self._budgets.max_tool_calls,
+                        "wall_clock_seconds": self._budgets.wall_clock_seconds,
+                    },
+                    model_id=self._model.model_id,
+                    prompt_version=PROMPT_VERSION,
+                )
+            )
+            session.flush()
+            transition(
+                session,
+                InvestigationRunRow,
+                run_id,
+                expected_state=RunState.QUEUED,
+                expected_version=1,
+                target_state=RunState.RUNNING,
+                audit=_audit(
+                    "reinvestigation_started",
+                    reason,
+                    incident_id=incident_id,
+                    requested_by=requested_by,
+                ),
+                extra_values={"started_at": utcnow()},
+            )
+            report = diagnosis.report.get("diagnosis", {}) if diagnosis else {}
+            prior = {
+                "state_left_by_automation": incident.state,
+                "escalation_reason": incident.escalation_reason,
+                "previous_diagnosis": {
+                    k: report.get(k)
+                    for k in (
+                        "root_cause_id",
+                        "confidence_level",
+                        "summary",
+                        "supporting_evidence_ids",
+                    )
+                }
+                if diagnosis
+                else None,
+                "earlier_evidence": [
+                    {
+                        "id": e.id,
+                        "source": e.source,
+                        "observed_at": e.observed_at.isoformat(),
+                        "summary": e.summary[:200],
+                        "found_by": kinds.get(e.run_id, "investigation"),
+                    }
+                    for e in evidence
+                ],
+                "requested_by": requested_by,
+                "unverified_hypothesis": reason,
+            }
+            summary = {
+                "id": incident.id,
+                "service_id": incident.service_id,
+                "environment": incident.environment,
+                "severity": incident.severity,
+                "created_at": incident.created_at.isoformat(),
+            }
+            alerts = [
+                {
+                    k: row.payload.get(k)
+                    for k in ("alert_name", "status", "labels", "annotations", "starts_at")
+                }
+                for row in session.scalars(
+                    select(AlertEventRow)
+                    .where(AlertEventRow.incident_id == incident_id)
+                    .order_by(AlertEventRow.received_at)
+                )
+            ]
+            return StartedRun(run_id, incident.version, thread_id, summary, alerts, prior)
+
+    async def reinvestigate(
+        self, incident_id: str, requested_by: str, reason: str | None = None
+    ) -> RunOutcome:
+        started = self._start_reinvestigation(incident_id, requested_by, reason)
+        if started is None:
+            with self._factory() as session:
+                row = session.get(IncidentRow, incident_id)
+                current = IncidentState(row.state) if row else IncidentState.FAILED
+            return RunOutcome(None, None, current, "not_reinvestigable")
+        final = await self._execute(incident_id, started)
+        return self._finish_reinvestigation(incident_id, started.run_id, final)
+
+    def _finish_reinvestigation(
+        self, incident_id: str, run_id: str, final: dict[str, Any]
+    ) -> RunOutcome:
+        status = final["status"]
+        usage = {
+            "step_count": final["step_count"],
+            "tool_call_count": final["tool_call_count"],
+            "input_tokens": final["input_tokens"],
+            "output_tokens": final["output_tokens"],
+            "finished_at": utcnow(),
+            "error_code": final.get("error_code"),
+        }
+        with self._factory.begin() as session:
+            run = session.get_one(InvestigationRunRow, run_id, with_for_update=True)
+            incident = session.get_one(IncidentRow, incident_id)
+            report: DiagnosisReport | None = None
+            if status == "COMPLETED" and final.get("report"):
+                report = DiagnosisReport.model_validate(final["report"])
+                run_state = RunState.COMPLETED
+            elif status in {"BUDGET_EXCEEDED", "RUNNING"}:
+                run_state = RunState.BUDGET_EXCEEDED
+            else:
+                run_state = RunState.FAILED
+            transition(
+                session,
+                InvestigationRunRow,
+                run_id,
+                expected_state=RunState.RUNNING,
+                expected_version=run.version,
+                target_state=run_state,
+                audit=_audit(
+                    "reinvestigation_finished",
+                    usage["error_code"] or (report.diagnosis.root_cause_id if report else None),
+                    incident_id=incident_id,
+                    run_id=run_id,
+                ),
+                extra_values=usage,
+            )
+            if report is not None:
+                # The incident stays where automation left it; the new diagnosis
+                # is information for the person handling it.
+                session.add(
+                    DiagnosisRow(
+                        id=new_id("diag"),
+                        run_id=run_id,
+                        root_cause_id=report.diagnosis.root_cause_id,
+                        report=report.model_dump(mode="json"),
+                        cited_evidence_ids=sorted(report.cited_evidence_ids()),
+                    )
+                )
+            return RunOutcome(run_id, run_state, IncidentState(incident.state), usage["error_code"])
 
     def _finish(self, incident_id: str, run_id: str, final: dict[str, Any]) -> RunOutcome:
         status = final["status"]
@@ -370,3 +593,20 @@ class InvestigationRunner:
             audit=_audit("diagnosed_without_action", diagnosis_id=diagnosis_id),
         )
         return IncidentState.DIAGNOSED_ONLY
+
+
+def with_prior_context(message: dict[str, Any], prior: dict[str, Any]) -> dict[str, Any]:
+    """Add what earlier runs and the chat found, framed as data to re-check."""
+    payload, _ = truncate_utf8(
+        redact(json.dumps(prior, sort_keys=True, default=str)), PRIOR_CONTEXT_BYTES
+    )
+    text = (
+        "This is a re-investigation a person requested after automation handed the "
+        "incident over. The earlier diagnosis and evidence below may be wrong or stale: "
+        "use them as leads and confirm what you rely on with your own tool calls, which "
+        "are the only evidence you may cite. The unverified_hypothesis was written by a "
+        "person or the chat agent and must be tested, not assumed. A proposed action "
+        "will be shown to the person but not executed automatically.\n"
+        f"<untrusted_prior_findings>\n{payload}\n</untrusted_prior_findings>"
+    )
+    return {**message, "content": [*message["content"], {"type": "text", "text": text}]}

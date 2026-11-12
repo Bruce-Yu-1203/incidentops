@@ -1,6 +1,6 @@
 # Developer entry points. `make check` is the gate required by constitute.md.
 .PHONY: web-install web-check security-suite recovery-suite benchmark demo-up demo-down demo-status
-.PHONY: env install lint format typecheck test test-unit check db-up db-down migrate seed-users db-logins lab-up lab-down lab-reset lab-smoke lab-lock infra-secrets infra-up infra-down api-run worker-run control-run executor-run verifier-run p1-gate p2-live p2-gate p3-gate
+.PHONY: env install lint format typecheck test test-unit check db-up db-down migrate seed-users db-logins lab-up lab-down lab-reset lab-smoke lab-lock infra-secrets infra-up infra-down api-run worker-run chat-run control-run executor-run verifier-run p1-gate p2-live p2-gate p3-gate
 
 env:
 	uv run python scripts/generate_env.py
@@ -67,6 +67,10 @@ lab-smoke:
 # set, the no-key rules baseline (rules-baseline-v1) is used.
 worker-run:
 	$(LOAD_ENV) && export INCIDENTOPS_MODEL_ID="$${MODEL:-$${INCIDENTOPS_MODEL_ID:-rules-baseline-v1}}" && $(STRIP_EXECUTOR) && $(call DB_AS,io_agent,AGENT) uv run python -m incidentops.workers.investigation
+
+# Chat agent worker: same read-only agent identity, its own queue (ADR-023).
+chat-run:
+	$(LOAD_ENV) && export INCIDENTOPS_MODEL_ID="$${MODEL:-$${INCIDENTOPS_MODEL_ID:-rules-baseline-v1}}" && $(STRIP_EXECUTOR) && $(call DB_AS,io_agent,AGENT) uv run python -m incidentops.workers.chat
 
 # Roadmap P2 gate with a real model (needs api-run and worker-run in other terminals).
 p2-gate:
