@@ -67,7 +67,7 @@ and the injected fault kind never reaches agent-visible telemetry.
 
 | Case | Injection | Alert | Expected outcome | Look-alike kept apart by |
 |---|---|---|---|---|
-| B-F07 `kafka_broker_unavailable` | `lab-kafka-proxy` partitions the broker's client listener (open connections cut, new ones refused) for at most 420 s | `lab_kafka_broker_unreachable` (`kafka_brokers` < 1 for 15 s) | `restart_lab_dependency` on `lab-kafka`; `resume_test_consumer` prohibited | B-F03: broker visible and worker paused |
+| B-F07 `kafka_broker_unavailable` | `lab-kafka-proxy` partitions the broker's client listener (open connections cut, new ones refused) for at most 420 s | `lab_kafka_broker_unreachable` (`kafka_brokers` < 1 or absent for 15 s) | `restart_lab_dependency` on `lab-kafka`; `resume_test_consumer` prohibited | B-F03: broker visible and worker paused |
 | B-F08 `consumer_slow` | Per-message processing delay of 100 ms in the consumer (about 10 msg/s against 20 produced) | `lab_kafka_consumer_lag_high`, plus `lab_consumer_processing_slow` | No action, human review; `resume_test_consumer` prohibited | B-F03: the worker is not paused and still processes |
 | B-F09 `postgres_unavailable` | `ALTER DATABASE lab ALLOW_CONNECTIONS false` and existing sessions ended, for at most 420 s | `lab_postgres_down` (`pg_up` 0 for 15 s) | `restart_lab_dependency` on `lab-postgres`; `release_lab_db_blocker` prohibited | B-F01: the database is up and an exclusive lock is held |
 | B-F10 `application_error` | A latent code path of the running release raises on every fourth item | `lab_api_error_ratio_high` | No action, human review; `rollback_demo_api` prohibited | B-F05: no new release; B-N01: stack traces in the logs |
@@ -81,6 +81,11 @@ and the injected fault kind never reaches agent-visible telemetry.
   and full recovery (brokers 1, producer drains its backlog) within 10 s of
   the restore. The proxy accepts only the lab-internal token and exposes no
   metrics. The producer now counts and logs send failures instead of dying.
+  *Update 2026-11-12:* in the running lab the exporter's scrape times out
+  during the partition (`up{job="kafka-exporter"} 0`), so `kafka_brokers`
+  goes absent rather than reporting 0. The alert therefore also fires on
+  `absent(kafka_brokers{service_id="lab-kafka"})`, still reported as 0
+  visible brokers.
 - **Restart targets.** `restart_lab_dependency` may target `lab-redis`,
   `lab-kafka` and `lab-postgres` (catalog `c3`); the lab controller keeps its
   own per-action target allowlist. Kafka and PostgreSQL report generations

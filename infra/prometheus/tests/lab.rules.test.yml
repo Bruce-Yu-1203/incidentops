@@ -223,6 +223,37 @@ tests:
               summary: "lab-kafka broker is not visible to the lag exporter"
               observed_value: "0 brokers"
 
+  - name: broker series going stale when the exporter scrape fails fires
+    interval: 5s
+    input_series:
+      - series: 'kafka_brokers{service_id="lab-kafka"}'
+        values: "1 1 1 stale"
+    alert_rule_test:
+      - eval_time: 20s
+        alertname: lab_kafka_broker_unreachable
+        exp_alerts: []
+      - eval_time: 1m
+        alertname: lab_kafka_broker_unreachable
+        exp_alerts:
+          - exp_labels:
+              severity: critical
+              service_id: lab-kafka
+              environment: fault-lab
+              component: kafka-broker
+            exp_annotations:
+              summary: "lab-kafka broker is not visible to the lag exporter"
+              observed_value: "0 brokers"
+
+  - name: broker visible again after an absent stretch resolves
+    interval: 5s
+    input_series:
+      - series: 'kafka_brokers{service_id="lab-kafka"}'
+        values: "1 1 1 stale _x9 1x20"
+    alert_rule_test:
+      - eval_time: 2m
+        alertname: lab_kafka_broker_unreachable
+        exp_alerts: []
+
   - name: visible broker stays quiet
     interval: 5s
     input_series:

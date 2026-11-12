@@ -76,10 +76,13 @@ groups:
           summary: "persist-demo-consumer group lag above 200 messages"
           observed_value: "{{ $value }}"
 
-      # The lag exporter reaches the broker like every client; a broker it
-      # cannot see is reported as 0 brokers within about 20 seconds.
+      # The lag exporter reaches the broker like every client. When it cannot
+      # reach the broker its scrape times out, so kafka_brokers goes absent
+      # instead of dropping to 0; absence counts as 0 visible brokers.
       - alert: lab_kafka_broker_unreachable
-        expr: max(kafka_brokers{service_id="lab-kafka"}) < 1
+        expr: >-
+          (max(kafka_brokers{service_id="lab-kafka"}) < 1)
+          or (absent(kafka_brokers{service_id="lab-kafka"}) * 0)
         for: 15s
         labels:
           severity: critical
