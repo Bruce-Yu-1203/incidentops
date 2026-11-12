@@ -131,3 +131,33 @@ def test_error_path_fails_every_fourth_item_with_a_stack_trace(
     client.post("/internal/behaviour", json={"reset": True}, headers=INTERNAL)
     assert behaviour.error_path is False
     assert client.get("/items/4").status_code == 200
+
+
+def test_config_push_changes_the_items_database_only_with_safe_values() -> None:
+    behaviour = Behaviour()
+    client = _client(behaviour)
+    assert client.get("/items/1").status_code == 200
+    pushed = client.post(
+        "/internal/behaviour", json={"config": {"items_database": "lab_replica"}}, headers=INTERNAL
+    )
+    assert pushed.json()["config"] == {"items_database": "lab_replica"}
+    assert pushed.json()["release_id"] == "rel-1"
+    # The API now reads a database that does not exist: every item fails.
+    assert client.get("/items/1").status_code == 503
+    client.post("/internal/behaviour", json={"reset": True}, headers=INTERNAL)
+    assert client.get("/items/1").status_code == 200
+
+
+@pytest.mark.parametrize(
+    "config",
+    [
+        {"items_database": "postgres://evil-host/db"},
+        {"items_database": "lab; drop"},
+        {"dsn": "lab"},
+    ],
+)
+def test_config_push_rejects_hosts_and_unknown_keys(config: dict[str, str]) -> None:
+    response = _client(Behaviour()).post(
+        "/internal/behaviour", json={"config": config}, headers=INTERNAL
+    )
+    assert response.status_code == 422

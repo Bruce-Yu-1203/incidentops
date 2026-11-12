@@ -162,14 +162,14 @@ def test_db_blocker_release_is_bound_to_the_fixture_token(
             "revision"
         ]
         # The revision is bound to this exact fixture (a digest of its token).
-        assert locked == f"pg-gen-1.lock-{_digest('lock-7')}"
+        assert locked == f"pg-gen-1.lock-{_digest('lock-7')}.pool-none"
         assert "lock-7" not in locked
         wrong = _remediate(
             client,
             action_id="a1",
             action_type="release_lab_db_blocker",
             target_id="lab-postgres",
-            expected_revision=f"pg-gen-1.lock-{_digest('lock-8')}",
+            expected_revision=f"pg-gen-1.lock-{_digest('lock-8')}.pool-none",
         )
         assert wrong.json()["error"] == "stale_revision"
         ok = _remediate(
@@ -180,10 +180,10 @@ def test_db_blocker_release_is_bound_to_the_fixture_token(
             expected_revision=locked,
         )
         assert ok.status_code == 201
-        assert ok.json()["revision_after"] == "pg-gen-1.lock-none"
+        assert ok.json()["revision_after"] == "pg-gen-1.lock-none.pool-none"
         assert (
             client.get("/targets/lab-postgres", headers=_auth(LabRole.READER)).json()["revision"]
-            == "pg-gen-1.lock-none"
+            == "pg-gen-1.lock-none.pool-none"
         )
         # Nothing left to release: a second release is refused as stale.
         again = _remediate(
@@ -191,7 +191,7 @@ def test_db_blocker_release_is_bound_to_the_fixture_token(
             action_id="a3",
             action_type="release_lab_db_blocker",
             target_id="lab-postgres",
-            expected_revision="pg-gen-1.lock-none",
+            expected_revision="pg-gen-1.lock-none.pool-none",
         )
         assert again.json()["error"] == "stale_revision"
 
@@ -288,6 +288,9 @@ def test_only_the_executor_can_remediate(
         "/faults/kafka-outage",
         "/faults/postgres-outage",
         "/faults/error-path",
+        "/faults/traffic-surge",
+        "/faults/connection-hoard",
+        "/faults/config",
     ],
 )
 @pytest.mark.parametrize("role", [LabRole.READER, LabRole.EXECUTOR])
@@ -351,7 +354,12 @@ def test_reset_restores_healthy_baseline(parts: tuple[TestClient, FakeLabApi, Fa
     ("path", "target_id", "before", "after"),
     [
         ("/faults/kafka-outage", "lab-kafka", "kafka-gen-1", "kafka-gen-2"),
-        ("/faults/postgres-outage", "lab-postgres", "pg-gen-1.lock-none", "pg-gen-2.lock-none"),
+        (
+            "/faults/postgres-outage",
+            "lab-postgres",
+            "pg-gen-1.lock-none.pool-none",
+            "pg-gen-2.lock-none.pool-none",
+        ),
     ],
 )
 def test_dependency_outages_are_bounded_and_restartable(
@@ -429,3 +437,165 @@ def test_error_path_injection_reaches_the_api_without_a_deploy(
             == HEALTHY_RELEASE
         )
     assert {"error_path": True} in lab_api.calls
+
+
+class FakeLoad:
+    def __init__(self) -> None:
+        self.rate: float | None = None
+
+    async def set_rate(self, rate_per_second: float) -> None:
+        self.rate = rate_per_second
+
+    async def reset(self) -> None:
+        self.rate = None
+
+
+@pytest.fixture
+def phase5(
+    tmp_path: Path, authenticator: LabAuthenticator
+) -> tuple[TestClient, FakeLabApi, FakeLoad]:
+    lab_api, load = FakeLabApi(), FakeLoad()
+    fixture = DbLockFixture(Holder())
+    hoard = DbLockFixture(Holder(), name="connection_hoard")
+    controller = LabController(
+        fixture,
+        lab_api,
+        FakeRedis(),
+        Ledger(tmp_path / "p5.sqlite3"),
+        load=load,
+        connection_hoard=hoard,
+    )
+    return TestClient(create_app(fixture, authenticator, controller, hoard)), lab_api, load
+
+
+def test_traffic_surge_is_reset_to_the_baseline_profile(
+    phase5: tuple[TestClient, FakeLabApi, FakeLoad],
+) -> None:
+    client, _, load = phase5
+    with client:
+        injected = client.post(
+            "/faults/traffic-surge",
+            json={"action_id": "s1", "rate_per_second": 60},
+            headers=_auth(LabRole.BENCHMARK),
+        )
+        assert injected.status_code == 201
+        assert load.rate == 60
+        revision = client.get("/targets/lab-loadgen", headers=_auth(LabRole.READER)).json()
+        assert revision == {"target_id": "lab-loadgen", "revision": "load-gen-1"}
+        ok = _remediate(
+            client,
+            action_id="r1",
+            action_type="reset_lab_load_profile",
+            target_id="lab-loadgen",
+            expected_revision="load-gen-1",
+        )
+        assert ok.status_code == 201
+        assert ok.json()["revision_after"] == "load-gen-2"
+    assert load.rate is None
+
+
+def test_idle_connection_release_is_bound_to_the_hoard_fixture(
+    phase5: tuple[TestClient, FakeLabApi, FakeLoad],
+) -> None:
+    client, _, _ = phase5
+    with client:
+        injected = client.post(
+            "/faults/connection-hoard",
+            json={"action_id": "hoard-1", "hold_seconds": 30},
+            headers=_auth(LabRole.BENCHMARK),
+        )
+        assert injected.json()["connection_hoard"]["fixture_token"] == "hoard-1"
+        revision = client.get("/targets/lab-postgres", headers=_auth(LabRole.READER)).json()[
+            "revision"
+        ]
+        assert revision == f"pg-gen-1.lock-none.pool-{_digest('hoard-1')}"
+        # A lock release does not touch the connection fixture.
+        wrong_kind = _remediate(
+            client,
+            action_id="a0",
+            action_type="release_lab_db_blocker",
+            target_id="lab-postgres",
+            expected_revision=revision,
+        )
+        assert wrong_kind.json()["error"] == "stale_revision"
+        ok = _remediate(
+            client,
+            action_id="a1",
+            action_type="release_lab_idle_connections",
+            target_id="lab-postgres",
+            expected_revision=revision,
+        )
+        assert ok.status_code == 201
+        assert ok.json()["revision_after"] == "pg-gen-1.lock-none.pool-none"
+        status = client.get("/faults", headers=_auth(LabRole.BENCHMARK)).json()
+        assert status["connection_hoard"] is None
+
+
+def test_bad_config_is_visible_and_only_the_pinned_config_can_be_restored(
+    phase5: tuple[TestClient, FakeLabApi, FakeLoad],
+) -> None:
+    client, lab_api, _ = phase5
+    with client:
+        client.post(
+            "/faults/config",
+            json={"action_id": "c1", "profile": "bad_items_database"},
+            headers=_auth(LabRole.BENCHMARK),
+        )
+        changes = client.get("/config-changes/lab-api", headers=_auth(LabRole.READER)).json()
+        assert changes["current_revision"] == "cfg-2"
+        assert changes["pinned_good_revision"] == "cfg-1"
+        assert changes["history"][-1]["changes"] == {"items_database": "lab_replica"}
+        assert changes["history"][-1]["actor"] == "config-pipeline"
+        # The benchmark profile name never reaches readers.
+        assert "bad_items_database" not in str(changes)
+        # The deployment timeline is unchanged: this is not a release.
+        deployments = client.get("/deployments/lab-api", headers=_auth(LabRole.READER)).json()
+        assert deployments["current_release"] == HEALTHY_RELEASE
+        arbitrary = _remediate(
+            client,
+            action_id="r0",
+            action_type="revert_lab_config",
+            target_id="lab-api-config",
+            expected_revision="cfg-2",
+            arguments={"target_config": "cfg-2"},
+        )
+        assert arbitrary.status_code == 400
+        ok = _remediate(
+            client,
+            action_id="r1",
+            action_type="revert_lab_config",
+            target_id="lab-api-config",
+            expected_revision="cfg-2",
+            arguments={"target_config": "cfg-1"},
+        )
+        assert ok.status_code == 201
+        assert ok.json()["revision_after"] == "cfg-1"
+    assert lab_api.calls[-1] == {"config": {"items_database": "lab"}}
+
+
+def test_reset_restores_load_connections_and_config(
+    phase5: tuple[TestClient, FakeLabApi, FakeLoad],
+) -> None:
+    client, _, load = phase5
+    with client:
+        bench = _auth(LabRole.BENCHMARK)
+        client.post(
+            "/faults/traffic-surge", json={"action_id": "s", "rate_per_second": 50}, headers=bench
+        )
+        client.post(
+            "/faults/connection-hoard", json={"action_id": "h", "hold_seconds": 30}, headers=bench
+        )
+        client.post(
+            "/faults/config",
+            json={"action_id": "c", "profile": "bad_items_database"},
+            headers=bench,
+        )
+        reset = client.post("/faults/reset", headers=bench).json()
+        assert reset["db_lock"] is None
+        status = client.get("/faults", headers=bench).json()
+        assert status["connection_hoard"] is None
+        assert (
+            client.get("/targets/lab-api-config", headers=_auth(LabRole.READER)).json()["revision"]
+            == "cfg-1"
+        )
+    assert load.rate is None

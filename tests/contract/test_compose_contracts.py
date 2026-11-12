@@ -55,11 +55,17 @@ def test_only_controllers_receive_lab_control_tokens() -> None:
         for name, service in _services(LAB).items()
     }
     holders = {name: keys for name, keys in holders.items() if keys}
-    assert set(holders) == {"lab-consumer", "fault-controller", "lab-api", "lab-kafka-proxy"}
-    # The API and the Kafka proxy only verify the internal control token; they
-    # hold no role token.
-    assert holders["lab-api"] == {"FAULT_LAB_INTERNAL_TOKEN"}
-    assert holders["lab-kafka-proxy"] == {"FAULT_LAB_INTERNAL_TOKEN"}
+    assert set(holders) == {
+        "lab-consumer",
+        "fault-controller",
+        "lab-api",
+        "lab-kafka-proxy",
+        "lab-loadgen",
+    }
+    # The API, the Kafka proxy and the load generator only verify the internal
+    # control token; they hold no role token.
+    for name in ("lab-api", "lab-kafka-proxy", "lab-loadgen"):
+        assert holders[name] == {"FAULT_LAB_INTERNAL_TOKEN"}
 
 
 def test_lab_dockerfile_installs_from_hashed_lock() -> None:
@@ -91,3 +97,16 @@ def test_kafka_clients_reach_the_broker_only_through_the_proxy() -> None:
     # The proxy's state is ground truth: it is never scraped.
     prometheus = (REPO_ROOT / "infra" / "prometheus" / "prometheus.yml").read_text("utf-8")
     assert "lab-kafka-proxy" not in prometheus
+
+
+def test_api_uses_an_ordinary_role_and_monitoring_keeps_reserved_slots() -> None:
+    # B-F12: idle connections can exhaust the ordinary slots the API needs,
+    # while the exporter and superusers keep theirs.
+    services = _services(LAB)
+    assert _env(services["lab-api"])["LAB_DATABASE_DSN"].startswith("postgresql://lab_app:")
+    command = " ".join(services["lab-postgres"]["command"])
+    assert "reserved_connections=3" in command
+    init = (REPO_ROOT / "fault-lab" / "postgres" / "init.sql").read_text(encoding="utf-8")
+    assert "pg_use_reserved_connections" in init
+    assert "CREATE ROLE lab_app LOGIN" in init
+    assert "SUPERUSER" not in init.split("CREATE ROLE lab_app", 1)[1].split(";", 1)[0]

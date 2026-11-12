@@ -122,7 +122,7 @@ def test_reset_releases_active_fixture(client: TestClient, holder: FakeHolder) -
 
 async def test_failed_acquisition_is_reported() -> None:
     fixture = DbLockFixture(FakeHolder(fail=True))
-    with pytest.raises(RuntimeError, match="failed to acquire"):
+    with pytest.raises(RuntimeError, match="failed to start the db_lock fixture"):
         await fixture.inject("fix-1", 5)
     assert fixture.status() == {"db_lock": None}
 

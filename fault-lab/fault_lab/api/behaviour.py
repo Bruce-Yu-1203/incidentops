@@ -22,6 +22,7 @@ NOISE_ERROR_RATE: Final = 0.15
 CPU_BURN_SECONDS: Final = 0.05
 CPU_REST_SECONDS: Final = 0.01
 ERROR_PATH_MODULUS: Final = 4
+DEFAULT_CONFIG: Final[dict[str, str]] = {"items_database": "lab"}
 
 
 class Profile(StrEnum):
@@ -42,6 +43,8 @@ class Behaviour:
     # B-F10: a latent code path of the *current* release starts failing (for
     # example after a data change); no deploy and no config change happen.
     error_path: bool = False
+    # Runtime configuration pushed by the lab config controller (B-F13).
+    config: dict[str, str] = field(default_factory=lambda: dict(DEFAULT_CONFIG))
     rng: random.Random = field(default_factory=lambda: random.Random(4242))  # noqa: S311
     _leak: list[bytearray] = field(default_factory=list)
     _cpu_stop: threading.Event | None = None
@@ -54,6 +57,7 @@ class Behaviour:
             "cpu_load": self.cpu_load_active,
             "noise_active": time.time() < self.noise_until,
             "error_path": self.error_path,
+            "config": dict(self.config),
             "leaked_bytes": self.leaked_bytes,
         }
 
@@ -119,6 +123,7 @@ class Behaviour:
         self.deploy("rel-1", Profile.HEALTHY)
         self.noise_until = 0.0
         self.error_path = False
+        self.config = dict(DEFAULT_CONFIG)
 
 
 def unit_price_cents(item: dict[str, object]) -> int:

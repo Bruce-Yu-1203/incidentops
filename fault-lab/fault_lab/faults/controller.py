@@ -14,6 +14,8 @@ never exposed.
 
 from __future__ import annotations
 
+import asyncio
+import contextlib
 import hashlib
 import json
 import sqlite3
@@ -28,6 +30,13 @@ from fault_lab.faults.app import DbLockFixture, FixtureNotFoundError
 
 HEALTHY_RELEASE: Final = "rel-1"
 NO_BLOCKER: Final = "none"
+GOOD_CONFIG: Final = "cfg-1"
+BASELINE_CONFIG: Final[dict[str, str]] = {"items_database": "lab"}
+# Bad configuration profiles the benchmark can roll out (B-F13). The profile
+# name stays here; readers only see the changed keys and values.
+BAD_CONFIGS: Final[dict[str, dict[str, str]]] = {
+    "bad_items_database": {"items_database": "lab_replica"},
+}
 
 
 class RemediationType(StrEnum):
@@ -35,6 +44,9 @@ class RemediationType(StrEnum):
     RESTART_LAB_DEPENDENCY = "restart_lab_dependency"
     ROLLBACK_DEMO_API = "rollback_demo_api"
     STOP_LAB_CPU_LOAD = "stop_lab_cpu_load"
+    RESET_LAB_LOAD_PROFILE = "reset_lab_load_profile"
+    RELEASE_LAB_IDLE_CONNECTIONS = "release_lab_idle_connections"
+    REVERT_LAB_CONFIG = "revert_lab_config"
 
 
 # Each remediation applies only to these registered targets.
@@ -43,6 +55,9 @@ REMEDIATION_TARGETS: Final[dict[RemediationType, frozenset[str]]] = {
     RemediationType.RESTART_LAB_DEPENDENCY: frozenset({"lab-redis", "lab-kafka", "lab-postgres"}),
     RemediationType.ROLLBACK_DEMO_API: frozenset({"lab-api"}),
     RemediationType.STOP_LAB_CPU_LOAD: frozenset({"lab-cpu-load"}),
+    RemediationType.RESET_LAB_LOAD_PROFILE: frozenset({"lab-loadgen"}),
+    RemediationType.RELEASE_LAB_IDLE_CONNECTIONS: frozenset({"lab-postgres"}),
+    RemediationType.REVERT_LAB_CONFIG: frozenset({"lab-api-config"}),
 }
 
 
@@ -82,6 +97,19 @@ class OutageControl(Protocol):
     async def stop(self) -> None: ...
 
 
+class LoadProfileControl(Protocol):
+    async def set_rate(self, rate_per_second: float) -> None: ...
+    async def reset(self) -> None: ...
+
+
+class _NoLoad:
+    async def set_rate(self, rate_per_second: float) -> None:
+        return None
+
+    async def reset(self) -> None:
+        return None
+
+
 class _NoOutage:
     async def start(self, seconds: float) -> None:
         return None
@@ -98,6 +126,14 @@ class Deployment:
 
 
 @dataclass
+class ConfigChange:
+    revision: str
+    changed_at: str
+    actor: str
+    changes: dict[str, str]
+
+
+@dataclass
 class LabState:
     current_release: str = HEALTHY_RELEASE
     next_release: int = 2
@@ -110,6 +146,12 @@ class LabState:
     kafka_partitioned: bool = False
     postgres_generation: int = 1
     postgres_refusing: bool = False
+    load_generation: int = 1
+    load_surging: bool = False
+    config_revision: str = GOOD_CONFIG
+    next_config: int = 2
+    config: dict[str, str] = field(default_factory=lambda: dict(BASELINE_CONFIG))
+    config_history: list[ConfigChange] = field(default_factory=list)
 
 
 class ReceiptStore(Protocol):
@@ -155,6 +197,8 @@ class LabController:
         ledger: ReceiptStore,
         kafka: OutageControl | None = None,
         postgres: OutageControl | None = None,
+        load: LoadProfileControl | None = None,
+        connection_hoard: DbLockFixture | None = None,
     ) -> None:
         self._db_lock = db_lock
         self._lab_api = lab_api
@@ -162,6 +206,8 @@ class LabController:
         self._ledger = ledger
         self._kafka = kafka or _NoOutage()
         self._postgres = postgres or _NoOutage()
+        self._load = load or _NoLoad()
+        self.connection_hoard = connection_hoard or DbLockFixture(_idle, name="connection_hoard")
         self.state = LabState()
         self._mutex = asyncio_lock()
 
@@ -172,12 +218,19 @@ class LabController:
             # Composite: one approval is bound to both the server generation and
             # the exact blocking fixture, so either changing makes it stale.
             lock = self._db_lock.status()["db_lock"]
-            token = str(lock["fixture_token"]) if lock else None
-            return f"pg-gen-{self.state.postgres_generation}.lock-{_digest(token)}"
+            hoard = self.connection_hoard.status()["connection_hoard"]
+            return (
+                f"pg-gen-{self.state.postgres_generation}"
+                f".lock-{_digest(_token(lock))}.pool-{_digest(_token(hoard))}"
+            )
         if target_id == "lab-redis":
             return f"redis-gen-{self.state.redis_generation}"
         if target_id == "lab-kafka":
             return f"kafka-gen-{self.state.kafka_generation}"
+        if target_id == "lab-loadgen":
+            return f"load-gen-{self.state.load_generation}"
+        if target_id == "lab-api-config":
+            return self.state.config_revision
         if target_id == "lab-api":
             return self.state.current_release
         if target_id == "lab-cpu-load":
@@ -190,6 +243,15 @@ class LabController:
             "current_release": self.state.current_release,
             "pinned_healthy_release": HEALTHY_RELEASE,
             "history": [d.__dict__ for d in self.state.deployments[-20:]],
+        }
+
+    def config_changes(self) -> dict[str, Any]:
+        return {
+            "service_id": "lab-api",
+            "current_revision": self.state.config_revision,
+            "pinned_good_revision": GOOD_CONFIG,
+            "current": dict(self.state.config),
+            "history": [c.__dict__ for c in self.state.config_history[-20:]],
         }
 
     def operation(self, action_id: str) -> dict[str, Any] | None:
@@ -232,15 +294,38 @@ class LabController:
     async def enable_error_path(self) -> None:
         await self._lab_api.update(error_path=True)
 
+    async def surge_traffic(self, rate_per_second: float) -> None:
+        async with self._mutex:
+            await self._load.set_rate(rate_per_second)
+            self.state.load_surging = True
+
+    async def apply_bad_config(self, profile: str) -> None:
+        async with self._mutex:
+            changes = BAD_CONFIGS[profile]
+            revision = f"cfg-{self.state.next_config}"
+            self.state.next_config += 1
+            await self._set_config(revision, {**self.state.config, **changes}, "config-pipeline")
+
+    async def _set_config(self, revision: str, config: dict[str, str], actor: str) -> None:
+        await self._lab_api.update(config=config)
+        changes = {k: v for k, v in config.items() if self.state.config.get(k) != v}
+        self.state.config = dict(config)
+        self.state.config_revision = revision
+        self.state.config_history.append(ConfigChange(revision, _now(), actor, changes))
+
     async def reset(self) -> None:
         async with self._mutex:
             await self._db_lock.reset()
+            await self.connection_hoard.reset()
+            await self._load.reset()
             await self._redis.unpause()
             await self._kafka.stop()
             await self._postgres.stop()
             await self._lab_api.update(reset=True)
             if self.state.current_release != HEALTHY_RELEASE:
                 self._record_deploy(HEALTHY_RELEASE, actor="lab-reset")
+            if self.state.config_revision != GOOD_CONFIG:
+                await self._set_config(GOOD_CONFIG, dict(BASELINE_CONFIG), "lab-reset")
             self.state.redis_paused = False
             self.state.cpu_running = False
             self.state.kafka_partitioned = False
@@ -249,6 +334,8 @@ class LabController:
             self.state.cpu_generation += 1
             self.state.kafka_generation += 1
             self.state.postgres_generation += 1
+            self.state.load_surging = False
+            self.state.load_generation += 1
 
     def _record_deploy(self, release: str, actor: str) -> None:
         self.state.current_release = release
@@ -320,6 +407,25 @@ class LabController:
             await self._lab_api.update(cpu_load=False)
             self.state.cpu_running = False
             self.state.cpu_generation += 1
+        elif action_type is RemediationType.RESET_LAB_LOAD_PROFILE:
+            # Only the pinned baseline profile of the registered generator.
+            await self._load.reset()
+            self.state.load_surging = False
+            self.state.load_generation += 1
+        elif action_type is RemediationType.RELEASE_LAB_IDLE_CONNECTIONS:
+            # Only the known hoarding fixture named by the approved revision.
+            hoard = self.connection_hoard.status()["connection_hoard"]
+            if hoard is None:
+                raise StaleRevisionError("no idle connections to release")
+            try:
+                await self.connection_hoard.release(str(hoard["fixture_token"]))
+            except FixtureNotFoundError as exc:
+                raise StaleRevisionError("no active connection fixture") from exc
+        elif action_type is RemediationType.REVERT_LAB_CONFIG:
+            if arguments.get("target_config") != GOOD_CONFIG:
+                # Never apply an arbitrary configuration: only the pinned one.
+                raise RemediationError("revert target must be the last known good config")
+            await self._set_config(GOOD_CONFIG, dict(BASELINE_CONFIG), "incidentops-executor")
 
     async def _restart(self, target_id: str) -> None:
         """Restore a dependency's baseline configuration (ADR-020, ADR-024)."""
@@ -337,6 +443,16 @@ class LabController:
             self.state.postgres_generation += 1
         else:  # pragma: no cover - guarded by REMEDIATION_TARGETS
             raise WrongTargetError(f"cannot restart {target_id}")
+
+
+async def _idle(release: asyncio.Event, hold_seconds: float) -> None:
+    """Placeholder holder for controllers built without a live hoard."""
+    with contextlib.suppress(TimeoutError):
+        await asyncio.wait_for(release.wait(), timeout=hold_seconds)
+
+
+def _token(status: dict[str, Any] | None) -> str | None:
+    return str(status["fixture_token"]) if status else None
 
 
 def _digest(token: str | None) -> str:

@@ -14,7 +14,7 @@ import time
 import traceback
 from collections.abc import AsyncIterator, Awaitable, Callable
 from contextlib import asynccontextmanager
-from typing import Annotated, Any, Protocol
+from typing import Annotated, Any, Literal, Protocol
 
 from fastapi import FastAPI, Header, HTTPException, Path, Request, Response
 from fastapi.responses import PlainTextResponse
@@ -43,7 +43,7 @@ class Dependencies(Protocol):
     async def check_cache(self) -> None: ...
     async def touch_cache(self) -> None: ...
     async def count_events(self) -> int: ...
-    async def get_item(self, item_id: int) -> dict[str, Any] | None: ...
+    async def get_item(self, item_id: int, database: str = "lab") -> dict[str, Any] | None: ...
 
 
 class BehaviourUpdate(BaseModel):
@@ -55,6 +55,14 @@ class BehaviourUpdate(BaseModel):
     cpu_load: bool | None = None
     noise_seconds: Annotated[float, Field(ge=0, le=600)] | None = None
     error_path: bool | None = None
+    # Only known keys with identifier-like values (never DSNs or hosts).
+    config: (
+        dict[
+            Literal["items_database"],
+            Annotated[str, Field(pattern=r"^[a-z][a-z0-9_]{0,31}$")],
+        ]
+        | None
+    ) = None
     reset: bool = False
 
 
@@ -164,6 +172,8 @@ def create_app(
             behaviour.start_noise(body.noise_seconds)
         if body.error_path is not None:
             behaviour.error_path = body.error_path
+        if body.config is not None:
+            behaviour.config = {**behaviour.config, **{str(k): v for k, v in body.config.items()}}
         _publish_release()
         return behaviour.snapshot()
 
@@ -192,7 +202,7 @@ def create_app(
             span.set_attribute("db.system", "postgresql")
             span.set_attribute("db.collection.name", "lab_items")
             try:
-                item = await deps.get_item(item_id)
+                item = await deps.get_item(item_id, behaviour.config["items_database"])
             except Exception as exc:
                 span.set_status(Status(StatusCode.ERROR))
                 LOGGER.error("item query failed: %s", type(exc).__name__)
@@ -231,11 +241,14 @@ class LiveDependencies:  # pragma: no cover - exercised by the live lab smoke te
         # as API errors (B-F02).
         await self._cache.incr("lab:item_hits")
 
-    async def _connect(self) -> Any:
+    async def _connect(self, database: str | None = None) -> Any:
         import psycopg
 
+        # The configured database name only overrides dbname within the
+        # server-side DSN; host, role and credentials never come from config.
+        extra: dict[str, Any] = {"dbname": database} if database else {}
         return await psycopg.AsyncConnection.connect(
-            self._dsn, connect_timeout=2, options=self._options, autocommit=True
+            self._dsn, connect_timeout=2, options=self._options, autocommit=True, **extra
         )
 
     async def prepare(self) -> None:
@@ -275,8 +288,8 @@ class LiveDependencies:  # pragma: no cover - exercised by the live lab smoke te
             row = await cur.fetchone()
             return int(row[0]) if row else 0
 
-    async def get_item(self, item_id: int) -> dict[str, Any] | None:
-        conn = await self._connect()
+    async def get_item(self, item_id: int, database: str = "lab") -> dict[str, Any] | None:
+        conn = await self._connect(database)
         async with conn:
             cur = await conn.execute("SELECT id, name FROM lab_items WHERE id = %s", (item_id,))
             row = await cur.fetchone()

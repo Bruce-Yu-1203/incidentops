@@ -57,18 +57,23 @@ class ActiveLock:
 
 
 class DbLockFixture:
-    """At most one active lock fixture at a time."""
+    """At most one active fixture of this kind at a time.
 
-    def __init__(self, holder: LockHolder) -> None:
+    The holder decides what is held (a table lock for B-F01, idle connections
+    for B-F12); the fixture only tracks its token, bound and release.
+    """
+
+    def __init__(self, holder: LockHolder, name: str = "db_lock") -> None:
         self._holder = holder
+        self._name = name
         self._active: ActiveLock | None = None
 
     def status(self) -> dict[str, Any]:
         active = self._active
         if active is None or active.task.done():
-            return {"db_lock": None}
+            return {self._name: None}
         return {
-            "db_lock": {
+            self._name: {
                 "fixture_token": active.fixture_token,
                 "started_at": active.started_at.isoformat(),
                 "hold_seconds": active.hold_seconds,
@@ -77,7 +82,7 @@ class DbLockFixture:
 
     async def inject(self, fixture_token: str, hold_seconds: float) -> dict[str, Any]:
         if self._active is not None and not self._active.task.done():
-            raise FixtureConflictError("a db lock fixture is already active")
+            raise FixtureConflictError(f"a {self._name} fixture is already active")
         release = asyncio.Event()
         task = asyncio.create_task(self._holder(release, hold_seconds))
         self._active = ActiveLock(fixture_token, datetime.now(UTC), hold_seconds, release, task)
@@ -85,7 +90,7 @@ class DbLockFixture:
         await asyncio.sleep(0.2)
         if task.done() and task.exception() is not None:
             self._active = None
-            raise RuntimeError("failed to acquire lab db lock") from task.exception()
+            raise RuntimeError(f"failed to start the {self._name} fixture") from task.exception()
         return self.status()
 
     async def release(self, fixture_token: str) -> None:
@@ -121,6 +126,41 @@ def postgres_lock_holder(dsn: str) -> LockHolder:  # pragma: no cover - live lab
     return hold
 
 
+MAX_HOARDED_CONNECTIONS = 200
+
+
+def postgres_connection_hoarder(dsn: str) -> LockHolder:  # pragma: no cover - live lab only
+    """Open idle connections as the API's own role until PostgreSQL refuses more.
+
+    Simulates leaked application connections (B-F12): every non-reserved slot
+    ends up held by an idle session, so the API cannot connect, while the
+    monitoring role (``pg_use_reserved_connections``) and superusers can.
+    """
+
+    async def hold(release: asyncio.Event, hold_seconds: float) -> None:
+        import psycopg
+
+        held: list[Any] = []
+        try:
+            while len(held) < MAX_HOARDED_CONNECTIONS and not release.is_set():
+                try:
+                    held.append(await psycopg.AsyncConnection.connect(dsn, connect_timeout=3))
+                except psycopg.OperationalError:
+                    # Slots exhausted; keep trying in case a slot frees up.
+                    with contextlib.suppress(TimeoutError):
+                        await asyncio.wait_for(release.wait(), timeout=0.5)
+            LOGGER.info("holding %d idle connections for %.0fs", len(held), hold_seconds)
+            with contextlib.suppress(TimeoutError):
+                await asyncio.wait_for(release.wait(), timeout=hold_seconds)
+        finally:
+            for conn in held:
+                with contextlib.suppress(Exception):
+                    await conn.close()
+            LOGGER.info("released %d idle connections", len(held))
+
+    return hold
+
+
 class InjectRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
     action_id: FixtureToken
@@ -136,6 +176,18 @@ class FaultRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
     action_id: FixtureToken
     seconds: Annotated[float, Field(gt=0, le=MAX_HOLD_SECONDS)] = 300
+
+
+class SurgeRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    action_id: FixtureToken
+    rate_per_second: Annotated[float, Field(gt=0, le=200)]
+
+
+class ConfigRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    action_id: FixtureToken
+    profile: Literal["bad_items_database"]
 
 
 class DeployRequest(BaseModel):
@@ -157,6 +209,7 @@ def create_app(
     fixture: DbLockFixture,
     authenticator: LabAuthenticator,
     controller: "LabController | None" = None,
+    hoard: DbLockFixture | None = None,
 ) -> FastAPI:
     from fault_lab.faults.controller import (
         LabController,
@@ -165,11 +218,13 @@ def create_app(
     )
 
     lab = controller or LabController(fixture, _NullLabApi(), _NullRedis(), _MemoryLedger())
+    connections = hoard or lab.connection_hoard
 
     @asynccontextmanager
     async def lifespan(_: FastAPI) -> AsyncIterator[None]:
         yield
         await fixture.reset()
+        await connections.reset()
 
     app = FastAPI(title="Fault Lab fault controller", lifespan=lifespan)
 
@@ -201,7 +256,11 @@ def create_app(
 
     @app.get("/faults")
     async def status(_: Benchmark) -> dict[str, Any]:
-        return {**fixture.status(), "lab": lab.state.__dict__ | {"deployments": None}}
+        return {
+            **fixture.status(),
+            **connections.status(),
+            "lab": lab.state.__dict__ | {"deployments": None, "config_history": None},
+        }
 
     @app.post("/faults/db-lock", status_code=201)
     async def inject(body: InjectRequest, _: Benchmark) -> dict[str, Any]:
@@ -230,6 +289,23 @@ def create_app(
     @app.post("/faults/cpu-load", status_code=201)
     async def cpu_load(body: FaultRequest, _: Benchmark) -> dict[str, str]:
         await lab.start_cpu_load()
+        return {"status": "injected"}
+
+    @app.post("/faults/connection-hoard", status_code=201)
+    async def connection_hoard(body: InjectRequest, _: Benchmark) -> dict[str, Any]:
+        try:
+            return await connections.inject(body.action_id, body.hold_seconds)
+        except FixtureConflictError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+    @app.post("/faults/traffic-surge", status_code=201)
+    async def traffic_surge(body: SurgeRequest, _: Benchmark) -> dict[str, str]:
+        await lab.surge_traffic(body.rate_per_second)
+        return {"status": "injected"}
+
+    @app.post("/faults/config", status_code=201)
+    async def bad_config(body: ConfigRequest, _: Benchmark) -> dict[str, Any]:
+        await lab.apply_bad_config(body.profile)
         return {"status": "injected"}
 
     @app.post("/faults/kafka-outage", status_code=201)
@@ -270,6 +346,10 @@ def create_app(
     async def deployments(_: AnyRole) -> dict[str, Any]:
         return lab.deployments()
 
+    @app.get("/config-changes/lab-api")
+    async def config_changes(_: AnyRole) -> dict[str, Any]:
+        return lab.config_changes()
+
     @app.get("/remediations/operations/{action_id}")
     async def remediation_operation(action_id: str, role: AnyRole) -> dict[str, Any]:
         if role is LabRole.READER:
@@ -279,7 +359,7 @@ def create_app(
             raise HTTPException(status_code=404, detail="operation not found")
         return record
 
-    # ---- executor: the four allowlisted remediations only ----
+    # ---- executor: the allowlisted remediations only ----
 
     @app.post("/remediations")
     async def remediate(body: RemediationRequest, _: Executor) -> JSONResponse:
@@ -424,6 +504,29 @@ class HttpKafkaPartition:  # pragma: no cover - live lab only
         await self._post({"blocked": False})
 
 
+class HttpLoadProfile:  # pragma: no cover - live lab only
+    """Changes the lab load generator's request rate (B-F11)."""
+
+    def __init__(self, base_url: str, token: str) -> None:
+        self._base = base_url.rstrip("/")
+        self._headers = {"Authorization": f"Bearer {token}"}
+
+    async def _post(self, body: dict[str, Any]) -> None:
+        import httpx
+
+        async with httpx.AsyncClient(timeout=5) as client:
+            response = await client.post(
+                f"{self._base}/internal/load-profile", json=body, headers=self._headers
+            )
+            response.raise_for_status()
+
+    async def set_rate(self, rate_per_second: float) -> None:
+        await self._post({"rate_per_second": rate_per_second})
+
+    async def reset(self) -> None:
+        await self._post({"reset": True})
+
+
 class LivePostgresRefusal:  # pragma: no cover - live lab only
     """Makes the lab database refuse every connection, without container control.
 
@@ -476,6 +579,9 @@ def main() -> None:  # pragma: no cover - container entry point
     from fault_lab.faults.controller import LabController, Ledger
 
     fixture = DbLockFixture(postgres_lock_holder(os.environ["LAB_DATABASE_DSN"]))
+    hoard = DbLockFixture(
+        postgres_connection_hoarder(os.environ["LAB_APP_DATABASE_DSN"]), name="connection_hoard"
+    )
     controller = LabController(
         fixture,
         HttpLabApi(os.environ["LAB_API_URL"], os.environ["FAULT_LAB_INTERNAL_TOKEN"]),
@@ -486,8 +592,13 @@ def main() -> None:  # pragma: no cover - container entry point
             os.environ["FAULT_LAB_INTERNAL_TOKEN"],
         ),
         postgres=LivePostgresRefusal(os.environ["LAB_DATABASE_DSN"]),
+        load=HttpLoadProfile(
+            os.environ.get("LAB_LOADGEN_URL", "http://lab-loadgen:8083"),
+            os.environ["FAULT_LAB_INTERNAL_TOKEN"],
+        ),
+        connection_hoard=hoard,
     )
-    app = create_app(fixture, LabAuthenticator.from_env(), controller)
+    app = create_app(fixture, LabAuthenticator.from_env(), controller, hoard)
     uvicorn.run(app, host="0.0.0.0", port=int(os.environ.get("PORT", "8090")))  # noqa: S104
 
 

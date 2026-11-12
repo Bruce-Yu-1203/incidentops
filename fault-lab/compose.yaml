@@ -22,6 +22,16 @@ services:
       POSTGRES_USER: lab
       POSTGRES_PASSWORD: ${LAB_DB_PASSWORD:-lab}
       POSTGRES_DB: lab
+    # 80 slots: 3 reserved for superusers, 3 for the monitoring role, 74 for
+    # ordinary roles such as lab_app (ADR-024, B-F12).
+    command:
+      - postgres
+      - -c
+      - max_connections=80
+      - -c
+      - superuser_reserved_connections=3
+      - -c
+      - reserved_connections=3
     volumes:
       - ./postgres/init.sql:/docker-entrypoint-initdb.d/10-monitoring.sql:ro
     networks: [lab]
@@ -102,7 +112,8 @@ services:
     <<: *python-service
     command: ["python", "-m", "fault_lab.api.app"]
     environment:
-      LAB_DATABASE_DSN: postgresql://lab:${LAB_DB_PASSWORD:-lab}@lab-postgres:5432/lab
+      # Ordinary application role (no superuser slots), see postgres/init.sql.
+      LAB_DATABASE_DSN: postgresql://lab_app:lab_app@lab-postgres:5432/lab
       LAB_REDIS_URL: redis://lab-redis:6379/0
       PORT: "8080"
       # Traces and logs go to the collector in infra/compose.yaml when it runs.
@@ -176,6 +187,8 @@ services:
       LAB_LOAD_RPS: ${LAB_LOAD_RPS:-10}
       LAB_LOAD_SEED: ${LAB_LOAD_SEED:-2042}
       PORT: "8083"
+      # Lets only the fault controller change the load profile (B-F11).
+      FAULT_LAB_INTERNAL_TOKEN: ${FAULT_LAB_INTERNAL_TOKEN:?set in .env}
     depends_on:
       lab-api: {condition: service_healthy}
     healthcheck:
@@ -196,6 +209,9 @@ services:
       LAB_API_URL: http://lab-api:8080
       LAB_REDIS_URL: redis://lab-redis:6379/0
       LAB_KAFKA_PROXY_URL: http://lab-kafka-proxy:8094
+      LAB_LOADGEN_URL: http://lab-loadgen:8083
+      # The connection fixture uses the API's own role (B-F12).
+      LAB_APP_DATABASE_DSN: postgresql://lab_app:lab_app@lab-postgres:5432/lab
       LAB_LEDGER_PATH: /data/remediations.sqlite3
       PORT: "8090"
     volumes:
@@ -203,6 +219,7 @@ services:
     depends_on:
       lab-api: {condition: service_healthy}
       lab-kafka-proxy: {condition: service_healthy}
+      lab-loadgen: {condition: service_healthy}
     ports: ["127.0.0.1:18090:8090"]
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8090/healthz', timeout=2)"]

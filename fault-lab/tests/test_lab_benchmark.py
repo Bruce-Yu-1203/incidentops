@@ -348,6 +348,9 @@ KNOWN_INJECTIONS = {
     "slow_consumer",
     "postgres_outage",
     "enable_error_path",
+    "traffic_surge",
+    "hoard_connections",
+    "bad_config",
 }
 
 
@@ -380,6 +383,27 @@ def test_every_case_has_probes_and_a_known_injection(manifest: ScenarioManifest)
             "POST",
             "http://faults/faults/error-path",
             {"action_id": "bench-1"},
+        ),
+        (
+            "traffic_surge",
+            {"rate_per_second": 60},
+            "POST",
+            "http://faults/faults/traffic-surge",
+            {"action_id": "bench-1", "rate_per_second": 60},
+        ),
+        (
+            "hoard_connections",
+            {"hold_seconds": 420},
+            "POST",
+            "http://faults/faults/connection-hoard",
+            {"action_id": "bench-1", "hold_seconds": 420},
+        ),
+        (
+            "bad_config",
+            {"profile": "bad_items_database"},
+            "POST",
+            "http://faults/faults/config",
+            {"action_id": "bench-1", "profile": "bad_items_database"},
         ),
         (
             "slow_consumer",

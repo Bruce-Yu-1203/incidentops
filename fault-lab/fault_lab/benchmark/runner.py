@@ -26,6 +26,8 @@ LAB_SERVICES = {
     "persist-demo-consumer",
     "demo-producer",
     "lab-kafka",
+    "lab-loadgen",
+    "lab-api-config",
 }
 # DIAGNOSED is transient: a proposal is still being policy-evaluated.
 IN_PROGRESS = {"RECEIVED", "TRIAGED", "INVESTIGATING", "DIAGNOSED"}

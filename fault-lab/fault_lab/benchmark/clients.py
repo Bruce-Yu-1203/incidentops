@@ -56,6 +56,18 @@ class LabFaults:
             )
         elif operation == "enable_error_path":
             self._post("/faults/error-path", {"action_id": action_id})
+        elif operation == "traffic_surge":
+            self._post(
+                "/faults/traffic-surge",
+                {"action_id": action_id, "rate_per_second": params.get("rate_per_second", 60)},
+            )
+        elif operation == "hoard_connections":
+            self._post(
+                "/faults/connection-hoard",
+                {"action_id": action_id, "hold_seconds": params.get("hold_seconds", 300)},
+            )
+        elif operation == "bad_config":
+            self._post("/faults/config", {"action_id": action_id, "profile": params["profile"]})
         elif operation == "slow_consumer":
             self.consumer.slow(int(params.get("delay_ms", 100)), action_id)
         elif operation == "error_burst":

@@ -30,9 +30,11 @@ class FakeDeps:
         if self.cache_down:
             raise ConnectionError("redis paused")
 
-    async def get_item(self, item_id: int) -> dict[str, Any] | None:
+    async def get_item(self, item_id: int, database: str = "lab") -> dict[str, Any] | None:
         if not self.healthy:
             raise TimeoutError("statement timeout")
+        if database != "lab":
+            raise ConnectionError(f'database "{database}" does not exist')
         return {"id": item_id, "name": f"item-{item_id}"} if item_id <= 10 else None
 
     async def check_database(self) -> None:
@@ -159,3 +161,33 @@ async def test_send_failures_are_counted_not_fatal(producer: _FlakyProducer, ok:
 def test_producer_exposes_send_errors() -> None:
     with TestClient(create_producer(rate_per_second=20, seed=1, run_loop=False)) as client:
         assert "lab_producer_send_errors_total 0.0" in client.get("/metrics").text
+
+
+def test_loadgen_profile_needs_the_internal_token_and_is_bounded() -> None:
+    app = create_loadgen(
+        "http://api",
+        rate_per_second=10,
+        seed=1,
+        run_loop=False,
+        internal_token="internal-token-0123456789",
+    )
+    client = TestClient(app)
+    auth = {"Authorization": "Bearer internal-token-0123456789"}
+    assert client.post("/internal/load-profile", json={"rate_per_second": 60}).status_code == 403
+    assert client.post(
+        "/internal/load-profile", json={"rate_per_second": 60}, headers=auth
+    ).json() == {"rate_per_second": 60.0}
+    assert (
+        client.post(
+            "/internal/load-profile", json={"rate_per_second": 5000}, headers=auth
+        ).status_code
+        == 422
+    )
+    assert client.post("/internal/load-profile", json={"reset": True}, headers=auth).json() == {
+        "rate_per_second": 10.0
+    }
+    untokened = TestClient(create_loadgen("http://api", 10, 1, run_loop=False))
+    assert (
+        untokened.post("/internal/load-profile", json={"reset": True}, headers=auth).status_code
+        == 403
+    )
