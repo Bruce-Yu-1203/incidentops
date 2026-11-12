@@ -48,3 +48,14 @@ implemented.
   2026-11-10 analysis: the leak cap flattening memory before investigation,
   and a lookback that still holds an earlier trial's peak. The leak cap stays
   in place to protect the lab host.
+
+### Tool blind spots
+
+- `search_logs` now applies to `kafka_consumer` and `kafka_producer` services.
+  The consumer and producer export their logs over OTLP like the API, with the
+  catalog `service_id` as `service.name`, so the same server-built LogQL
+  (`{service_name="<service_id>"}`) finds them.
+- New read-only tool `get_redis_health` (Redis services only): four instant
+  Prometheus reads from the existing exporter (`redis_up`, memory, connected
+  clients, command rate), each from a predeclared template. Same gateway
+  limits as `get_postgres_health` (3 s timeout, 10 calls per run, 4 KiB).

@@ -19,6 +19,7 @@ from incidentops.tools.specs import (
     DeploymentsInput,
     PostgresHealthInput,
     QueryMetricsInput,
+    RedisHealthInput,
     SearchLogsInput,
     SearchTracesInput,
     _Input,
@@ -283,6 +284,48 @@ async def get_postgres_health(
     )
 
 
+REDIS_HEALTH_TEMPLATES: Final = (
+    "redis_up",
+    "redis_memory_used_bytes",
+    "redis_connected_clients",
+    "redis_commands_per_second",
+)
+
+
+async def get_redis_health(
+    args: _Input, catalog: ServiceCatalog, backend: TelemetryBackend, now: datetime
+) -> ToolOutput:
+    args = _expect(args, RedisHealthInput)
+    service = _service(catalog, args.service_id)
+    readings: dict[str, float | None] = {}
+    for template_id in REDIS_HEALTH_TEMPLATES:
+        try:
+            query = TEMPLATES[template_id].render(service)
+        except TemplateNotApplicableError as exc:
+            raise ScopeError(str(exc)) from exc
+        series = await backend.prometheus_instant(query)
+        # The exporter reports one series per Redis; "no data" stays None.
+        values = [s.points[-1][1] for s in series if s.points]
+        readings[template_id] = round(values[0], 3) if values else None
+
+    def show(value: float | None, digits: int = 0) -> str:
+        return "no data" if value is None else f"{value:.{digits}f}"
+
+    memory = readings["redis_memory_used_bytes"]
+    return ToolOutput(
+        EvidenceSource.PROMETHEUS,
+        "redis_health",
+        {"service_id": service.service_id},
+        now,
+        now,
+        f"{service.service_id} up={show(readings['redis_up'])} "
+        f"memory_mb={show(None if memory is None else memory / 1e6, 1)} "
+        f"connected_clients={show(readings['redis_connected_clients'])} "
+        f"commands_per_second={show(readings['redis_commands_per_second'], 1)}",
+        readings,
+    )
+
+
 async def get_recent_deployments(
     args: _Input, catalog: ServiceCatalog, backend: TelemetryBackend, now: datetime
 ) -> ToolOutput:
@@ -329,5 +372,6 @@ EXECUTORS: Final[Mapping[str, Executor]] = MappingProxyType(
         "get_consumer_status": get_consumer_status,
         "get_postgres_health": get_postgres_health,
         "get_recent_deployments": get_recent_deployments,
+        "get_redis_health": get_redis_health,
     }
 )

@@ -69,3 +69,10 @@ def test_lab_dockerfile_installs_from_hashed_lock() -> None:
 def test_lab_api_returns_leaked_memory_between_trials() -> None:
     env = _env(_services(LAB)["lab-api"])
     assert env["MALLOC_MMAP_THRESHOLD_"] == "131072"
+
+
+def test_kafka_clients_export_logs_for_search_logs() -> None:
+    # search_logs covers kafka_consumer and kafka_producer services (ADR-024).
+    services = _services(LAB)
+    for name in ("lab-api", "lab-consumer", "demo-producer"):
+        assert _env(services[name])["OTEL_EXPORTER_OTLP_ENDPOINT"] == ("http://otel-collector:4318")

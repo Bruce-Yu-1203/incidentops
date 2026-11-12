@@ -26,6 +26,7 @@ from fastapi.responses import JSONResponse, PlainTextResponse
 from prometheus_client import CollectorRegistry, Counter, Gauge, generate_latest
 from pydantic import BaseModel, ConfigDict, Field
 
+from fault_lab import telemetry
 from fault_lab.auth import LabAuthenticator, LabRole
 from fault_lab.consumer.controller import ConsumerController, ControlError, Operation
 
@@ -264,6 +265,9 @@ def main() -> None:  # pragma: no cover - container entry point
     import uvicorn
 
     logging.basicConfig(level=logging.INFO)
+    # The catalog's service_id is the OTLP service.name, so search_logs can
+    # find the consumer's logs in Loki.
+    telemetry.configure(os.environ.get("LAB_CONSUMER_ID", "persist-demo-consumer"))
     controller = ConsumerController(
         os.environ.get("LAB_CONSUMER_ID", "persist-demo-consumer"),
         os.environ.get("LAB_LEDGER_PATH", "/data/ledger.sqlite3"),

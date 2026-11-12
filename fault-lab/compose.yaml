@@ -109,6 +109,8 @@ services:
       LAB_PRODUCER_RATE: ${LAB_PRODUCER_RATE:-20}
       LAB_PRODUCER_SEED: ${LAB_PRODUCER_SEED:-1042}
       PORT: "8082"
+      # Logs go to Loki through the collector (service.name=demo-producer).
+      OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-collector:4318
     depends_on:
       kafka-init: {condition: service_completed_successfully}
     ports: ["127.0.0.1:18082:8082"]
@@ -128,6 +130,8 @@ services:
       LAB_DATABASE_DSN: postgresql://lab:${LAB_DB_PASSWORD:-lab}@lab-postgres:5432/lab
       LAB_LEDGER_PATH: /data/ledger.sqlite3
       PORT: "8081"
+      # Logs go to Loki through the collector (service.name=persist-demo-consumer).
+      OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-collector:4318
     volumes:
       - consumer-ledger:/data
     depends_on:

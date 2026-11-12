@@ -16,6 +16,8 @@ from fastapi import FastAPI
 from fastapi.responses import PlainTextResponse
 from prometheus_client import CollectorRegistry, Counter, Gauge, generate_latest
 
+from fault_lab import telemetry
+
 LOGGER = logging.getLogger("fault_lab.producer")
 
 
@@ -88,6 +90,7 @@ def main() -> None:  # pragma: no cover - container entry point
     import uvicorn
 
     logging.basicConfig(level=logging.INFO)
+    telemetry.configure("demo-producer")
     app = create_app(
         rate_per_second=float(os.environ.get("LAB_PRODUCER_RATE", "20")),
         seed=int(os.environ.get("LAB_PRODUCER_SEED", "1042")),

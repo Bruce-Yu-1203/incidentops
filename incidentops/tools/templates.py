@@ -190,6 +190,20 @@ _ALL: Final = (
         lambda s: f"redis_memory_used_bytes{{{_sid(s)}}}",
         "bytes",
     ),
+    MetricTemplate(
+        "redis_connected_clients",
+        "Clients connected to Redis",
+        frozenset({ServiceKind.REDIS}),
+        lambda s: f"redis_connected_clients{{{_sid(s)}}}",
+        "clients",
+    ),
+    MetricTemplate(
+        "redis_commands_per_second",
+        "Commands processed by Redis per second (1m rate)",
+        frozenset({ServiceKind.REDIS}),
+        lambda s: f"rate(redis_commands_processed_total{{{_sid(s)}}}[1m])",
+        "commands/s",
+    ),
 )
 
 TEMPLATES: Final[Mapping[str, MetricTemplate]] = MappingProxyType({t.template_id: t for t in _ALL})

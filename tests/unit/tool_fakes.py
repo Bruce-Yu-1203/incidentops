@@ -33,6 +33,8 @@ class FakeBackend:
             "pinned_healthy_release": "rel-1",
             "history": [],
         }
+        # Instant-query fragment -> value (None: no series), longest match wins.
+        self.instant_overrides: dict[str, float | None] = {}
         self.delay = 0.0
         self.fail = False
 
@@ -62,6 +64,9 @@ class FakeBackend:
     async def prometheus_instant(self, query: str) -> list[Series]:
         await self._maybe_slow()
         self.queries.append(query)
+        for fragment, value in sorted(self.instant_overrides.items(), key=lambda kv: -len(kv[0])):
+            if fragment in query:
+                return [] if value is None else [Series({}, [(NOW.timestamp(), value)])]
         if "pg_locks_count" in query:
             mode = "accessexclusivelock" if self.db_locked else "accesssharelock"
             return [Series({"mode": mode}, [(NOW.timestamp(), 1.0)])]

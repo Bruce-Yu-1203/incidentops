@@ -80,6 +80,24 @@ async def test_successful_metric_query_creates_evidence_and_step() -> None:
             "tool_not_applicable",
         ),
         (
+            "get_redis_health",
+            {"service_id": "lab-postgres"},
+            ToolStatus.DENIED,
+            "tool_not_applicable",
+        ),
+        (
+            "get_redis_health",
+            {"service_id": "lab-redis", "url": "redis://evil:6379"},
+            ToolStatus.INVALID,
+            "invalid_arguments",
+        ),
+        (
+            "search_logs",
+            {"service_id": "lab-kafka"},
+            ToolStatus.DENIED,
+            "tool_not_applicable",
+        ),
+        (
             "get_kafka_consumer_lag",
             {"consumer_group_id": "other-group"},
             ToolStatus.DENIED,
@@ -250,7 +268,10 @@ def test_manifest_lists_templates_and_applicable_services() -> None:
     query = tools["query_metrics"]
     assert "kafka_broker_count" in query["input_schema"]["properties"]["template_id"]["enum"]
     assert "producer_send_rate (messages/s; services: demo-producer)" in query["description"]
-    assert tools["search_logs"]["description"].endswith("Applies to: lab-api.")
+    assert tools["search_logs"]["description"].endswith(
+        "Applies to: demo-producer, lab-api, persist-demo-consumer."
+    )
+    assert tools["get_redis_health"]["description"].endswith("Applies to: lab-redis.")
     assert "persist-demo-consumer" in tools["get_consumer_status"]["description"]
 
 
@@ -274,3 +295,48 @@ async def test_recent_deployments_tool_reports_release_changes() -> None:
         make_context(), "e", "get_recent_deployments", {"service_id": "lab-redis"}
     )
     assert denied.error_code == "tool_not_applicable"
+
+
+async def test_consumer_logs_are_searchable() -> None:
+    gateway, backend, evidence, _ = make_gateway()
+    result = await gateway.invoke(
+        make_context(), "tc", "search_logs", {"service_id": "persist-demo-consumer"}
+    )
+    assert result.status is ToolStatus.SUCCESS
+    assert backend.queries[-1] == '{service_name="persist-demo-consumer"}'
+    assert "hunter2" not in evidence.items[result.evidence_id or ""].snapshot
+
+
+async def test_redis_health_reads_four_instant_metrics() -> None:
+    gateway, backend, evidence, _ = make_gateway()
+    backend.instant_overrides = {
+        "redis_up": 1.0,
+        "redis_memory_used_bytes": 2_500_000.0,
+        "redis_connected_clients": 4.0,
+        "redis_commands_processed_total": 12.5,
+    }
+    result = await gateway.invoke(
+        make_context(), "r", "get_redis_health", {"service_id": "lab-redis"}
+    )
+    assert result.status is ToolStatus.SUCCESS
+    assert result.summary == (
+        "lab-redis up=1 memory_mb=2.5 connected_clients=4 commands_per_second=12.5"
+    )
+    assert backend.queries[-4:] == [
+        'redis_up{service_id="lab-redis"}',
+        'redis_memory_used_bytes{service_id="lab-redis"}',
+        'redis_connected_clients{service_id="lab-redis"}',
+        'rate(redis_commands_processed_total{service_id="lab-redis"}[1m])',
+    ]
+    stored = evidence.items[result.evidence_id or ""]
+    assert stored.query.template_id == "redis_health"
+
+
+async def test_redis_health_reports_missing_series_as_no_data() -> None:
+    gateway, backend, _, _ = make_gateway()
+    backend.instant_overrides = {"redis_": None}
+    result = await gateway.invoke(
+        make_context(), "r", "get_redis_health", {"service_id": "lab-redis"}
+    )
+    assert result.status is ToolStatus.SUCCESS
+    assert "up=no data" in result.summary
