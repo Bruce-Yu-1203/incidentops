@@ -104,6 +104,18 @@ tests:
         alertname: lab_api_error_ratio_high
         exp_alerts: []
 
+  - name: the error ratio is 0, not missing, before any 5xx response
+    interval: 5s
+    input_series:
+      - series: 'lab_api_http_requests_total{route="/items/{item_id}", status="200"}'
+        values: "0+10x30"
+    promql_expr_test:
+      - expr: lab_api:error_ratio_1m
+        eval_time: 120s
+        exp_samples:
+          - labels: "lab_api:error_ratio_1m"
+            value: 0
+
   - name: memory growth fires after a sustained increase
     interval: 15s
     input_series:

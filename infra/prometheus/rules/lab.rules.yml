@@ -9,8 +9,9 @@ groups:
           histogram_quantile(0.95,
             sum by (le) (rate(lab_api_http_request_duration_seconds_bucket{route="/items/{item_id}"}[1m])))
       - record: lab_api:error_ratio_1m
+        # "or vector(0)": with no 5xx series yet the ratio is 0, not "no data".
         expr: >-
-          sum(rate(lab_api_http_requests_total{route="/items/{item_id}", status=~"5.."}[1m]))
+          (sum(rate(lab_api_http_requests_total{route="/items/{item_id}", status=~"5.."}[1m])) or vector(0))
           / clamp_min(sum(rate(lab_api_http_requests_total{route="/items/{item_id}"}[1m])), 1e-9)
 
       - alert: lab_api_latency_p95_high
