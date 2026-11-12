@@ -409,6 +409,68 @@ class ChatAnswerer:
                 return None
             text, incident_id, asked_by = question.content, question.incident_id, question.author
             run_id = self._open_run(session, incident_id, asked_by)
+        try:
+            return await self._finish(started, message_id, text, incident_id, run_id)
+        except Exception as exc:
+            # Never leave the turn open: it would block every later question.
+            self._fail_run(run_id, incident_id, message_id, type(exc).__name__)
+            raise
+
+    def _fail_run(self, run_id: str, incident_id: str, message_id: str, error: str) -> None:
+        with self._factory.begin() as session:
+            run = session.get(InvestigationRunRow, run_id, with_for_update=True)
+            if run is None or run.state != RunState.RUNNING.value:
+                return
+            transition(
+                session,
+                InvestigationRunRow,
+                run_id,
+                expected_state=RunState.RUNNING,
+                expected_version=run.version,
+                target_state=RunState.FAILED,
+                audit=_audit(
+                    "chat_turn_finished",
+                    error,
+                    incident_id=incident_id,
+                    run_id=run_id,
+                    message_id=message_id,
+                ),
+                extra_values={"error_code": "harness_error", "finished_at": utcnow()},
+            )
+
+    def give_up(self, message_id: str, error: str) -> str | None:
+        """Answer a question whose job ran out of attempts, so the thread is not left waiting."""
+        with self._factory.begin() as session:
+            question = session.get(IncidentChatMessageRow, message_id)
+            if question is None or question.role != "user":
+                return None
+            if session.scalars(
+                select(IncidentChatMessageRow.id).where(
+                    IncidentChatMessageRow.reply_to == message_id
+                )
+            ).first():
+                return None
+            answer_id = new_id("msg")
+            session.add(
+                IncidentChatMessageRow(
+                    id=answer_id,
+                    incident_id=question.incident_id,
+                    role="assistant",
+                    author=ACTOR,
+                    content=(
+                        f"I could not answer this question: the chat worker failed ({error[:80]}). "
+                        "Nothing was changed. Please ask again; if it keeps failing, check the "
+                        "chat worker log."
+                    ),
+                    reply_to=message_id,
+                    cited_evidence_ids=[],
+                )
+            )
+        return answer_id
+
+    async def _finish(
+        self, started: float, message_id: str, text: str, incident_id: str, run_id: str
+    ) -> str:
         with self._factory() as session:
             context = load_context(session, incident_id, message_id)
 

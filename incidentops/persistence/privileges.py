@@ -3,8 +3,9 @@
 This matrix is the single source of truth for table privileges. Migrations
 apply it with explicit GRANT statements, and an integration test compares the
 live catalog with it. No role except the migration owner may UPDATE or DELETE
-audit events, and the agent role cannot touch actions, approvals, executions,
-verifications or user accounts.
+audit events, and the agent role cannot change actions, approvals, executions
+or verifications, or read user accounts. It may read actions and verifications
+for the chat agent's incident snapshot (ADR-023).
 """
 
 from __future__ import annotations
@@ -51,6 +52,9 @@ PRIVILEGES: Final[dict[str, dict[str, frozenset[str]]]] = {
         "agent_steps": frozenset({S, I}),
         "evidence": frozenset({S, I}),
         "diagnoses": frozenset({S, I}),
+        # Read-only, for the chat agent's incident snapshot (ADR-023).
+        "action_proposals": frozenset({S}),
+        "verifications": frozenset({S}),
         "audit_events": frozenset({I}),
         "outbox_jobs": frozenset({S, I, U}),
         # Answers to the incident chat; questions are written by the API.

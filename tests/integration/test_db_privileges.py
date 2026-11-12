@@ -216,3 +216,57 @@ async def test_agent_owns_checkpoints_only_in_langgraph_schema(
         role_engines["incidentops_agent"].begin() as conn,
     ):
         conn.execute(text("CREATE TABLE public.agent_scratch (id int)"))
+
+
+async def test_chat_and_reinvestigation_run_with_the_agent_role(
+    role_engines: dict[str, Engine], session_factory: sessionmaker[Session]
+) -> None:
+    """The chat worker and re-investigation read the full incident snapshot as the agent."""
+    from sqlalchemy import select, update
+
+    from incidentops.actions.proposals import ProposalEvaluator
+    from incidentops.agent.model import ScriptedModelAdapter
+    from incidentops.auth.service import AuthenticatedUser, HumanRole
+    from incidentops.chat import service as chat
+    from incidentops.chat.answerer import ChatAnswerer
+    from incidentops.domain.catalog import load_catalog
+    from incidentops.persistence.models import IncidentChatMessageRow, IncidentRow
+    from incidentops.policy.engine import PolicyEngine, load_policy
+    from incidentops.workers import control
+    from incidentops.workers.chat import process_chat_one
+    from incidentops.workers.common import process_next
+    from incidentops.workers.investigation import process_reinvestigation_one
+    from tests.integration.helpers import FakeInspector, diagnosed_incident
+    from tests.integration.test_investigation_worker import _runner
+    from tests.unit.test_investigation_graph import lag_and_status, submit
+
+    agent = sessionmaker(bind=role_engines["incidentops_agent"], expire_on_commit=False)
+    incident_id, _ = await diagnosed_incident(session_factory)
+    # An action proposal exists, so the snapshot reads action_proposals.
+    evaluator = ProposalEvaluator(
+        session_factory, PolicyEngine(load_policy(), load_catalog()), FakeInspector("gen-2")
+    )
+    assert await process_next(session_factory, control.handlers(evaluator), "control", 60)
+    operator = AuthenticatedUser("u1", "user:omar", HumanRole.OPERATOR)
+    with session_factory.begin() as session:
+        session.execute(
+            update(IncidentRow).where(IncidentRow.id == incident_id).values(state="ESCALATED")
+        )
+        question = chat.ask(session, incident_id, operator, "What should I check?")
+    assert question is not None
+
+    assert await process_chat_one(agent, ChatAnswerer(agent, None), "w", 30)
+    with session_factory() as session:
+        answer = session.scalars(
+            select(IncidentChatMessageRow).where(IncidentChatMessageRow.reply_to == question.id)
+        ).one()
+    assert answer.run_id is not None
+
+    with session_factory.begin() as session:
+        assert chat.request_reinvestigation(session, incident_id, operator, "check", None) == (
+            chat.ReinvestigationOutcome.QUEUED
+        )
+    runner = _runner(agent, ScriptedModelAdapter([lag_and_status(), submit]))
+    assert await process_reinvestigation_one(agent, runner, "w", 60)
+    with session_factory() as session:
+        assert chat.reinvestigation_status(session, incident_id).state == "COMPLETED"  # type: ignore[union-attr]
