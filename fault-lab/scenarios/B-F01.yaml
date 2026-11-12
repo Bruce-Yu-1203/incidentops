@@ -50,6 +50,9 @@ expected:
     kind: promql_max
     bound: 0.5
     query: histogram_quantile(0.95, sum by (le) (rate(lab_api_http_request_duration_seconds_bucket{service_id="lab-api",route="/items/{item_id}"}[1m])))
+  required_evidence:
+  - any_of: [postgres_health, postgres_exclusive_locks, postgres_locks_by_mode, postgres_max_transaction_seconds]
+    why: lock evidence on the database, not only API latency
 cleanup:
   controller_operation: reset_lab
   require_healthy_baseline: true

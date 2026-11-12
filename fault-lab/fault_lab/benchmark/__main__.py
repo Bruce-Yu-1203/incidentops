@@ -26,7 +26,7 @@ from fault_lab.benchmark.runner import TrialRunner
 from fault_lab.scenarios import all_scenarios, load_scenario
 from fault_lab.scripts.labctl import LabEndpoints
 
-BENCHMARK_VERSION = "2.0"
+BENCHMARK_VERSION = "2.1"  # 2.1: stricter grading and secondary metrics
 
 
 def _run(args: argparse.Namespace) -> int:

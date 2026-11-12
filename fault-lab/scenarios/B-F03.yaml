@@ -42,10 +42,6 @@ expected:
   allow_no_action: false
   requires_human_approval: true
   verify:
-    worker_paused: false
-    broker_healthy: true
-    lag_max: 100
-    lag_trend: decreasing
     observation_window_seconds: 60
     sample_min_count: 5
     recovery_timeout_seconds: 180
@@ -55,6 +51,21 @@ expected:
       kind: promql_max
       query: 'sum(kafka_consumergroup_lag{consumergroup="persist-demo-consumer"})'
       bound: 100
+    - probe_id: lag_not_rising
+      kind: promql_not_rising
+      query: 'sum(kafka_consumergroup_lag{consumergroup="persist-demo-consumer"})'
+      bound: 20
+    - probe_id: broker_healthy
+      kind: promql_min
+      query: 'min(kafka_brokers{service_id="lab-kafka"})'
+      bound: 1
+  required_evidence:
+    - any_of: [consumer_status]
+      why: the consumer reports paused
+    - any_of: [kafka_group_lag_by_partition, kafka_group_lag]
+      why: lag is rising
+    - any_of: [kafka_broker_count]
+      why: the broker is healthy (rules out a broker outage)
 
 cleanup:
   controller_operation: reset_known_test_consumer

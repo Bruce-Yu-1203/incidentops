@@ -46,6 +46,9 @@ expected:
     kind: promql_max
     bound: 0.5
     query: histogram_quantile(0.95, sum by (le) (rate(lab_api_http_request_duration_seconds_bucket{service_id="lab-api",route="/items/{item_id}"}[1m])))
+  required_evidence:
+  - any_of: [api_request_rate_vs_baseline, api_request_rate]
+    why: request rate is far above baseline
 cleanup:
   controller_operation: reset_lab
   require_healthy_baseline: true

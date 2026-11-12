@@ -1,6 +1,6 @@
 """Standard trial protocol (benchmark.md §4).
 
-reset -> pretrial checks -> warm-up -> inject -> detect -> investigate ->
+reset -> pretrial checks -> warm-up (``baseline_seconds``) -> inject -> detect -> investigate ->
 authorize (seeded approver, same API as humans) -> execute/verify (by
 IncidentOps) -> independent probes -> grade -> cleanup.
 """
@@ -16,7 +16,7 @@ from typing import Any
 
 from fault_lab.benchmark.clients import IncidentOpsApi, LabFaults, Prometheus
 from fault_lab.benchmark.grading import TERMINAL, Observation, TrialResult, grade
-from fault_lab.scenarios import Probe, ScenarioManifest
+from fault_lab.scenarios import Probe, ScenarioManifest, VerifySpec
 
 LAB_SERVICES = {
     "lab-api",
@@ -40,7 +40,8 @@ class Timeouts:
     detect_s: float = 240
     investigate_s: float = 420
     finish_s: float = 480
-    probe_s: float = 120
+    # None: wait up to the case's ``verify.recovery_timeout_seconds``.
+    probe_s: float | None = None
     poll_s: float = 5
 
 
@@ -87,24 +88,35 @@ class TrialRunner:
                 return value
             self._sleep(self._t.poll_s)
 
-    def probe(self, probe: Probe) -> bool | None:
+    def probe(self, probe: Probe, verify: VerifySpec | None = None) -> bool | None:
+        """Evaluate one probe; None means it could not be judged (counts as not passing).
+
+        Range probes must hold for every sample of the observation window, and
+        the window must hold at least ``sample_min_count`` samples
+        (benchmark.md §6.3: postconditions hold across the required window).
+        """
+        verify = verify or VerifySpec()
         try:
             if probe.kind == "consumer_running":
                 return self._lab.consumer_running()
             if probe.kind == "release_is":
                 return self._lab.release() == probe.value
-            values = self._prom.range_values(probe.query or "", probe.window_seconds)
+            values = self._prom.range_values(probe.query or "", verify.observation_window_seconds)
         except Exception:
             return None
-        tail = values[-5:]
-        if len(tail) < 5 or probe.bound is None:
+        if len(values) < verify.sample_min_count:
+            return None
+        if probe.kind == "promql_not_rising":
+            return values[-1] <= values[0] + (probe.bound or 0.0)
+        if probe.bound is None:
             return None
         if probe.kind == "promql_max":
-            return max(tail) <= probe.bound
-        return min(tail) >= probe.bound
+            return max(values) <= probe.bound
+        return min(values) >= probe.bound
 
     def _probes(self, manifest: ScenarioManifest) -> dict[str, bool | None]:
-        return {p.probe_id: self.probe(p) for p in manifest.expected.probes}
+        verify = manifest.expected.verify
+        return {p.probe_id: self.probe(p, verify) for p in manifest.expected.probes}
 
     def _active_lab_incidents(self) -> list[dict[str, Any]]:
         return [
@@ -137,6 +149,16 @@ class TrialRunner:
         )
         if not healthy:
             raise TrialAbortedError(f"baseline unhealthy: {self._probes(manifest)}")
+        # Warm-up: keep the healthy baseline for ``baseline_seconds`` so that
+        # look-back windows of the next investigation do not still contain the
+        # previous trial's fault (B-F04 lost 3 trials to an old memory peak).
+        warmup = float(manifest.preconditions.get("baseline_seconds", 0))
+        if warmup > 0:
+            self._sleep(warmup)
+            if not all(v is True for v in self._probes(manifest).values()):
+                raise TrialAbortedError(
+                    f"baseline unhealthy after warm-up: {self._probes(manifest)}"
+                )
 
     def _trial_incidents(self, since: datetime) -> list[dict[str, Any]]:
         return [
@@ -218,7 +240,9 @@ class TrialRunner:
             lambda: (lambda p: p if all(v is True for v in p.values()) else None)(
                 self._probes(manifest)
             ),
-            self._t.probe_s,
+            manifest.expected.verify.recovery_timeout_seconds
+            if self._t.probe_s is None
+            else self._t.probe_s,
         ) or self._probes(manifest)
 
         for incident in self._trial_incidents(inject_at):

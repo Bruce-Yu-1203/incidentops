@@ -9,7 +9,7 @@ lab_profile: api-basic
 seed: 1104
 preconditions:
   require_healthy_baseline: true
-  baseline_seconds: 60
+  baseline_seconds: 300
 inject:
   controller_operation: deploy_release
   profile: leaky
@@ -44,6 +44,11 @@ expected:
     kind: promql_max
     bound: 1000000
     query: deriv(process_resident_memory_bytes{service_id="lab-api"}[1m])
+  required_evidence:
+  - any_of: [api_memory_growth_rate, api_memory_bytes]
+    why: memory keeps growing
+  - any_of: [recent_deployments, api_release]
+    why: the leaking release is identified for the rollback
 cleanup:
   controller_operation: reset_lab
   require_healthy_baseline: true

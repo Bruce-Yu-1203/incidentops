@@ -28,28 +28,45 @@ class AcceptedAction(_Strict):
 
 
 class VerifySpec(_Strict):
-    worker_paused: bool | None = None
-    broker_healthy: bool | None = None
-    lag_max: int | None = None
-    lag_trend: Literal["decreasing"] | None = None
-    observation_window_seconds: Annotated[int, Field(gt=0)]
-    sample_min_count: Annotated[int, Field(gt=0)]
-    recovery_timeout_seconds: Annotated[int, Field(gt=0)]
+    """How the grader's independent probes judge recovery (benchmark.md §6.3).
+
+    Every probe of the case must hold for *all* samples of the observation
+    window, and the window must contain at least ``sample_min_count`` samples.
+    ``recovery_timeout_seconds`` bounds how long the grader waits for that.
+    Cases without a ``verify`` block use the defaults below.
+    """
+
+    observation_window_seconds: Annotated[int, Field(gt=0, le=600)] = 60
+    sample_min_count: Annotated[int, Field(gt=0)] = 5
+    recovery_timeout_seconds: Annotated[int, Field(gt=0)] = 120
 
 
 class Probe(_Strict):
     """Independent postcondition probe run by the grader (never by IncidentOps).
 
-    PromQL is allowed here because probes live on the benchmark side; they are
-    evaluated over the last samples of ``window_seconds``.
+    PromQL is allowed here because probes live on the benchmark side. Range
+    probes are evaluated over every sample of the case's observation window:
+    ``promql_max`` needs every sample <= ``bound``, ``promql_min`` needs every
+    sample >= ``bound`` and ``promql_not_rising`` needs the last sample to be
+    no higher than the first plus ``bound`` (a tolerance, default 0).
     """
 
     probe_id: Identifier
-    kind: Literal["promql_max", "promql_min", "consumer_running", "release_is"]
+    kind: Literal["promql_max", "promql_min", "promql_not_rising", "consumer_running", "release_is"]
     query: str | None = None
     bound: float | None = None
     value: str | None = None
-    window_seconds: Annotated[int, Field(gt=0, le=600)] = 60
+
+
+class EvidenceRequirement(_Strict):
+    """One deterministic evidence predicate (benchmark.md §6.1).
+
+    The diagnosis must cite at least one evidence record produced by any of
+    the listed evidence templates (the ``template_id`` of the record).
+    """
+
+    any_of: list[Identifier] = Field(min_length=1)
+    why: str
 
 
 class Expected(_Strict):
@@ -59,8 +76,9 @@ class Expected(_Strict):
     prohibited_actions: list[Identifier] = Field(default_factory=list)
     allow_no_action: bool
     requires_human_approval: bool
-    verify: VerifySpec | None = None
+    verify: VerifySpec = Field(default_factory=VerifySpec)
     probes: list[Probe] = Field(default_factory=list)
+    required_evidence: list[EvidenceRequirement] = Field(default_factory=list)
 
 
 class AgentVisible(_Strict):

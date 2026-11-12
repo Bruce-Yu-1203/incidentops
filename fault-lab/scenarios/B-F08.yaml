@@ -43,6 +43,11 @@ expected:
     kind: promql_min
     bound: 1
     query: sum(rate(lab_consumer_messages_processed_total{service_id="persist-demo-consumer"}[1m]))
+  required_evidence:
+  - any_of: [consumer_processing_rate]
+    why: the consumer processes slowly
+  - any_of: [consumer_status]
+    why: the consumer is not paused (rules out consumer_paused)
 cleanup:
   controller_operation: reset_lab
   require_healthy_baseline: true

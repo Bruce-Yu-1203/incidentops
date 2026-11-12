@@ -45,6 +45,9 @@ expected:
     kind: promql_min
     bound: 1
     query: sum(rate(lab_producer_messages_sent_total{service_id="demo-producer"}[1m]))
+  required_evidence:
+  - any_of: [kafka_broker_count]
+    why: the broker is not visible
 cleanup:
   controller_operation: reset_lab
   require_healthy_baseline: true

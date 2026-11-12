@@ -46,6 +46,9 @@ expected:
     kind: promql_max
     bound: 0.02
     query: (sum(rate(lab_api_http_requests_total{service_id="lab-api",route="/items/{item_id}",status=~"5.."}[1m])) or vector(0)) / clamp_min(sum(rate(lab_api_http_requests_total{service_id="lab-api",route="/items/{item_id}"}[1m])), 1e-9)
+  required_evidence:
+  - any_of: [postgres_up, postgres_health]
+    why: PostgreSQL itself is down
 cleanup:
   controller_operation: reset_lab
   require_healthy_baseline: true

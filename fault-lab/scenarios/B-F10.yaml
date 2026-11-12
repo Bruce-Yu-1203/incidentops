@@ -41,6 +41,11 @@ expected:
   - probe_id: pinned_release
     kind: release_is
     value: rel-1
+  required_evidence:
+  - any_of: [service_logs]
+    why: application tracebacks
+  - any_of: [recent_deployments, api_release]
+    why: no new release (rules out bad_deployment)
 cleanup:
   controller_operation: reset_lab
   require_healthy_baseline: true
