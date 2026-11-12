@@ -96,6 +96,11 @@ class Metrics:
         self.errors = Counter(
             "lab_consumer_processing_errors", "Processing errors", registry=self.registry
         )
+        self.restarts = Counter(
+            "lab_consumer_loop_restarts",
+            "Times the consume loop failed and was restarted with a new Kafka consumer",
+            registry=self.registry,
+        )
 
 
 class MessageSink(Protocol):
@@ -221,65 +226,136 @@ def _status_json(controller: ConsumerController) -> dict[str, Any]:
     }
 
 
+class KafkaConsumerLike(Protocol):
+    """The subset of ``AIOKafkaConsumer`` the consume loop uses."""
+
+    async def start(self) -> None: ...
+    async def stop(self) -> None: ...
+    def assignment(self) -> set[Any]: ...
+    def pause(self, *partitions: Any) -> None: ...
+    def resume(self, *partitions: Any) -> None: ...
+    async def getmany(self, *, timeout_ms: int, max_records: int) -> dict[Any, list[Any]]: ...
+    async def commit(self) -> None: ...
+    async def committed(self, partition: Any) -> int | None: ...
+    def seek(self, partition: Any, offset: int) -> None: ...
+
+
+ConsumerFactory = Callable[[], KafkaConsumerLike]
+Sleep = Callable[[float], Coroutine[Any, Any, None]]
+
+
+def aiokafka_factory(group_id: str) -> ConsumerFactory:  # pragma: no cover - live lab only
+    def build() -> KafkaConsumerLike:
+        from aiokafka import AIOKafkaConsumer
+
+        consumer: KafkaConsumerLike = AIOKafkaConsumer(
+            os.environ.get("LAB_TOPIC", "demo.events.v1"),
+            bootstrap_servers=os.environ.get("LAB_KAFKA_BOOTSTRAP", "lab-kafka-proxy:9092"),
+            group_id=group_id,
+            enable_auto_commit=False,
+            auto_offset_reset="earliest",
+        )
+        return consumer
+
+    return build
+
+
+async def consume_batches(
+    consumer: KafkaConsumerLike,
+    controller: ConsumerController,
+    metrics: Metrics,
+    sink: MessageSink,
+    throttle: Throttle | None = None,
+    sleep: Sleep = asyncio.sleep,
+) -> None:
+    """Consume ``demo.events.v1`` with a started consumer until it raises.
+
+    While paused the loop keeps polling with all partitions paused, so the
+    group membership is retained and no rebalance happens. A failed commit is
+    logged and ignored: persisting is idempotent (``ON CONFLICT DO NOTHING``),
+    so records redelivered after a rebalance are safe to process again.
+    """
+    while True:
+        assignment = consumer.assignment()
+        if controller.status().paused:
+            consumer.pause(*assignment)
+        else:
+            consumer.resume(*assignment)
+        batches = await consumer.getmany(timeout_ms=500, max_records=200)
+        records = [
+            json.loads(message.value)
+            for messages in batches.values()
+            for message in messages
+            if message.value is not None
+        ]
+        if not records:
+            continue
+        if throttle is not None:
+            await throttle.wait(len(records))
+        try:
+            await sink.persist(records)
+        except Exception:
+            metrics.errors.inc()
+            LOGGER.exception("persist failed; will retry from last committed offset")
+            await sleep(1)
+            for partition in batches:
+                committed = await consumer.committed(partition)
+                consumer.seek(partition, committed or 0)
+            continue
+        metrics.processed.inc(len(records))
+        try:
+            await consumer.commit()
+        except Exception:
+            LOGGER.exception("offset commit failed; records may be redelivered")
+
+
+async def _start(consumer: KafkaConsumerLike, sleep: Sleep, retry_seconds: float) -> None:
+    while True:
+        try:
+            await consumer.start()
+            return
+        except Exception:  # broker may be starting or unreachable
+            LOGGER.warning("kafka not ready; retrying")
+            await sleep(retry_seconds)
+
+
 async def kafka_consume_loop(
     controller: ConsumerController,
     metrics: Metrics,
     sink: MessageSink,
     throttle: Throttle | None = None,
-) -> None:  # pragma: no cover - exercised by the live lab smoke test
-    """Consume ``demo.events.v1`` and persist records unless paused.
+    *,
+    factory: ConsumerFactory | None = None,
+    sleep: Sleep = asyncio.sleep,
+    backoff_seconds: float = 2.0,
+    max_restarts: int | None = None,
+) -> None:
+    """Supervise the consume loop: rebuild the Kafka consumer after any failure.
 
-    While paused the loop keeps polling with all partitions paused, so the
-    group membership is retained and no rebalance happens.
+    Broker outages can make ``getmany()`` or the group coordinator raise; the
+    supervisor logs the error, stops the broken consumer, waits and starts a
+    fresh one, so consumption resumes once the broker is reachable again.
+    Cancellation always propagates. ``max_restarts`` bounds the loop for tests.
     """
-    from aiokafka import AIOKafkaConsumer
-
-    consumer = AIOKafkaConsumer(
-        os.environ.get("LAB_TOPIC", "demo.events.v1"),
-        bootstrap_servers=os.environ.get("LAB_KAFKA_BOOTSTRAP", "lab-kafka-proxy:9092"),
-        group_id=controller.consumer_id,
-        enable_auto_commit=False,
-        auto_offset_reset="earliest",
-    )
+    build = factory or aiokafka_factory(controller.consumer_id)
+    restarts = 0
     while True:
+        consumer = build()
         try:
-            await consumer.start()
-            break
-        except Exception:  # broker may still be starting
-            LOGGER.warning("kafka not ready; retrying")
-            await asyncio.sleep(2)
-    try:
-        while True:
-            assignment = consumer.assignment()
-            if controller.status().paused:
-                consumer.pause(*assignment)
-            else:
-                consumer.resume(*assignment)
-            batches = await consumer.getmany(timeout_ms=500, max_records=200)
-            records = [
-                json.loads(message.value)
-                for messages in batches.values()
-                for message in messages
-                if message.value is not None
-            ]
-            if not records:
-                continue
-            if throttle is not None:
-                await throttle.wait(len(records))
-            try:
-                await sink.persist(records)
-            except Exception:
-                metrics.errors.inc()
-                LOGGER.exception("persist failed; will retry from last committed offset")
-                await asyncio.sleep(1)
-                for partition in batches:
-                    committed = await consumer.committed(partition)
-                    consumer.seek(partition, committed or 0)
-                continue
-            await consumer.commit()
-            metrics.processed.inc(len(records))
-    finally:
-        await consumer.stop()
+            await _start(consumer, sleep, backoff_seconds)
+            await consume_batches(consumer, controller, metrics, sink, throttle, sleep)
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            LOGGER.exception("consume loop failed; restarting with a new consumer")
+            metrics.restarts.inc()
+            restarts += 1
+            if max_restarts is not None and restarts > max_restarts:
+                raise
+        finally:
+            with contextlib.suppress(Exception):
+                await consumer.stop()
+        await sleep(backoff_seconds)
 
 
 class PostgresSink:  # pragma: no cover - exercised by the live lab smoke test
