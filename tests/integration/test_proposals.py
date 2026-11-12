@@ -58,7 +58,7 @@ async def test_valid_proposal_opens_approval_with_frozen_envelope(
         "PENDING",
         "AWAITING_APPROVAL",
     )
-    assert (policy_audit.decision, policy_audit.policy_version) == ("REQUIRES_APPROVAL", "p3")
+    assert (policy_audit.decision, policy_audit.policy_version) == ("REQUIRES_APPROVAL", "p4")
 
 
 async def test_production_proposal_is_denied(session_factory: sessionmaker[Session]) -> None:

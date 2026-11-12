@@ -70,6 +70,10 @@ class RedisHealthInput(_Input):
     service_id: ResourceId
 
 
+class ConfigChangesInput(_Input):
+    service_id: ResourceId
+
+
 @dataclass(frozen=True)
 class ToolSpec:
     name: str
@@ -154,12 +158,24 @@ _SPECS: Final = (
     ToolSpec(
         "get_postgres_health",
         1,
-        "Connections, locks and longest transaction for a registered PostgreSQL.",
+        "Connections (used vs max_connections, idle), locks and longest transaction for a "
+        "registered PostgreSQL.",
         PostgresHealthInput,
         frozenset({ServiceKind.POSTGRES}),
         timeout_ms=3000,
         max_response_bytes=8192,
         max_calls_per_run=10,
+    ),
+    ToolSpec(
+        "get_recent_config_changes",
+        1,
+        "Recent runtime configuration changes of a registered service (revisions, times, "
+        "changed keys), separate from releases.",
+        ConfigChangesInput,
+        frozenset({ServiceKind.HTTP_API}),
+        timeout_ms=2000,
+        max_response_bytes=4096,
+        max_calls_per_run=5,
     ),
     ToolSpec(
         "get_redis_health",

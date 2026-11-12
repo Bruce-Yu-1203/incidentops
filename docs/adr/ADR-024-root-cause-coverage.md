@@ -109,3 +109,43 @@ and the injected fault kind never reaches agent-visible telemetry.
 - **Not run live.** The running local demo uses a paid model for its
   investigation worker, so these scenarios were not injected into the shared
   lab; only the Kafka proxy was exercised in the isolated experiment above.
+
+### New root causes (B-F11 to B-F13, policy `p4`, catalog `c4`, `investigation-v6`)
+
+`traffic_surge`, `connection_pool_exhausted` and `config_error` join the
+taxonomy and every place that enumerates it. Each gets one new low-blast,
+approval-required lab action with an argument allowlist, a catalog target, a
+lab-controller remediation with its own target allowlist, a verifier spec and
+a root-cause mapping.
+
+| Case | Injection | Alert | Action (target) | Look-alikes |
+|---|---|---|---|---|
+| B-F11 `traffic_surge` | The registered load generator goes from 10 to 60 req/s | `lab_api_request_rate_surge` (rate > 3x its 30-minute median) | `reset_lab_load_profile` (`lab-loadgen`), restores the pinned baseline rate | B-F06: CPU high with normal traffic; the B0 rule checks traffic before CPU |
+| B-F12 `connection_pool_exhausted` | Idle sessions of the API's own role take every ordinary connection slot | `lab_postgres_connections_near_limit` (> 90% of `max_connections`) | `release_lab_idle_connections` (`lab-postgres`), only the known fixture | B-F09: `pg_up` is 1; B-F01: no exclusive lock |
+| B-F13 `config_error` | A runtime config push (`cfg-2`, no deploy) points item reads at a missing database | `lab_api_error_ratio_high` | `revert_lab_config` (`lab-api-config`) with `target_config: cfg-1` only | B-F05: release unchanged; B-F10: a config change is visible |
+
+- **Traffic surge.** The action is "your call" in the brief. We chose a real
+  action because the lab's traffic source is a registered, allowlisted
+  workload and restoring its baseline is the lab analogue of shedding an
+  abusive client. It takes no arguments: no rate ever comes from a proposal.
+  New template `api_request_rate_vs_baseline` (rate / 30-minute median).
+- **Connection exhaustion.** The lab API now connects as an ordinary role
+  `lab_app`; PostgreSQL runs with `max_connections=80`,
+  `superuser_reserved_connections=3` and `reserved_connections=3`, and the
+  exporter's role holds `pg_use_reserved_connections`. The fixture opens idle
+  `lab_app` sessions until refused, so the API is locked out while monitoring
+  and the controllers keep working. An isolated PostgreSQL 17.6 experiment
+  confirmed the slot arithmetic (34 of 40 ordinary slots held, `lab_app`
+  refused, monitor and superuser accepted, all released cleanly). 80 slots
+  leave room for the about 50 sessions a B-F01 lock queues at 10 req/s.
+  `get_postgres_health` now reports `connections=<used>/<max> idle=<n>`; new
+  templates `postgres_connection_utilization` and `postgres_max_connections`.
+  The `lab-postgres` revision gained a `pool-<digest|none>` part.
+- **Config errors.** The lab controller keeps a config timeline next to the
+  deployment timeline; readers see revisions, times, actors and changed keys
+  and values, never the benchmark profile name. New read-only tool
+  `get_recent_config_changes` (HTTP services; values shown only when they
+  are short identifiers). Config lives on its own catalog target
+  `lab-api-config` (new kind `config_store`) so a config revert never
+  interferes with the release revision that `rollback_demo_api` pins.
+- **Not run live**, for the same reason as B-F07 to B-F10.

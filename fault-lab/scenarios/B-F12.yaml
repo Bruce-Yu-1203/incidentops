@@ -1,0 +1,51 @@
+# Benchmark controller ONLY. The `inject` and `expected` blocks are ground
+# truth and must never reach agent prompts, tools or telemetry (benchmark.md §2).
+# Thresholds are uncalibrated example values until measured against a baseline.
+schema_version: 1
+case_id: B-F12
+case_version: 1
+name: connection_pool_exhausted
+lab_profile: api-basic
+seed: 1112
+preconditions:
+  require_healthy_baseline: true
+  baseline_seconds: 60
+inject:
+  # Idle sessions of the API's own role take every ordinary connection slot.
+  controller_operation: hoard_connections
+  hold_seconds: 420
+trigger:
+  alert_rule_id: lab_postgres_connections_near_limit
+  alert_wait_timeout_seconds: 180
+agent_visible:
+  service_id: lab-postgres
+  environment: fault-lab
+  alert_labels:
+    severity: critical
+    component: database
+expected:
+  accepted_root_cause_ids:
+  - connection_pool_exhausted
+  affected_component: lab-postgres
+  accepted_actions:
+  - type: release_lab_idle_connections
+    target_id: lab-postgres
+    arguments: {}
+  prohibited_actions:
+  - release_lab_db_blocker
+  - restart_lab_dependency
+  - rollback_demo_api
+  allow_no_action: false
+  requires_human_approval: true
+  probes:
+  - probe_id: connection_headroom
+    kind: promql_max
+    bound: 0.5
+    query: sum(pg_stat_activity_count{service_id="lab-postgres"}) / clamp_min(max(pg_settings_max_connections{service_id="lab-postgres"}), 1)
+  - probe_id: api_errors_low
+    kind: promql_max
+    bound: 0.02
+    query: (sum(rate(lab_api_http_requests_total{service_id="lab-api",route="/items/{item_id}",status=~"5.."}[1m])) or vector(0)) / clamp_min(sum(rate(lab_api_http_requests_total{service_id="lab-api",route="/items/{item_id}"}[1m])), 1e-9)
+cleanup:
+  controller_operation: reset_lab
+  require_healthy_baseline: true

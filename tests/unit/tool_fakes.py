@@ -36,6 +36,13 @@ class FakeBackend:
         # Instant-query fragment -> value (None: no series), longest match wins.
         self.instant_overrides: dict[str, float | None] = {}
         self.log_lines: list[str] = [INJECTION]
+        self.config_changes: dict[str, Any] = {
+            "service_id": "lab-api",
+            "current_revision": "cfg-1",
+            "pinned_good_revision": "cfg-1",
+            "current": {"items_database": "lab"},
+            "history": [],
+        }
         self.delay = 0.0
         self.fail = False
 
@@ -97,6 +104,8 @@ class FakeBackend:
         self.queries.append(path)
         if path.startswith("/deployments"):
             return self.deployments
+        if path.startswith("/config-changes"):
+            return self.config_changes
         return {"target_id": service_id, "revision": self.revisions.get(service_id, "rev-1")}
 
     async def consumer_status(self, service_id: str, management_url: str) -> dict[str, Any]:

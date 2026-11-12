@@ -14,6 +14,27 @@ groups:
           (sum(rate(lab_api_http_requests_total{route="/items/{item_id}", status=~"5.."}[1m])) or vector(0))
           / clamp_min(sum(rate(lab_api_http_requests_total{route="/items/{item_id}"}[1m])), 1e-9)
 
+      - record: lab_api:request_rate:rate1m
+        expr: sum(rate(lab_api_http_requests_total{route="/items/{item_id}"}[1m]))
+      # Median of the last 30 minutes: a surge shorter than 15 minutes does not
+      # move its own baseline.
+      - record: lab_api:request_rate:baseline30m
+        expr: quantile_over_time(0.5, lab_api:request_rate:rate1m[30m])
+
+      - alert: lab_api_request_rate_surge
+        expr: >-
+          lab_api:request_rate:rate1m > 3 * lab_api:request_rate:baseline30m
+          and lab_api:request_rate:baseline30m > 1
+        for: 30s
+        labels:
+          severity: warning
+          service_id: lab-api
+          environment: fault-lab
+          component: http-api
+        annotations:
+          summary: "lab-api /items request rate above 3x its 30-minute median"
+          observed_value: "{{ $value | printf \"%.1f\" }} requests/s"
+
       - alert: lab_api_latency_p95_high
         expr: lab_api:request_duration_seconds:p95_1m > 0.5
         for: 30s
@@ -146,3 +167,17 @@ groups:
         annotations:
           summary: "lab-postgres is not reachable by its exporter"
           observed_value: "{{ $value }}"
+
+      - alert: lab_postgres_connections_near_limit
+        expr: >-
+          sum(pg_stat_activity_count{service_id="lab-postgres"})
+          / clamp_min(max(pg_settings_max_connections{service_id="lab-postgres"}), 1) > 0.9
+        for: 15s
+        labels:
+          severity: critical
+          service_id: lab-postgres
+          environment: fault-lab
+          component: database
+        annotations:
+          summary: "lab-postgres connections above 90% of max_connections"
+          observed_value: "{{ $value | humanizePercentage }}"

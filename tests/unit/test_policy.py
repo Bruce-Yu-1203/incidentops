@@ -39,7 +39,7 @@ def test_resume_requires_human_approval() -> None:
     decision = _engine().evaluate(_request())
     assert decision.decision is Decision.REQUIRES_APPROVAL
     assert decision.reason_code is ReasonCode.APPROVAL_REQUIRED
-    assert decision.policy_version == "p3"
+    assert decision.policy_version == "p4"
     assert decision.risk_class == "low"
 
 
@@ -144,6 +144,15 @@ def test_explicit_deny_rule() -> None:
         ("restart_lab_dependency", "lab-kafka", {}, True),
         ("restart_lab_dependency", "lab-api", {}, False),  # wrong target
         ("release_lab_db_blocker", "lab-postgres", {"pid": 4242}, False),
+        ("reset_lab_load_profile", "lab-loadgen", {}, True),
+        ("reset_lab_load_profile", "lab-loadgen", {"rate_per_second": 1}, False),
+        ("reset_lab_load_profile", "lab-cpu-load", {}, False),
+        ("release_lab_idle_connections", "lab-postgres", {}, True),
+        ("release_lab_idle_connections", "lab-redis", {}, False),
+        ("revert_lab_config", "lab-api-config", {"target_config": "cfg-1"}, True),
+        ("revert_lab_config", "lab-api-config", {"target_config": "cfg-7"}, False),
+        ("revert_lab_config", "lab-api-config", {"items_database": "lab"}, False),
+        ("revert_lab_config", "lab-api", {"target_config": "cfg-1"}, False),
     ],
 )
 def test_p5_remediations(
@@ -170,6 +179,15 @@ def test_p5_remediations(
         ("insufficient_evidence", "resume_test_consumer", "persist-demo-consumer", None, False),
         ("consumer_slow", "resume_test_consumer", "persist-demo-consumer", None, False),
         ("application_error", "rollback_demo_api", "lab-api", {"target_release": "rel-1"}, False),
+        ("traffic_surge", "reset_lab_load_profile", "lab-loadgen", {}, True),
+        ("traffic_surge", "stop_lab_cpu_load", "lab-cpu-load", {}, False),
+        ("connection_pool_exhausted", "release_lab_idle_connections", "lab-postgres", {}, True),
+        ("connection_pool_exhausted", "restart_lab_dependency", "lab-postgres", {}, False),
+        ("config_error", "revert_lab_config", "lab-api-config", {"target_config": "cfg-1"}, True),
+        ("config_error", "rollback_demo_api", "lab-api", {"target_release": "rel-1"}, False),
+        ("postgres_unavailable", "restart_lab_dependency", "lab-postgres", {}, True),
+        ("postgres_lock_contention", "restart_lab_dependency", "lab-postgres", {}, False),
+        ("kafka_broker_unavailable", "restart_lab_dependency", "lab-kafka", {}, True),
         # Unknown root causes allow nothing (fail closed).
         ("made_up_cause", "resume_test_consumer", "persist-demo-consumer", None, False),
     ],
@@ -202,6 +220,13 @@ def test_root_cause_check_is_skipped_without_a_root_cause() -> None:
     # The executor's pre-dispatch re-check has no diagnosis; the policy version
     # pinned in the envelope guarantees the mapping is the one checked before.
     assert _engine().evaluate(_request(root_cause_id=None)).decision is Decision.REQUIRES_APPROVAL
+
+
+def test_new_write_actions_all_require_approval_in_the_lab_only() -> None:
+    rules = {r.action_type: r for r in load_policy().rules}
+    for action in ("reset_lab_load_profile", "release_lab_idle_connections", "revert_lab_config"):
+        assert rules[action].decision is Decision.REQUIRES_APPROVAL
+        assert [e.value for e in rules[action].environments] == ["fault-lab"]
 
 
 def test_every_taxonomy_root_cause_has_an_explicit_mapping() -> None:

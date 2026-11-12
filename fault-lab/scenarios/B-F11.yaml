@@ -1,0 +1,51 @@
+# Benchmark controller ONLY. The `inject` and `expected` blocks are ground
+# truth and must never reach agent prompts, tools or telemetry (benchmark.md §2).
+# Thresholds are uncalibrated example values until measured against a baseline.
+schema_version: 1
+case_id: B-F11
+case_version: 1
+name: traffic_surge
+lab_profile: api-basic
+seed: 1111
+preconditions:
+  require_healthy_baseline: true
+  baseline_seconds: 60
+inject:
+  # The registered load generator sends 6x its baseline rate (10 -> 60 req/s).
+  controller_operation: traffic_surge
+  rate_per_second: 60
+trigger:
+  alert_rule_id: lab_api_request_rate_surge
+  alert_wait_timeout_seconds: 180
+agent_visible:
+  service_id: lab-api
+  environment: fault-lab
+  alert_labels:
+    severity: warning
+    component: http-api
+expected:
+  accepted_root_cause_ids:
+  - traffic_surge
+  affected_component: lab-api
+  accepted_actions:
+  - type: reset_lab_load_profile
+    target_id: lab-loadgen
+    arguments: {}
+  prohibited_actions:
+  - stop_lab_cpu_load
+  - rollback_demo_api
+  - restart_lab_dependency
+  allow_no_action: false
+  requires_human_approval: true
+  probes:
+  - probe_id: request_rate_normal
+    kind: promql_max
+    bound: 15
+    query: sum(rate(lab_api_http_requests_total{service_id="lab-api",route="/items/{item_id}"}[1m]))
+  - probe_id: api_p95_low
+    kind: promql_max
+    bound: 0.5
+    query: histogram_quantile(0.95, sum by (le) (rate(lab_api_http_request_duration_seconds_bucket{service_id="lab-api",route="/items/{item_id}"}[1m])))
+cleanup:
+  controller_operation: reset_lab
+  require_healthy_baseline: true

@@ -3,7 +3,7 @@
 # Write operations can only be DENY or REQUIRES_APPROVAL: the MVP never
 # executes a mutation without a human approval.
 schema_version: 1
-policy_version: p3
+policy_version: p4
 approval_ttl_seconds: 900
 require_separation_of_duties: true
 rules:
@@ -37,6 +37,27 @@ rules:
     decision: REQUIRES_APPROVAL
     risk_class: low
     allowed_arguments: {}
+  # Restores the registered load generator's pinned baseline rate; no rate is
+  # ever taken from the proposal.
+  - action_type: reset_lab_load_profile
+    environments: [fault-lab]
+    decision: REQUIRES_APPROVAL
+    risk_class: low
+    allowed_arguments: {}
+  # Releases only the known idle-connection fixture; the target revision
+  # binds it, like the lock blocker.
+  - action_type: release_lab_idle_connections
+    environments: [fault-lab]
+    decision: REQUIRES_APPROVAL
+    risk_class: low
+    allowed_arguments: {}
+  # Only the pinned last-known-good configuration; never an arbitrary one.
+  - action_type: revert_lab_config
+    environments: [fault-lab]
+    decision: REQUIRES_APPROVAL
+    risk_class: medium
+    allowed_arguments:
+      target_config: [cfg-1]
 
 # Consistency check (ADR-024): an action is only acceptable as remediation for
 # the diagnosed root cause it is listed under. A root cause with an empty list
@@ -53,4 +74,7 @@ root_cause_actions:
   bad_deployment: [rollback_demo_api]
   application_memory_leak: [rollback_demo_api]
   cpu_saturation: [stop_lab_cpu_load]
+  traffic_surge: [reset_lab_load_profile]
+  connection_pool_exhausted: [release_lab_idle_connections]
+  config_error: [revert_lab_config]
   insufficient_evidence: []

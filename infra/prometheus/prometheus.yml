@@ -37,6 +37,7 @@ scrape_configs:
   - job_name: lab-loadgen
     static_configs:
       - targets: ["lab-loadgen:8083"]
+        labels: {service_id: lab-loadgen}
 
   - job_name: postgres-exporter
     static_configs:

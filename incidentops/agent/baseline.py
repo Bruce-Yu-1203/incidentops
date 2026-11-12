@@ -113,6 +113,8 @@ class RulesBaselineAdapter:
                     _metric("redis", "redis_up", "lab-redis"),
                     ToolCall("pg", "get_postgres_health", {"service_id": "lab-postgres"}),
                     ToolCall("deploys", "get_recent_deployments", {"service_id": "lab-api"}),
+                    _metric("traffic", "api_request_rate_vs_baseline", "lab-api"),
+                    ToolCall("config", "get_recent_config_changes", {"service_id": "lab-api"}),
                     ToolCall(
                         "tracebacks",
                         "search_logs",
@@ -191,7 +193,7 @@ class RulesBaselineAdapter:
     def _api_rules(
         self, results: dict[str, dict[str, Any]], evidence: list[str], service: str
     ) -> ModelTurn:
-        """Fixed precedence: dependency faults first, then resources, then releases."""
+        """Fixed precedence: dependencies, then load and resources, then changes."""
         pg = results.get("pg", {}).get("summary", "")
         redis_last = _last(results.get("redis", {}).get("summary", ""))
         cpu_last = _last(results.get("cpu", {}).get("summary", ""))
@@ -211,6 +213,18 @@ class RulesBaselineAdapter:
         )
         pinned = str(deploys.get("pinned_healthy_release") or "rel-1")
         tracebacks = _log_count(results.get("tracebacks", {}).get("summary", ""))
+        traffic_last = _last(results.get("traffic", {}).get("summary", ""))
+        config = _data(results.get("config", {}))
+        config_changed = bool(
+            config
+            and config.get("current_revision")
+            and config.get("current_revision") != config.get("pinned_good_revision")
+        )
+        good_config = str(config.get("pinned_good_revision") or "cfg-1")
+        pool = _CONNECTIONS.search(pg)
+        utilization = (
+            int(pool.group(1)) / int(pool.group(2)) if pool and int(pool.group(2)) else 0.0
+        )
 
         if _POSTGRES_DOWN.search(pg):
             return _report(
@@ -240,6 +254,21 @@ class RulesBaselineAdapter:
                     "Release the known blocking lab transaction.",
                 ),
             )
+        if utilization >= POOL_SATURATED:
+            return _report(
+                "connection_pool_exhausted",
+                "lab-postgres",
+                "medium",
+                f"lab-postgres uses {pool.group(1) if pool else '?'} of "
+                f"{pool.group(2) if pool else '?'} connections while API requests fail.",
+                evidence,
+                _action(
+                    "release_lab_idle_connections",
+                    "lab-postgres",
+                    {},
+                    "Release the known idle connections holding the lab database slots.",
+                ),
+            )
         if redis_last == 0.0:
             return _report(
                 "redis_unavailable",
@@ -252,6 +281,21 @@ class RulesBaselineAdapter:
                     "lab-redis",
                     {},
                     "Restart the registered lab Redis dependency.",
+                ),
+            )
+        if traffic_last is not None and traffic_last >= TRAFFIC_SURGE_FACTOR:
+            # Checked before CPU: more requests also mean more CPU (B-F06 look-alike).
+            return _report(
+                "traffic_surge",
+                "lab-api",
+                "medium",
+                f"lab-api receives {traffic_last:.1f}x its usual request rate.",
+                evidence,
+                _action(
+                    "reset_lab_load_profile",
+                    "lab-loadgen",
+                    {},
+                    "Restore the registered load generator to its baseline profile.",
                 ),
             )
         if cpu_last is not None and cpu_last > CPU_SATURATED_CORES:
@@ -298,6 +342,22 @@ class RulesBaselineAdapter:
                     "Roll back to the pinned healthy release.",
                 ),
             )
+        if config_changed and errors_last is not None and errors_last > ERROR_RATIO:
+            # Errors after a runtime config change without a new release.
+            return _report(
+                "config_error",
+                "lab-api",
+                "medium",
+                f"Errors at {errors_last:.0%} after config change to "
+                f"{config.get('current_revision')}; the release is unchanged.",
+                evidence,
+                _action(
+                    "revert_lab_config",
+                    "lab-api-config",
+                    {"target_config": good_config},
+                    "Revert lab-api to its last known good configuration.",
+                ),
+            )
         if (
             not new_release
             and errors_last is not None
@@ -326,6 +386,9 @@ class RulesBaselineAdapter:
 KAFKA_FAMILY: Final = frozenset({"persist-demo-consumer", "lab-kafka", "demo-producer"})
 API_FAMILY: Final = frozenset({"lab-api", "lab-redis", "lab-postgres"})
 MIN_TRACEBACKS: Final = 3
+POOL_SATURATED: Final = 0.9
+TRAFFIC_SURGE_FACTOR: Final = 3.0
+_CONNECTIONS = re.compile(r"connections=(\d+)/(\d+)")
 _POSTGRES_DOWN = re.compile(r"\bup=0(\.0)?\b")
 _LOG_COUNT = re.compile(r"^(\d+) log lines")
 CPU_SATURATED_CORES: Final = 0.6

@@ -1,7 +1,7 @@
 # Versioned registry of every target IncidentOps may observe or act on.
 # Network destinations live here (server-side), never in model arguments.
 schema_version: 1
-catalog_version: c3
+catalog_version: c4
 services:
   - service_id: persist-demo-consumer
     kind: kafka_consumer
@@ -31,7 +31,7 @@ services:
     environment: fault-lab
     description: Lab PostgreSQL used by lab-api and the consumer.
     management_url: http://fault-controller:8090
-    allowed_actions: [release_lab_db_blocker, restart_lab_dependency]
+    allowed_actions: [release_lab_db_blocker, restart_lab_dependency, release_lab_idle_connections]
   - service_id: lab-redis
     kind: redis
     environment: fault-lab
@@ -44,6 +44,18 @@ services:
     description: Registered background load generator that runs inside lab-api.
     management_url: http://fault-controller:8090
     allowed_actions: [stop_lab_cpu_load]
+  - service_id: lab-loadgen
+    kind: load_generator
+    environment: fault-lab
+    description: Registered client workload that sends item requests to lab-api.
+    management_url: http://fault-controller:8090
+    allowed_actions: [reset_lab_load_profile]
+  - service_id: lab-api-config
+    kind: config_store
+    environment: fault-lab
+    description: Versioned runtime configuration of lab-api, changed without a deploy.
+    management_url: http://fault-controller:8090
+    allowed_actions: [revert_lab_config]
   - service_id: lab-kafka
     kind: kafka_broker
     environment: fault-lab

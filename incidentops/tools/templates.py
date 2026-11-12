@@ -79,6 +79,17 @@ _ALL: Final = (
         "requests/s",
     ),
     MetricTemplate(
+        "api_request_rate_vs_baseline",
+        "Request rate as a multiple of its 30-minute median (1 = normal traffic)",
+        _API,
+        lambda s: (
+            f"sum(rate(lab_api_http_requests_total{{{_sid(s)}}}[1m])) / clamp_min("
+            f"quantile_over_time(0.5, sum(rate(lab_api_http_requests_total{{{_sid(s)}}}[1m]))"
+            "[30m:1m]), 1e-9)"
+        ),
+        "x baseline",
+    ),
+    MetricTemplate(
         "kafka_group_lag",
         "Total consumer-group lag in messages",
         _CONSUMER,
@@ -132,6 +143,23 @@ _ALL: Final = (
         "Server connections grouped by state",
         frozenset({ServiceKind.POSTGRES}),
         lambda s: f"sum by (state) (pg_stat_activity_count{{{_sid(s)}}})",
+        "connections",
+    ),
+    MetricTemplate(
+        "postgres_connection_utilization",
+        "Server connections as a share of max_connections",
+        frozenset({ServiceKind.POSTGRES}),
+        lambda s: (
+            f"sum(pg_stat_activity_count{{{_sid(s)}}}) / "
+            f"clamp_min(max(pg_settings_max_connections{{{_sid(s)}}}), 1)"
+        ),
+        "ratio",
+    ),
+    MetricTemplate(
+        "postgres_max_connections",
+        "Configured max_connections",
+        frozenset({ServiceKind.POSTGRES}),
+        lambda s: f"max(pg_settings_max_connections{{{_sid(s)}}})",
         "connections",
     ),
     MetricTemplate(

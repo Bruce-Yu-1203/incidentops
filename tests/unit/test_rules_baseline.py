@@ -151,6 +151,7 @@ async def test_api_incident_with_exclusive_lock() -> None:
 def _api_backend(**overrides: list[float]) -> FakeBackend:
     backend = FakeBackend()
     backend.db_locked = False
+    backend.instant_overrides = {"pg_settings_max_connections": 80.0}
     backend.overrides = {
         "redis_up": [1, 1, 1],
         "process_cpu_seconds_total": [0.05, 0.05],
@@ -171,7 +172,35 @@ def _tracebacks(backend: FakeBackend, count: int = 5) -> FakeBackend:
 
 
 def _pg_down(backend: FakeBackend) -> FakeBackend:
-    backend.instant_overrides = {"pg_up": 0.0}
+    backend.instant_overrides["pg_up"] = 0.0
+    return backend
+
+
+# Unique fragment of the api_request_rate_vs_baseline query (longest match wins).
+TRAFFIC = "clamp_min(quantile_over_time(0.5, sum(rate(lab_api_http_requests_total"
+
+
+def _hoarded(backend: FakeBackend) -> FakeBackend:
+    # 76 of 80 slots held, mostly idle (B-F12).
+    backend.instant_overrides.update({"pg_stat_activity_count": 76.0})
+    return backend
+
+
+def _config_changed(backend: FakeBackend) -> FakeBackend:
+    backend.config_changes = {
+        "service_id": "lab-api",
+        "current_revision": "cfg-2",
+        "pinned_good_revision": "cfg-1",
+        "current": {"items_database": "lab_replica"},
+        "history": [
+            {
+                "revision": "cfg-2",
+                "changed_at": "2026-11-12T10:00:00Z",
+                "actor": "config-pipeline",
+                "changes": {"items_database": "lab_replica"},
+            }
+        ],
+    }
     return backend
 
 
@@ -289,6 +318,60 @@ def _deployed(backend: FakeBackend) -> FakeBackend:
             "rollback_demo_api",
             "lab-api",
         ),
+        # B-F11: request rate far above its baseline, CPU up too -> traffic,
+        # not CPU saturation (B-F06), and never a CPU-load stop.
+        (
+            "lab-api",
+            _api_backend(
+                process_cpu_seconds_total=[0.1, 0.7],
+                **{TRAFFIC: [1.0, 6.0]},
+            ),
+            "traffic_surge",
+            "reset_lab_load_profile",
+            "lab-loadgen",
+        ),
+        # B-F06 stays CPU saturation when traffic is normal.
+        (
+            "lab-api",
+            _api_backend(
+                process_cpu_seconds_total=[0.1, 0.9],
+                **{TRAFFIC: [1.0, 1.1]},
+            ),
+            "cpu_saturation",
+            "stop_lab_cpu_load",
+            "lab-cpu-load",
+        ),
+        # B-F12: connection slots exhausted, database up, no lock.
+        (
+            "lab-api",
+            _hoarded(_api_backend(lab_api_http_requests_total=[0.6, 0.6])),
+            "connection_pool_exhausted",
+            "release_lab_idle_connections",
+            "lab-postgres",
+        ),
+        (
+            "lab-postgres",
+            _hoarded(_api_backend(lab_api_http_requests_total=[0.6, 0.6])),
+            "connection_pool_exhausted",
+            "release_lab_idle_connections",
+            "lab-postgres",
+        ),
+        # B-F13: errors after a config change, release unchanged.
+        (
+            "lab-api",
+            _config_changed(_api_backend(lab_api_http_requests_total=[1.0, 1.0])),
+            "config_error",
+            "revert_lab_config",
+            "lab-api-config",
+        ),
+        # A config change without errors is not an incident cause.
+        (
+            "lab-api",
+            _config_changed(_api_backend()),
+            "insufficient_evidence",
+            None,
+            None,
+        ),
         # A couple of stack traces among transient errors are not enough (B-N01).
         (
             "lab-api",
@@ -311,6 +394,8 @@ async def test_api_family_rules(
         assert (proposed["action_type"], proposed["target_id"]) == (action, target)
         if action == "rollback_demo_api":
             assert proposed["arguments"] == {"target_release": "rel-1"}
+        if action == "revert_lab_config":
+            assert proposed["arguments"] == {"target_config": "cfg-1"}
 
 
 def test_baseline_identifies_itself() -> None:

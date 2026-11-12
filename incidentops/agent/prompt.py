@@ -15,7 +15,7 @@ from incidentops.domain.schemas import DiagnosisReport
 from incidentops.evidence.redaction import redact, truncate_utf8
 from incidentops.policy.engine import PolicyConfig, load_policy
 
-PROMPT_VERSION: Final = "investigation-v5"
+PROMPT_VERSION: Final = "investigation-v6"
 
 # The label space of root causes the diagnosis may use. This is the generic
 # taxonomy, not the answer to any particular case.
@@ -30,6 +30,9 @@ ROOT_CAUSE_TAXONOMY: Final = (
     "bad_deployment",
     "application_memory_leak",
     "cpu_saturation",
+    "traffic_surge",
+    "connection_pool_exhausted",
+    "config_error",
     "insufficient_evidence",
 )
 

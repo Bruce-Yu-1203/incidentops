@@ -14,6 +14,7 @@ from incidentops.domain.catalog import ServiceCatalog, ServiceEntry
 from incidentops.domain.schemas import ArgumentValue, EvidenceSource
 from incidentops.tools.backends import Series, TelemetryBackend
 from incidentops.tools.specs import (
+    ConfigChangesInput,
     ConsumerLagInput,
     ConsumerStatusInput,
     DeploymentsInput,
@@ -252,6 +253,7 @@ async def get_postgres_health(
         "postgres_connections_by_state",
         "postgres_locks_by_mode",
         "postgres_max_transaction_seconds",
+        "postgres_max_connections",
     ):
         try:
             query = TEMPLATES[template_id].render(service)
@@ -272,6 +274,18 @@ async def get_postgres_health(
         for r in readings["postgres_max_transaction_seconds"]
         if r["value"]
     }
+    by_state = {
+        r["labels"].get("state", "?"): r["value"]
+        for r in readings["postgres_connections_by_state"]
+        if r["value"] is not None
+    }
+    used = sum(by_state.values()) if by_state else None
+    limits = [r["value"] for r in readings["postgres_max_connections"] if r["value"] is not None]
+    limit = limits[0] if limits else None
+
+    def count(value: float | None) -> str:
+        return "?" if value is None else f"{value:.0f}"
+
     return ToolOutput(
         EvidenceSource.PROMETHEUS,
         "postgres_health",
@@ -279,7 +293,8 @@ async def get_postgres_health(
         now,
         now,
         f"{service.service_id} up={up} locks={json.dumps(locks, sort_keys=True)} "
-        f"longest_tx_seconds={json.dumps(longest, sort_keys=True)}",
+        f"longest_tx_seconds={json.dumps(longest, sort_keys=True)} "
+        f"connections={count(used)}/{count(limit)} idle={count(by_state.get('idle'))}",
         readings,
     )
 
@@ -363,6 +378,57 @@ async def get_recent_deployments(
     )
 
 
+_CONFIG_TEXT: Final = re.compile(r"^[A-Za-z0-9_.:-]{0,64}$")
+
+
+def _config_value(value: Any) -> str:
+    """Config values are shown only when they are short, plain identifiers."""
+    text = str(value)
+    return text if _CONFIG_TEXT.match(text) else "<redacted>"
+
+
+async def get_recent_config_changes(
+    args: _Input, catalog: ServiceCatalog, backend: TelemetryBackend, now: datetime
+) -> ToolOutput:
+    args = _expect(args, ConfigChangesInput)
+    service = _service(catalog, args.service_id)
+    if service.management_url is None:
+        raise ScopeError(f"{service.service_id} has no configuration controller")
+    raw = await backend.controller_get(
+        service.service_id, str(service.management_url), f"/config-changes/{service.service_id}"
+    )
+    history = [
+        {
+            "revision": _config_value(c.get("revision")),
+            "changed_at": _config_value(c.get("changed_at")),
+            "actor": _config_value(c.get("actor")),
+            "changes": {
+                _config_value(k): _config_value(v) for k, v in (c.get("changes") or {}).items()
+            },
+        }
+        for c in raw.get("history", [])[-10:]
+        if isinstance(c, dict)
+    ]
+    current = _config_value(raw.get("current_revision"))
+    pinned = _config_value(raw.get("pinned_good_revision"))
+    last = history[-1] if history else None
+    summary = f"{service.service_id} config {current} (last known good {pinned}); " + (
+        f"last change to {last['revision']} at {last['changed_at']} by {last['actor']}: "
+        f"{', '.join(sorted(last['changes'])) or 'no keys'}"
+        if last
+        else "no recent changes"
+    )
+    return ToolOutput(
+        EvidenceSource.DEPLOYMENT_CONTROLLER,
+        "recent_config_changes",
+        {"service_id": service.service_id},
+        now - timedelta(hours=1),
+        now,
+        summary,
+        {"current_revision": current, "pinned_good_revision": pinned, "history": history},
+    )
+
+
 EXECUTORS: Final[Mapping[str, Executor]] = MappingProxyType(
     {
         "query_metrics": query_metrics,
@@ -373,5 +439,6 @@ EXECUTORS: Final[Mapping[str, Executor]] = MappingProxyType(
         "get_postgres_health": get_postgres_health,
         "get_recent_deployments": get_recent_deployments,
         "get_redis_health": get_redis_health,
+        "get_recent_config_changes": get_recent_config_changes,
     }
 )

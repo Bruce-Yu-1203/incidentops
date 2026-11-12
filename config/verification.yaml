@@ -91,3 +91,38 @@ specs:
          service_id: lab-api, bound: 0.4}
       - {kind: metric_max, check_id: api_latency_recovered, template_id: api_latency_p95,
          service_id: lab-api, bound: 0.5}
+
+  reset_lab_load_profile:
+    observation_window_seconds: 60
+    sample_min_count: 5
+    recovery_timeout_seconds: 240
+    poll_interval_seconds: 10
+    checks:
+      - {kind: target_revision, check_id: load_profile_reset, target_id: lab-loadgen}
+      - {kind: metric_max, check_id: request_rate_normal, template_id: api_request_rate_vs_baseline,
+         service_id: lab-api, bound: 1.5}
+      - {kind: metric_max, check_id: api_latency_recovered, template_id: api_latency_p95,
+         service_id: lab-api, bound: 0.5}
+
+  release_lab_idle_connections:
+    observation_window_seconds: 60
+    sample_min_count: 5
+    recovery_timeout_seconds: 240
+    poll_interval_seconds: 10
+    checks:
+      - {kind: target_revision, check_id: connections_released, target_id: lab-postgres}
+      - {kind: metric_max, check_id: connection_headroom, template_id: postgres_connection_utilization,
+         service_id: lab-postgres, bound: 0.5}
+      - {kind: metric_max, check_id: api_errors_recovered, template_id: api_error_ratio,
+         service_id: lab-api, bound: 0.02}
+
+  revert_lab_config:
+    observation_window_seconds: 60
+    sample_min_count: 5
+    recovery_timeout_seconds: 240
+    poll_interval_seconds: 10
+    checks:
+      - {kind: target_revision, check_id: good_config_running, target_id: lab-api-config,
+         equals: cfg-1}
+      - {kind: metric_max, check_id: api_errors_recovered, template_id: api_error_ratio,
+         service_id: lab-api, bound: 0.02}
