@@ -10,7 +10,7 @@ import pytest
 from fault_lab.benchmark.grading import Observation, TrialStatus, grade
 from fault_lab.benchmark.report import summarize, wilson, write_report
 from fault_lab.benchmark.runner import Timeouts, TrialRunner
-from fault_lab.scenarios import load_scenario
+from fault_lab.scenarios import ScenarioManifest, all_scenarios, load_scenario
 
 EV = "ev_" + "1" * 32
 
@@ -337,18 +337,86 @@ def test_runner_marks_unhealthy_baseline_invalid() -> None:
     assert record["invalid_reason"].startswith("baseline unhealthy")
 
 
-@pytest.mark.parametrize("case_id", ["B-F01", "B-F02", "B-F03", "B-F04", "B-F05", "B-F06", "B-N01"])
-def test_every_case_has_probes_and_a_known_injection(case_id: str) -> None:
-    manifest = load_scenario(case_id)
+KNOWN_INJECTIONS = {
+    "pause_consumer",
+    "hold_db_lock",
+    "redis_outage",
+    "deploy_release",
+    "start_cpu_load",
+    "error_burst",
+    "kafka_outage",
+    "slow_consumer",
+    "postgres_outage",
+    "enable_error_path",
+}
+
+
+@pytest.mark.parametrize("manifest", all_scenarios(), ids=lambda m: m.case_id)
+def test_every_case_has_probes_and_a_known_injection(manifest: ScenarioManifest) -> None:
     assert manifest.expected.probes
-    assert manifest.inject["controller_operation"] in {
-        "pause_consumer",
-        "hold_db_lock",
-        "redis_outage",
-        "deploy_release",
-        "start_cpu_load",
-        "error_burst",
-    }
+    assert manifest.inject["controller_operation"] in KNOWN_INJECTIONS
+
+
+@pytest.mark.parametrize(
+    ("operation", "params", "method", "url", "body"),
+    [
+        (
+            "kafka_outage",
+            {"seconds": 420},
+            "POST",
+            "http://faults/faults/kafka-outage",
+            {"action_id": "bench-1", "seconds": 420},
+        ),
+        (
+            "postgres_outage",
+            {"seconds": 420},
+            "POST",
+            "http://faults/faults/postgres-outage",
+            {"action_id": "bench-1", "seconds": 420},
+        ),
+        (
+            "enable_error_path",
+            {},
+            "POST",
+            "http://faults/faults/error-path",
+            {"action_id": "bench-1"},
+        ),
+        (
+            "slow_consumer",
+            {"delay_ms": 100},
+            "POST",
+            "http://consumer/control/processing-delay",
+            {"action_id": "bench-1", "delay_ms": 100},
+        ),
+    ],
+)
+def test_new_injections_call_the_benchmark_endpoints(
+    operation: str, params: dict[str, Any], method: str, url: str, body: dict[str, Any]
+) -> None:
+    import json as _json
+
+    import httpx
+    from fault_lab.benchmark.clients import LabFaults
+    from fault_lab.scripts.labctl import LabEndpoints
+
+    seen: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append(request)
+        return httpx.Response(201, json={"status": "injected"})
+
+    client = httpx.Client(transport=httpx.MockTransport(handler))
+    endpoints = LabEndpoints(
+        api="http://api",
+        consumer="http://consumer",
+        producer="http://producer",
+        faults="http://faults",
+    )
+    LabFaults(client, "bench-token", endpoints).inject(operation, params, "bench-1")
+    (request,) = seen
+    assert (request.method, str(request.url)) == (method, url)
+    assert _json.loads(request.content) == body
+    assert request.headers["Authorization"] == "Bearer bench-token"
 
 
 def test_runner_approves_proposals_that_appear_late() -> None:

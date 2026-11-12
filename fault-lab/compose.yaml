@@ -46,10 +46,14 @@ services:
     environment:
       KAFKA_NODE_ID: 1
       KAFKA_PROCESS_ROLES: broker,controller
-      KAFKA_LISTENERS: PLAINTEXT://:9092,CONTROLLER://:9093
-      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://lab-kafka:9092
+      # Clients reach the broker only through lab-kafka-proxy (B-F07 partition,
+      # ADR-024): the CLIENT listener advertises the proxy address. INTERNAL is
+      # for the broker's own healthcheck and topic setup.
+      KAFKA_LISTENERS: CLIENT://:9092,INTERNAL://:19092,CONTROLLER://:9093
+      KAFKA_ADVERTISED_LISTENERS: CLIENT://lab-kafka-proxy:9092,INTERNAL://lab-kafka:19092
+      KAFKA_INTER_BROKER_LISTENER_NAME: INTERNAL
       KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
-      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: CONTROLLER:PLAINTEXT,CLIENT:PLAINTEXT,INTERNAL:PLAINTEXT
       KAFKA_CONTROLLER_QUORUM_VOTERS: 1@lab-kafka:9093
       KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
       KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
@@ -59,7 +63,7 @@ services:
       KAFKA_NUM_PARTITIONS: 3
     networks: [lab]
     healthcheck:
-      test: ["CMD-SHELL", "/opt/kafka/bin/kafka-broker-api-versions.sh --bootstrap-server localhost:9092 >/dev/null 2>&1"]
+      test: ["CMD-SHELL", "/opt/kafka/bin/kafka-broker-api-versions.sh --bootstrap-server localhost:19092 >/dev/null 2>&1"]
       interval: 5s
       timeout: 10s
       retries: 30
@@ -72,9 +76,27 @@ services:
     entrypoint: ["/bin/sh", "-c"]
     command:
       - >-
-        /opt/kafka/bin/kafka-topics.sh --bootstrap-server lab-kafka:9092
+        /opt/kafka/bin/kafka-topics.sh --bootstrap-server lab-kafka:19092
         --create --if-not-exists --topic demo.events.v1 --partitions 3 --replication-factor 1
     restart: "no"
+
+  # TCP proxy in front of the broker's client listener. The fault controller
+  # can partition it for a bounded time; it exposes no metrics (ground truth).
+  lab-kafka-proxy:
+    <<: *python-service
+    command: ["python", "-m", "fault_lab.netproxy.app"]
+    environment:
+      LAB_PROXY_UPSTREAM: lab-kafka:9092
+      LAB_PROXY_LISTEN_PORT: "9092"
+      PORT: "8094"
+      FAULT_LAB_INTERNAL_TOKEN: ${FAULT_LAB_INTERNAL_TOKEN:?set in .env}
+    depends_on:
+      lab-kafka: {condition: service_healthy}
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8094/healthz', timeout=2)"]
+      interval: 3s
+      timeout: 5s
+      retries: 30
 
   lab-api:
     <<: *python-service
@@ -105,7 +127,7 @@ services:
     <<: *python-service
     command: ["python", "-m", "fault_lab.producer.app"]
     environment:
-      LAB_KAFKA_BOOTSTRAP: lab-kafka:9092
+      LAB_KAFKA_BOOTSTRAP: lab-kafka-proxy:9092
       LAB_PRODUCER_RATE: ${LAB_PRODUCER_RATE:-20}
       LAB_PRODUCER_SEED: ${LAB_PRODUCER_SEED:-1042}
       PORT: "8082"
@@ -113,6 +135,7 @@ services:
       OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-collector:4318
     depends_on:
       kafka-init: {condition: service_completed_successfully}
+      lab-kafka-proxy: {condition: service_healthy}
     ports: ["127.0.0.1:18082:8082"]
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8082/healthz', timeout=2)"]
@@ -126,7 +149,7 @@ services:
     environment:
       <<: *lab-tokens
       LAB_CONSUMER_ID: persist-demo-consumer
-      LAB_KAFKA_BOOTSTRAP: lab-kafka:9092
+      LAB_KAFKA_BOOTSTRAP: lab-kafka-proxy:9092
       LAB_DATABASE_DSN: postgresql://lab:${LAB_DB_PASSWORD:-lab}@lab-postgres:5432/lab
       LAB_LEDGER_PATH: /data/ledger.sqlite3
       PORT: "8081"
@@ -136,6 +159,7 @@ services:
       - consumer-ledger:/data
     depends_on:
       kafka-init: {condition: service_completed_successfully}
+      lab-kafka-proxy: {condition: service_healthy}
       lab-postgres: {condition: service_healthy}
     ports: ["127.0.0.1:18081:8081"]
     healthcheck:
@@ -171,12 +195,14 @@ services:
       LAB_DATABASE_DSN: postgresql://lab:${LAB_DB_PASSWORD:-lab}@lab-postgres:5432/lab
       LAB_API_URL: http://lab-api:8080
       LAB_REDIS_URL: redis://lab-redis:6379/0
+      LAB_KAFKA_PROXY_URL: http://lab-kafka-proxy:8094
       LAB_LEDGER_PATH: /data/remediations.sqlite3
       PORT: "8090"
     volumes:
       - fault-ledger:/data
     depends_on:
       lab-api: {condition: service_healthy}
+      lab-kafka-proxy: {condition: service_healthy}
     ports: ["127.0.0.1:18090:8090"]
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8090/healthz', timeout=2)"]

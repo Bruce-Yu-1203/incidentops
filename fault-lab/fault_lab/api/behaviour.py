@@ -1,4 +1,4 @@
-"""Injectable runtime behaviour of the demo API (fault fixtures B-F04..B-F06, B-N01).
+"""Injectable runtime behaviour of the demo API (B-F04..B-F06, B-F10, B-N01).
 
 The fault controller switches behaviour through an internal endpoint; the API
 itself only knows *how* to behave, never which benchmark case is running.
@@ -21,6 +21,7 @@ FAULTY_ERROR_RATE: Final = 0.3
 NOISE_ERROR_RATE: Final = 0.15
 CPU_BURN_SECONDS: Final = 0.05
 CPU_REST_SECONDS: Final = 0.01
+ERROR_PATH_MODULUS: Final = 4
 
 
 class Profile(StrEnum):
@@ -38,6 +39,9 @@ class Behaviour:
     release_id: str = "rel-1"
     profile: Profile = Profile.HEALTHY
     noise_until: float = 0.0
+    # B-F10: a latent code path of the *current* release starts failing (for
+    # example after a data change); no deploy and no config change happen.
+    error_path: bool = False
     rng: random.Random = field(default_factory=lambda: random.Random(4242))  # noqa: S311
     _leak: list[bytearray] = field(default_factory=list)
     _cpu_stop: threading.Event | None = None
@@ -49,6 +53,7 @@ class Behaviour:
             "profile": self.profile.value,
             "cpu_load": self.cpu_load_active,
             "noise_active": time.time() < self.noise_until,
+            "error_path": self.error_path,
             "leaked_bytes": self.leaked_bytes,
         }
 
@@ -74,6 +79,10 @@ class Behaviour:
             raise InjectedFailureError("release error")
         if time.time() < self.noise_until and self.rng.random() < NOISE_ERROR_RATE:
             raise InjectedFailureError("transient error")
+
+    def takes_error_path(self, item_id: int) -> bool:
+        """Every fourth item reaches the failing code path while it is enabled."""
+        return self.error_path and item_id % ERROR_PATH_MODULUS == 0
 
     def start_noise(self, seconds: float) -> None:
         self.noise_until = time.time() + seconds
@@ -109,3 +118,15 @@ class Behaviour:
         self.stop_cpu_load()
         self.deploy("rel-1", Profile.HEALTHY)
         self.noise_until = 0.0
+        self.error_path = False
+
+
+def unit_price_cents(item: dict[str, object]) -> int:
+    """Price lookup used by the item view; items without pricing data fail.
+
+    This is the latent bug behind the B-F10 error path: a real exception with
+    a real stack trace, not an injected error message.
+    """
+    pricing = item["pricing"]
+    assert isinstance(pricing, dict)  # noqa: S101 - lab code, documents the shape
+    return int(pricing["unit_cents"])

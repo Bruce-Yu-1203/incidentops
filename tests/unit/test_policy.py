@@ -140,7 +140,9 @@ def test_explicit_deny_rule() -> None:
         ("rollback_demo_api", "lab-api", {"target_release": "rel-7"}, False),
         ("rollback_demo_api", "lab-api", {"image": "attacker/api:latest"}, False),
         ("stop_lab_cpu_load", "lab-cpu-load", {}, True),
-        ("restart_lab_dependency", "lab-postgres", {}, False),  # wrong target
+        ("restart_lab_dependency", "lab-postgres", {}, True),
+        ("restart_lab_dependency", "lab-kafka", {}, True),
+        ("restart_lab_dependency", "lab-api", {}, False),  # wrong target
         ("release_lab_db_blocker", "lab-postgres", {"pid": 4242}, False),
     ],
 )

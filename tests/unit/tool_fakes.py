@@ -35,6 +35,7 @@ class FakeBackend:
         }
         # Instant-query fragment -> value (None: no series), longest match wins.
         self.instant_overrides: dict[str, float | None] = {}
+        self.log_lines: list[str] = [INJECTION]
         self.delay = 0.0
         self.fail = False
 
@@ -77,7 +78,10 @@ class FakeBackend:
     ) -> list[LogLine]:
         await self._maybe_slow()
         self.queries.append(logql)
-        return [LogLine(1, INJECTION, {"service_name": "lab-api"})]
+        return [
+            LogLine(i + 1, line, {"service_name": "lab-api"})
+            for i, line in enumerate(self.log_lines)
+        ]
 
     async def tempo_search(
         self, traceql: str, start: datetime, end: datetime, limit: int

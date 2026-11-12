@@ -27,17 +27,17 @@ def _compose_image(service: str) -> str:
 
 PROMETHEUS_IMAGE = _compose_image("prometheus")
 ALERTMANAGER_IMAGE = _compose_image("alertmanager")
+
+
 # Root-cause identifiers are benchmark ground truth (benchmark.md §5) and must
 # never appear in alert labels or annotations visible to the agent.
-GROUND_TRUTH_IDS = {
-    "postgres_lock_contention",
-    "redis_unavailable",
-    "consumer_paused",
-    "application_memory_leak",
-    "bad_deployment",
-    "cpu_saturation",
-    "insufficient_evidence",
-}
+def _ground_truth_ids() -> set[str]:
+    from incidentops.agent.prompt import ROOT_CAUSE_TAXONOMY
+
+    return set(ROOT_CAUSE_TAXONOMY)
+
+
+GROUND_TRUTH_IDS = _ground_truth_ids()
 
 
 def _alert_rules() -> list[dict[str, Any]]:

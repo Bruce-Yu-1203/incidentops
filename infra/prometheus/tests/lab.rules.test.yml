@@ -201,3 +201,86 @@ tests:
             exp_annotations:
               summary: "lab-redis is not reachable by its exporter"
               observed_value: "0"
+
+  - name: broker invisible to the exporter fires
+    interval: 5s
+    input_series:
+      - series: 'kafka_brokers{service_id="lab-kafka"}'
+        values: "1 1 1 0x20"
+    alert_rule_test:
+      - eval_time: 20s
+        alertname: lab_kafka_broker_unreachable
+        exp_alerts: []
+      - eval_time: 1m
+        alertname: lab_kafka_broker_unreachable
+        exp_alerts:
+          - exp_labels:
+              severity: critical
+              service_id: lab-kafka
+              environment: fault-lab
+              component: kafka-broker
+            exp_annotations:
+              summary: "lab-kafka broker is not visible to the lag exporter"
+              observed_value: "0 brokers"
+
+  - name: visible broker stays quiet
+    interval: 5s
+    input_series:
+      - series: 'kafka_brokers{service_id="lab-kafka"}'
+        values: "1x30"
+    alert_rule_test:
+      - eval_time: 2m
+        alertname: lab_kafka_broker_unreachable
+        exp_alerts: []
+
+  - name: consumer processing at half the produce rate fires
+    interval: 5s
+    input_series:
+      - series: 'lab_producer_messages_sent_total{service_id="demo-producer"}'
+        values: "0+100x40"
+      - series: 'lab_consumer_messages_processed_total{service_id="persist-demo-consumer"}'
+        values: "0+50x40"
+    alert_rule_test:
+      - eval_time: 3m
+        alertname: lab_consumer_processing_slow
+        exp_alerts:
+          - exp_labels:
+              severity: warning
+              service_id: persist-demo-consumer
+              environment: fault-lab
+              component: kafka-consumer
+            exp_annotations:
+              summary: "persist-demo-consumer processes below 80% of the produce rate"
+              observed_value: "10.0 messages/s"
+
+  - name: paused or keeping-up consumers do not fire the slow alert
+    interval: 5s
+    input_series:
+      - series: 'lab_producer_messages_sent_total{service_id="demo-producer"}'
+        values: "0+100x40"
+      - series: 'lab_consumer_messages_processed_total{service_id="persist-demo-consumer"}'
+        values: "0x40"
+      - series: 'lab_consumer_messages_processed_total{service_id="other-consumer"}'
+        values: "0+100x40"
+    alert_rule_test:
+      - eval_time: 3m
+        alertname: lab_consumer_processing_slow
+        exp_alerts: []
+
+  - name: postgres down fires
+    interval: 5s
+    input_series:
+      - series: 'pg_up{service_id="lab-postgres"}'
+        values: "1 1 0x20"
+    alert_rule_test:
+      - eval_time: 1m
+        alertname: lab_postgres_down
+        exp_alerts:
+          - exp_labels:
+              severity: critical
+              service_id: lab-postgres
+              environment: fault-lab
+              component: database
+            exp_annotations:
+              summary: "lab-postgres is not reachable by its exporter"
+              observed_value: "0"

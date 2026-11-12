@@ -12,7 +12,7 @@ from conftest import TOKENS
 from fastapi.testclient import TestClient
 from fault_lab.auth import LabAuthenticator, LabRole
 from fault_lab.faults.app import DbLockFixture, create_app
-from fault_lab.faults.controller import HEALTHY_RELEASE, LabController, Ledger
+from fault_lab.faults.controller import HEALTHY_RELEASE, LabController, Ledger, _digest
 
 
 class FakeLabApi:
@@ -35,10 +35,39 @@ class FakeRedis:
         self.paused = False
 
 
+class FakeOutage:
+    def __init__(self) -> None:
+        self.active = False
+        self.seconds: float | None = None
+
+    async def start(self, seconds: float) -> None:
+        self.active, self.seconds = True, seconds
+
+    async def stop(self) -> None:
+        self.active = False
+
+
 class Holder:
     async def __call__(self, release: asyncio.Event, hold_seconds: float) -> None:
         with contextlib.suppress(TimeoutError):
             await asyncio.wait_for(release.wait(), timeout=hold_seconds)
+
+
+@pytest.fixture
+def outages(
+    tmp_path: Path, authenticator: LabAuthenticator
+) -> tuple[TestClient, FakeOutage, FakeOutage]:
+    kafka, postgres = FakeOutage(), FakeOutage()
+    fixture = DbLockFixture(Holder())
+    controller = LabController(
+        fixture,
+        FakeLabApi(),
+        FakeRedis(),
+        Ledger(tmp_path / "outages.sqlite3"),
+        kafka=kafka,
+        postgres=postgres,
+    )
+    return TestClient(create_app(fixture, authenticator, controller)), kafka, postgres
 
 
 @pytest.fixture
@@ -129,16 +158,18 @@ def test_db_blocker_release_is_bound_to_the_fixture_token(
             json={"action_id": "lock-7", "hold_seconds": 30},
             headers=_auth(LabRole.BENCHMARK),
         )
-        assert (
-            client.get("/targets/lab-postgres", headers=_auth(LabRole.EXECUTOR)).json()["revision"]
-            == "lock-7"
-        )
+        locked = client.get("/targets/lab-postgres", headers=_auth(LabRole.EXECUTOR)).json()[
+            "revision"
+        ]
+        # The revision is bound to this exact fixture (a digest of its token).
+        assert locked == f"pg-gen-1.lock-{_digest('lock-7')}"
+        assert "lock-7" not in locked
         wrong = _remediate(
             client,
             action_id="a1",
             action_type="release_lab_db_blocker",
             target_id="lab-postgres",
-            expected_revision="lock-8",
+            expected_revision=f"pg-gen-1.lock-{_digest('lock-8')}",
         )
         assert wrong.json()["error"] == "stale_revision"
         ok = _remediate(
@@ -146,13 +177,23 @@ def test_db_blocker_release_is_bound_to_the_fixture_token(
             action_id="a2",
             action_type="release_lab_db_blocker",
             target_id="lab-postgres",
-            expected_revision="lock-7",
+            expected_revision=locked,
         )
         assert ok.status_code == 201
+        assert ok.json()["revision_after"] == "pg-gen-1.lock-none"
         assert (
             client.get("/targets/lab-postgres", headers=_auth(LabRole.READER)).json()["revision"]
-            == "none"
+            == "pg-gen-1.lock-none"
         )
+        # Nothing left to release: a second release is refused as stale.
+        again = _remediate(
+            client,
+            action_id="a3",
+            action_type="release_lab_db_blocker",
+            target_id="lab-postgres",
+            expected_revision="pg-gen-1.lock-none",
+        )
+        assert again.json()["error"] == "stale_revision"
 
 
 def test_redis_restart_and_cpu_stop_bump_generations(
@@ -238,7 +279,16 @@ def test_only_the_executor_can_remediate(
 
 
 @pytest.mark.parametrize(
-    "path", ["/faults/deploy", "/faults/cpu-load", "/faults/noise", "/faults/redis-outage"]
+    "path",
+    [
+        "/faults/deploy",
+        "/faults/cpu-load",
+        "/faults/noise",
+        "/faults/redis-outage",
+        "/faults/kafka-outage",
+        "/faults/postgres-outage",
+        "/faults/error-path",
+    ],
 )
 @pytest.mark.parametrize("role", [LabRole.READER, LabRole.EXECUTOR])
 def test_only_the_benchmark_can_inject(
@@ -295,3 +345,87 @@ def test_reset_restores_healthy_baseline(parts: tuple[TestClient, FakeLabApi, Fa
         )
     assert not redis.paused
     assert {"reset": True} in lab_api.calls
+
+
+@pytest.mark.parametrize(
+    ("path", "target_id", "before", "after"),
+    [
+        ("/faults/kafka-outage", "lab-kafka", "kafka-gen-1", "kafka-gen-2"),
+        ("/faults/postgres-outage", "lab-postgres", "pg-gen-1.lock-none", "pg-gen-2.lock-none"),
+    ],
+)
+def test_dependency_outages_are_bounded_and_restartable(
+    outages: tuple[TestClient, FakeOutage, FakeOutage],
+    path: str,
+    target_id: str,
+    before: str,
+    after: str,
+) -> None:
+    client, kafka, postgres = outages
+    outage = kafka if target_id == "lab-kafka" else postgres
+    with client:
+        injected = client.post(
+            path, json={"action_id": "o1", "seconds": 420}, headers=_auth(LabRole.BENCHMARK)
+        )
+        assert injected.status_code == 201
+        assert (outage.active, outage.seconds) == (True, 420)
+        # Readers see a neutral generation, never the injected fault.
+        target = client.get(f"/targets/{target_id}", headers=_auth(LabRole.READER)).json()
+        assert target == {"target_id": target_id, "revision": before}
+        ok = _remediate(
+            client,
+            action_id="fix",
+            action_type="restart_lab_dependency",
+            target_id=target_id,
+            expected_revision=before,
+        )
+        assert ok.status_code == 201
+        assert ok.json()["revision_after"] == after
+        assert not outage.active
+
+
+def test_reset_ends_dependency_outages(
+    outages: tuple[TestClient, FakeOutage, FakeOutage],
+) -> None:
+    client, kafka, postgres = outages
+    with client:
+        for path in ("/faults/kafka-outage", "/faults/postgres-outage"):
+            client.post(path, json={"action_id": "o"}, headers=_auth(LabRole.BENCHMARK))
+        assert kafka.active
+        assert postgres.active
+        client.post("/faults/reset", headers=_auth(LabRole.BENCHMARK))
+    assert not kafka.active
+    assert not postgres.active
+
+
+def test_restart_is_refused_for_unregistered_dependency_targets(
+    outages: tuple[TestClient, FakeOutage, FakeOutage],
+) -> None:
+    client, _, _ = outages
+    for target in ("lab-api", "lab-cpu-load", "lab-kafka-proxy"):
+        response = _remediate(
+            client,
+            action_id=f"x-{target}",
+            action_type="restart_lab_dependency",
+            target_id=target,
+            expected_revision="rel-1",
+        )
+        assert response.status_code == 422
+
+
+def test_error_path_injection_reaches_the_api_without_a_deploy(
+    parts: tuple[TestClient, FakeLabApi, FakeRedis],
+) -> None:
+    client, lab_api, _ = parts
+    with client:
+        response = client.post(
+            "/faults/error-path", json={"action_id": "e1"}, headers=_auth(LabRole.BENCHMARK)
+        )
+        assert response.status_code == 201
+        assert (
+            client.get("/deployments/lab-api", headers=_auth(LabRole.READER)).json()[
+                "current_release"
+            ]
+            == HEALTHY_RELEASE
+        )
+    assert {"error_path": True} in lab_api.calls

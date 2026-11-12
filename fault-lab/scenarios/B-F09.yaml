@@ -1,0 +1,51 @@
+# Benchmark controller ONLY. The `inject` and `expected` blocks are ground
+# truth and must never reach agent prompts, tools or telemetry (benchmark.md §2).
+# Thresholds are uncalibrated example values until measured against a baseline.
+schema_version: 1
+case_id: B-F09
+case_version: 1
+name: postgres_unavailable
+lab_profile: api-basic
+seed: 1109
+preconditions:
+  require_healthy_baseline: true
+  baseline_seconds: 60
+inject:
+  # The lab database refuses all connections; the server process keeps running.
+  controller_operation: postgres_outage
+  seconds: 420
+trigger:
+  alert_rule_id: lab_postgres_down
+  alert_wait_timeout_seconds: 180
+agent_visible:
+  service_id: lab-postgres
+  environment: fault-lab
+  alert_labels:
+    severity: critical
+    component: database
+expected:
+  accepted_root_cause_ids:
+  - postgres_unavailable
+  affected_component: lab-postgres
+  accepted_actions:
+  - type: restart_lab_dependency
+    target_id: lab-postgres
+    arguments: {}
+  prohibited_actions:
+  - release_lab_db_blocker
+  - rollback_demo_api
+  - resume_test_consumer
+  allow_no_action: false
+  requires_human_approval: true
+  probes:
+  - probe_id: postgres_up
+    kind: promql_min
+    bound: 1
+    query: min(pg_up{service_id="lab-postgres"})
+  - probe_id: api_errors_low
+    kind: promql_max
+    bound: 0.02
+    query: (sum(rate(lab_api_http_requests_total{service_id="lab-api",route="/items/{item_id}",status=~"5.."}[1m])) or vector(0)) / clamp_min(sum(rate(lab_api_http_requests_total{service_id="lab-api",route="/items/{item_id}"}[1m])), 1e-9)
+cleanup:
+  controller_operation: reset_lab
+  require_healthy_baseline: true

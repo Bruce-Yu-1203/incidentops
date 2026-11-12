@@ -76,14 +76,16 @@ class RulesBaselineAdapter:
         if not results:
             return self._first_reads(service)
         evidence = [r["evidence_id"] for r in results.values() if r.get("evidence_id")]
-        if service == self._group:
-            return self._consumer_rules(results, evidence)
-        if service in {"lab-api", "lab-redis"}:
+        if service in KAFKA_FAMILY:
+            return self._consumer_rules(results, evidence, service)
+        if service in API_FAMILY:
             return self._api_rules(results, evidence, service)
         return _report("insufficient_evidence", service, "low", "No rules for service.", evidence)
 
     def _first_reads(self, service: str) -> ModelTurn:
-        if service == self._group:
+        if service in KAFKA_FAMILY:
+            # Consumer, broker and producer are read together so the broker
+            # can be told apart from its healthy neighbours.
             return ModelTurn(
                 tool_calls=[
                     ToolCall(
@@ -92,57 +94,69 @@ class RulesBaselineAdapter:
                         {"consumer_group_id": self._group, "lookback_minutes": 5},
                     ),
                     ToolCall("status", "get_consumer_status", {"worker_id": self._group}),
-                    ToolCall(
-                        "brokers",
-                        "query_metrics",
-                        {
-                            "template_id": "kafka_broker_count",
-                            "service_id": "lab-kafka",
-                            "lookback_minutes": 5,
-                        },
-                    ),
-                    ToolCall(
-                        "producer",
-                        "query_metrics",
-                        {
-                            "template_id": "producer_send_rate",
-                            "service_id": "demo-producer",
-                            "lookback_minutes": 5,
-                        },
-                    ),
+                    _metric("brokers", "kafka_broker_count", "lab-kafka"),
+                    _metric("producer", "producer_send_rate", "demo-producer"),
+                    _metric("producer_errors", "producer_send_error_rate", "demo-producer"),
+                    _metric("processing", "consumer_processing_rate", self._group),
                 ]
             )
-        if service in {"lab-api", "lab-redis"}:
+        if service in API_FAMILY:
             # The API and its dependencies are read together: one fault on a
             # dependency usually surfaces as API symptoms too.
-            def metric(call_id: str, template: str, target: str) -> ToolCall:
-                return ToolCall(
-                    call_id,
-                    "query_metrics",
-                    {"template_id": template, "service_id": target, "lookback_minutes": 5},
-                )
-
             return ModelTurn(
                 tool_calls=[
-                    metric("errors", "api_error_ratio", "lab-api"),
-                    metric("latency", "api_latency_p95", "lab-api"),
-                    metric("cpu", "api_cpu_cores", "lab-api"),
-                    metric("memory", "api_memory_bytes", "lab-api"),
-                    metric("memory_growth", "api_memory_growth_rate", "lab-api"),
-                    metric("redis", "redis_up", "lab-redis"),
+                    _metric("errors", "api_error_ratio", "lab-api"),
+                    _metric("latency", "api_latency_p95", "lab-api"),
+                    _metric("cpu", "api_cpu_cores", "lab-api"),
+                    _metric("memory", "api_memory_bytes", "lab-api"),
+                    _metric("memory_growth", "api_memory_growth_rate", "lab-api"),
+                    _metric("redis", "redis_up", "lab-redis"),
                     ToolCall("pg", "get_postgres_health", {"service_id": "lab-postgres"}),
                     ToolCall("deploys", "get_recent_deployments", {"service_id": "lab-api"}),
+                    ToolCall(
+                        "tracebacks",
+                        "search_logs",
+                        {
+                            "service_id": "lab-api",
+                            "lookback_minutes": 5,
+                            "contains": "Traceback",
+                            "limit": 20,
+                        },
+                    ),
                 ]
             )
         return ModelTurn(tool_calls=[])
 
-    def _consumer_rules(self, results: dict[str, dict[str, Any]], evidence: list[str]) -> ModelTurn:
+    def _consumer_rules(
+        self, results: dict[str, dict[str, Any]], evidence: list[str], service: str
+    ) -> ModelTurn:
+        """Fixed precedence: broker first, then the consumer's own state."""
         lag = results.get("lag", {}).get("summary", "")
         status = results.get("status", {}).get("summary", "")
-        brokers = results.get("brokers", {}).get("summary", "")
+        brokers_last = _last(results.get("brokers", {}).get("summary", ""))
+        sent_last = _last(results.get("producer", {}).get("summary", ""))
+        send_errors_last = _last(results.get("producer_errors", {}).get("summary", ""))
+        processed_last = _last(results.get("processing", {}).get("summary", ""))
         lag_rising = "(increasing)" in lag
         paused = "paused=True" in status
-        broker_up = "last=1.0" in brokers or "max=1.0" in brokers
+        # Current visibility, not the window maximum: a broker that just
+        # vanished still has earlier samples of 1 in the lookback.
+        broker_up = brokers_last is not None and brokers_last >= 1
+        producer_failing = (send_errors_last or 0.0) > 0 or (sent_last or 0.0) < 1
+        if not broker_up and producer_failing:
+            return _report(
+                "kafka_broker_unavailable",
+                "lab-kafka",
+                "high",
+                "The lag exporter sees no broker and the producer cannot send.",
+                evidence,
+                _action(
+                    "restart_lab_dependency",
+                    "lab-kafka",
+                    {},
+                    "Restart the registered lab Kafka broker.",
+                ),
+            )
         if lag_rising and paused and broker_up:
             return _report(
                 "consumer_paused",
@@ -158,17 +172,17 @@ class RulesBaselineAdapter:
                     "reason": "Resume the registered paused test consumer.",
                 },
             )
-        if lag_rising and not broker_up:
+        if lag_rising and not paused and broker_up and (processed_last or 0.0) > 0:
             return _report(
-                "kafka_broker_unavailable",
-                "lab-kafka",
+                "consumer_slow",
+                self._group,
                 "medium",
-                "Lag rising without a visible broker.",
+                f"Lag rising while the running consumer processes {processed_last:.1f} msg/s.",
                 evidence,
             )
         return _report(
             "insufficient_evidence",
-            self._group,
+            self._group if service == self._group else service,
             "low",
             "Lag/status signals do not match a known rule.",
             evidence,
@@ -196,7 +210,22 @@ class RulesBaselineAdapter:
             and deploys.get("current_release") != deploys.get("pinned_healthy_release")
         )
         pinned = str(deploys.get("pinned_healthy_release") or "rel-1")
+        tracebacks = _log_count(results.get("tracebacks", {}).get("summary", ""))
 
+        if _POSTGRES_DOWN.search(pg):
+            return _report(
+                "postgres_unavailable",
+                "lab-postgres",
+                "high",
+                "The lab PostgreSQL exporter reports the database down while requests fail.",
+                evidence,
+                _action(
+                    "restart_lab_dependency",
+                    "lab-postgres",
+                    {},
+                    "Restart the registered lab PostgreSQL dependency.",
+                ),
+            )
         if "accessexclusivelock" in pg:
             return _report(
                 "postgres_lock_contention",
@@ -269,6 +298,22 @@ class RulesBaselineAdapter:
                     "Roll back to the pinned healthy release.",
                 ),
             )
+        if (
+            not new_release
+            and errors_last is not None
+            and errors_last > ERROR_RATIO
+            and tracebacks >= MIN_TRACEBACKS
+        ):
+            # Errors with stack traces in the running release, no deploy: a
+            # code defect. Rolling back to the same release cannot fix it.
+            return _report(
+                "application_error",
+                "lab-api",
+                "medium",
+                f"Errors at {errors_last:.0%} with {tracebacks} stack traces in release "
+                f"{deploys.get('current_release')}; no recent deploy.",
+                evidence,
+            )
         return _report(
             "insufficient_evidence",
             service,
@@ -278,6 +323,11 @@ class RulesBaselineAdapter:
         )
 
 
+KAFKA_FAMILY: Final = frozenset({"persist-demo-consumer", "lab-kafka", "demo-producer"})
+API_FAMILY: Final = frozenset({"lab-api", "lab-redis", "lab-postgres"})
+MIN_TRACEBACKS: Final = 3
+_POSTGRES_DOWN = re.compile(r"\bup=0(\.0)?\b")
+_LOG_COUNT = re.compile(r"^(\d+) log lines")
 CPU_SATURATED_CORES: Final = 0.6
 MEMORY_GROWTH_BYTES: Final = 30_000_000
 # Sustained leaks in the lab grow by MB/s; normal request churn stays far below.
@@ -310,6 +360,19 @@ def _data(result: dict[str, Any]) -> dict[str, Any]:
     except json.JSONDecodeError:
         return {}
     return value if isinstance(value, dict) else {}
+
+
+def _log_count(summary: str) -> int:
+    match = _LOG_COUNT.match(summary)
+    return int(match.group(1)) if match else 0
+
+
+def _metric(call_id: str, template: str, target: str) -> ToolCall:
+    return ToolCall(
+        call_id,
+        "query_metrics",
+        {"template_id": template, "service_id": target, "lookback_minutes": 5},
+    )
 
 
 def _action(

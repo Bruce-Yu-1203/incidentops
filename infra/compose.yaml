@@ -104,7 +104,8 @@ services:
   kafka-exporter:
     <<: *lab-network
     image: danielqsj/kafka-exporter:v1.9.0@sha256:4150e46b2e9697ac30e4be8de03ec1704b4bdc7037577b83b8d35a32be298c16
-    command: ["--kafka.server=lab-kafka:9092"]
+    # Through the proxy, like every Kafka client: a partition hides the broker.
+    command: ["--kafka.server=lab-kafka-proxy:9092"]
     restart: unless-stopped
 
 networks:

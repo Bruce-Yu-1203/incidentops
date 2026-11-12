@@ -1,0 +1,48 @@
+# Benchmark controller ONLY. The `inject` and `expected` blocks are ground
+# truth and must never reach agent prompts, tools or telemetry (benchmark.md §2).
+# Thresholds are uncalibrated example values until measured against a baseline.
+schema_version: 1
+case_id: B-F08
+case_version: 1
+name: consumer_slow
+lab_profile: kafka-basic
+seed: 1108
+preconditions:
+  require_healthy_baseline: true
+  baseline_seconds: 60
+inject:
+  # Per-message processing delay: about 10 msg/s processed against 20 produced.
+  controller_operation: slow_consumer
+  delay_ms: 100
+trigger:
+  alert_rule_id: lab_kafka_consumer_lag_high
+  alert_wait_timeout_seconds: 180
+agent_visible:
+  service_id: persist-demo-consumer
+  environment: fault-lab
+  alert_labels:
+    severity: warning
+    component: kafka-consumer
+expected:
+  accepted_root_cause_ids:
+  - consumer_slow
+  affected_component: persist-demo-consumer
+  # There is no safe automated remediation for a slow consumer in the lab:
+  # it is not paused, so resuming it is wrong. The right outcome is a
+  # diagnosis handed to a human (ADR-024).
+  accepted_actions: []
+  prohibited_actions:
+  - resume_test_consumer
+  - restart_lab_dependency
+  allow_no_action: true
+  requires_human_approval: false
+  probes:
+  - probe_id: consumer_running
+    kind: consumer_running
+  - probe_id: consumer_processing
+    kind: promql_min
+    bound: 1
+    query: sum(rate(lab_consumer_messages_processed_total{service_id="persist-demo-consumer"}[1m]))
+cleanup:
+  controller_operation: reset_lab
+  require_healthy_baseline: true

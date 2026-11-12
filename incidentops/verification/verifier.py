@@ -84,7 +84,11 @@ class VerifyConfig(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
     schema_version: Literal[1]
+    # "<action_type>" or "<action_type>:<target_id>" (target-specific wins).
     specs: dict[str, VerifySpec]
+
+    def spec_for(self, action_type: str, target_id: str) -> VerifySpec | None:
+        return self.specs.get(f"{action_type}:{target_id}") or self.specs.get(action_type)
 
 
 def load_verify_config(path: Path = DEFAULT_SPEC_PATH) -> VerifyConfig:
@@ -282,7 +286,7 @@ class RecoveryVerifier:
             ).first()
         if action.state != ActionState.SUCCEEDED or incident.state != IncidentState.VERIFYING:
             return None
-        spec = self._config.specs.get(action.action_type)
+        spec = self._config.spec_for(action.action_type, action.target_id)
         expected_generation = receipt_generation(operation.receipt if operation else None)
 
         started = self._clock()

@@ -107,6 +107,13 @@ _ALL: Final = (
         "messages/s",
     ),
     MetricTemplate(
+        "producer_send_error_rate",
+        "Messages per second the producer failed to send",
+        frozenset({ServiceKind.KAFKA_PRODUCER}),
+        lambda s: f"rate(lab_producer_send_errors_total{{{_sid(s)}}}[1m])",
+        "errors/s",
+    ),
+    MetricTemplate(
         "kafka_broker_count",
         "Number of brokers visible to the lag exporter",
         frozenset({ServiceKind.KAFKA_BROKER}),

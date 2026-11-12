@@ -1,6 +1,9 @@
 # Postconditions checked by the independent verifier after an action succeeds.
 # Thresholds are initial lab values; calibrate against measured baselines and
 # record changes in version history (benchmark.md §3).
+# A key "<action_type>:<target_id>" applies to that target only and takes
+# precedence over a plain "<action_type>" key; an action with neither has no
+# spec and verifies as UNKNOWN (never PASSED).
 schema_version: 1
 specs:
   resume_test_consumer:
@@ -16,7 +19,8 @@ specs:
     recovery_timeout_seconds: 240
     poll_interval_seconds: 10
     checks:
-      - {kind: target_revision, check_id: blocker_released, target_id: lab-postgres, equals: none}
+      # The receipt's revision_after names the database without a blocker.
+      - {kind: target_revision, check_id: blocker_released, target_id: lab-postgres}
       - {kind: metric_max, check_id: no_exclusive_locks, template_id: postgres_exclusive_locks,
          service_id: lab-postgres, bound: 0}
       - {kind: metric_max, check_id: api_errors_recovered, template_id: api_error_ratio,
@@ -24,7 +28,7 @@ specs:
       - {kind: metric_max, check_id: api_latency_recovered, template_id: api_latency_p95,
          service_id: lab-api, bound: 0.5}
 
-  restart_lab_dependency:
+  restart_lab_dependency:lab-redis:
     observation_window_seconds: 60
     sample_min_count: 5
     recovery_timeout_seconds: 240
@@ -33,6 +37,30 @@ specs:
       - {kind: target_revision, check_id: dependency_restarted, target_id: lab-redis}
       - {kind: metric_min, check_id: redis_up, template_id: redis_up,
          service_id: lab-redis, bound: 1}
+      - {kind: metric_max, check_id: api_errors_recovered, template_id: api_error_ratio,
+         service_id: lab-api, bound: 0.02}
+
+  restart_lab_dependency:lab-kafka:
+    observation_window_seconds: 60
+    sample_min_count: 5
+    recovery_timeout_seconds: 240
+    poll_interval_seconds: 10
+    checks:
+      - {kind: target_revision, check_id: dependency_restarted, target_id: lab-kafka}
+      - {kind: metric_min, check_id: broker_visible, template_id: kafka_broker_count,
+         service_id: lab-kafka, bound: 1}
+      - {kind: metric_min, check_id: producer_sending, template_id: producer_send_rate,
+         service_id: demo-producer, bound: 1}
+
+  restart_lab_dependency:lab-postgres:
+    observation_window_seconds: 60
+    sample_min_count: 5
+    recovery_timeout_seconds: 240
+    poll_interval_seconds: 10
+    checks:
+      - {kind: target_revision, check_id: dependency_restarted, target_id: lab-postgres}
+      - {kind: metric_min, check_id: postgres_up, template_id: postgres_up,
+         service_id: lab-postgres, bound: 1}
       - {kind: metric_max, check_id: api_errors_recovered, template_id: api_error_ratio,
          service_id: lab-api, bound: 0.02}
 

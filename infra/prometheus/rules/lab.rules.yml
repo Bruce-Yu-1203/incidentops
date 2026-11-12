@@ -55,6 +55,41 @@ groups:
           summary: "persist-demo-consumer group lag above 200 messages"
           observed_value: "{{ $value }}"
 
+      # The lag exporter reaches the broker like every client; a broker it
+      # cannot see is reported as 0 brokers within about 20 seconds.
+      - alert: lab_kafka_broker_unreachable
+        expr: max(kafka_brokers{service_id="lab-kafka"}) < 1
+        for: 15s
+        labels:
+          severity: critical
+          service_id: lab-kafka
+          environment: fault-lab
+          component: kafka-broker
+        annotations:
+          summary: "lab-kafka broker is not visible to the lag exporter"
+          observed_value: "{{ $value }} brokers"
+
+      - record: lab_consumer:processed_per_second:rate1m
+        expr: sum(rate(lab_consumer_messages_processed_total{service_id="persist-demo-consumer"}[1m]))
+      - record: lab_producer:sent_per_second:rate1m
+        expr: sum(rate(lab_producer_messages_sent_total{service_id="demo-producer"}[1m]))
+
+      # Processing but falling behind; a stopped (0/s) consumer is left to the
+      # lag alert.
+      - alert: lab_consumer_processing_slow
+        expr: >-
+          lab_consumer:processed_per_second:rate1m > 0
+          and lab_consumer:processed_per_second:rate1m < 0.8 * lab_producer:sent_per_second:rate1m
+        for: 1m
+        labels:
+          severity: warning
+          service_id: persist-demo-consumer
+          environment: fault-lab
+          component: kafka-consumer
+        annotations:
+          summary: "persist-demo-consumer processes below 80% of the produce rate"
+          observed_value: "{{ $value | printf \"%.1f\" }} messages/s"
+
   - name: lab-resources
     rules:
       # Growth rate rather than level: a leak that stops at a cap is still
@@ -98,4 +133,16 @@ groups:
           component: cache
         annotations:
           summary: "lab-redis is not reachable by its exporter"
+          observed_value: "{{ $value }}"
+
+      - alert: lab_postgres_down
+        expr: pg_up{service_id="lab-postgres"} == 0
+        for: 15s
+        labels:
+          severity: critical
+          service_id: lab-postgres
+          environment: fault-lab
+          component: database
+        annotations:
+          summary: "lab-postgres is not reachable by its exporter"
           observed_value: "{{ $value }}"

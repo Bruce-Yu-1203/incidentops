@@ -55,9 +55,11 @@ def test_only_controllers_receive_lab_control_tokens() -> None:
         for name, service in _services(LAB).items()
     }
     holders = {name: keys for name, keys in holders.items() if keys}
-    assert set(holders) == {"lab-consumer", "fault-controller", "lab-api"}
-    # The API only verifies the internal behaviour token; it holds no role token.
+    assert set(holders) == {"lab-consumer", "fault-controller", "lab-api", "lab-kafka-proxy"}
+    # The API and the Kafka proxy only verify the internal control token; they
+    # hold no role token.
     assert holders["lab-api"] == {"FAULT_LAB_INTERNAL_TOKEN"}
+    assert holders["lab-kafka-proxy"] == {"FAULT_LAB_INTERNAL_TOKEN"}
 
 
 def test_lab_dockerfile_installs_from_hashed_lock() -> None:
@@ -76,3 +78,16 @@ def test_kafka_clients_export_logs_for_search_logs() -> None:
     services = _services(LAB)
     for name in ("lab-api", "lab-consumer", "demo-producer"):
         assert _env(services[name])["OTEL_EXPORTER_OTLP_ENDPOINT"] == ("http://otel-collector:4318")
+
+
+def test_kafka_clients_reach_the_broker_only_through_the_proxy() -> None:
+    services = _services(LAB)
+    broker = _env(services["lab-kafka"])
+    assert broker["KAFKA_ADVERTISED_LISTENERS"].startswith("CLIENT://lab-kafka-proxy:9092,")
+    for name in ("demo-producer", "lab-consumer"):
+        assert _env(services[name])["LAB_KAFKA_BOOTSTRAP"] == "lab-kafka-proxy:9092"
+    exporter = _services(REPO_ROOT / "infra" / "compose.yaml")["kafka-exporter"]
+    assert exporter["command"] == ["--kafka.server=lab-kafka-proxy:9092"]
+    # The proxy's state is ground truth: it is never scraped.
+    prometheus = (REPO_ROOT / "infra" / "prometheus" / "prometheus.yml").read_text("utf-8")
+    assert "lab-kafka-proxy" not in prometheus

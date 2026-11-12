@@ -6,7 +6,7 @@ import pytest
 from conftest import TOKENS
 from fastapi.testclient import TestClient
 from fault_lab.auth import LabAuthenticator, LabRole
-from fault_lab.consumer.app import create_app
+from fault_lab.consumer.app import Throttle, create_app
 from fault_lab.consumer.controller import ConsumerController
 
 
@@ -112,3 +112,58 @@ def test_metrics_reflect_paused_state(client: TestClient) -> None:
     text = client.get("/metrics").text
     assert "lab_consumer_paused 1.0" in text
     assert "lab_consumer_generation 2.0" in text
+
+
+@pytest.mark.parametrize("role", [LabRole.EXECUTOR, LabRole.READER])
+def test_only_benchmark_can_slow_the_consumer(client: TestClient, role: LabRole) -> None:
+    response = client.post(
+        "/control/processing-delay", headers=_auth(role), json={"action_id": "s", "delay_ms": 100}
+    )
+    assert response.status_code == 403
+
+
+def test_processing_delay_is_hidden_and_cleared_by_reset(
+    controller: ConsumerController, authenticator: LabAuthenticator
+) -> None:
+    throttle = Throttle()
+    client = TestClient(create_app(controller, authenticator, throttle=throttle))
+    applied = client.post(
+        "/control/processing-delay",
+        headers=_auth(LabRole.BENCHMARK),
+        json={"action_id": "s1", "delay_ms": 100},
+    )
+    assert applied.status_code == 200
+    assert throttle.delay_ms == 100
+    # Fault state never appears in agent-visible status or metrics.
+    status = client.get("/control/status", headers=_auth(LabRole.READER)).json()
+    assert status == {
+        "consumer_id": "persist-demo-consumer",
+        "paused": False,
+        "generation": "gen-1",
+    }
+    assert "delay" not in client.get("/metrics").text
+    client.post("/control/reset", headers=_auth(LabRole.BENCHMARK), json={"action_id": "r1"})
+    assert throttle.delay_ms == 0
+
+
+@pytest.mark.parametrize("delay", [-1, 1001])
+def test_processing_delay_is_bounded(client: TestClient, delay: int) -> None:
+    response = client.post(
+        "/control/processing-delay",
+        headers=_auth(LabRole.BENCHMARK),
+        json={"action_id": "s", "delay_ms": delay},
+    )
+    assert response.status_code == 422
+
+
+async def test_throttle_sleeps_per_record() -> None:
+    import time
+
+    throttle = Throttle()
+    start = time.perf_counter()
+    await throttle.wait(10)
+    assert time.perf_counter() - start < 0.01
+    throttle.delay_ms = 5
+    start = time.perf_counter()
+    await throttle.wait(4)
+    assert time.perf_counter() - start >= 0.018

@@ -35,3 +35,32 @@ def test_too_few_samples_is_unknown() -> None:
 
 def test_repository_config_has_resume_spec() -> None:
     assert load_verify_config().specs["resume_test_consumer"].lag_max == 100
+
+
+def test_target_specific_specs_take_precedence() -> None:
+    config = load_verify_config()
+    redis = config.spec_for("restart_lab_dependency", "lab-redis")
+    kafka = config.spec_for("restart_lab_dependency", "lab-kafka")
+    postgres = config.spec_for("restart_lab_dependency", "lab-postgres")
+    assert redis is not None
+    assert kafka is not None
+    assert postgres is not None
+    assert {c.check_id for c in kafka.checks} >= {"broker_visible", "producer_sending"}
+    assert "postgres_up" in {c.check_id for c in postgres.checks}
+    assert "redis_up" in {c.check_id for c in redis.checks}
+    # No generic restart spec: an unknown restart target verifies UNKNOWN.
+    assert config.spec_for("restart_lab_dependency", "lab-api") is None
+    assert config.spec_for("resume_test_consumer", "persist-demo-consumer") is not None
+
+
+def test_every_catalog_action_target_has_a_verification_spec() -> None:
+    from incidentops.domain.catalog import load_catalog
+
+    config = load_verify_config()
+    missing = [
+        (action, service.service_id)
+        for service in load_catalog().services
+        for action in service.allowed_actions
+        if config.spec_for(action, service.service_id) is None
+    ]
+    assert missing == []

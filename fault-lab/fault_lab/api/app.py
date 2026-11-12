@@ -11,6 +11,7 @@ import hmac
 import logging
 import os
 import time
+import traceback
 from collections.abc import AsyncIterator, Awaitable, Callable
 from contextlib import asynccontextmanager
 from typing import Annotated, Any, Protocol
@@ -30,7 +31,7 @@ from prometheus_client import (
 from pydantic import BaseModel, ConfigDict, Field
 
 from fault_lab import telemetry
-from fault_lab.api.behaviour import Behaviour, InjectedFailureError, Profile
+from fault_lab.api.behaviour import Behaviour, InjectedFailureError, Profile, unit_price_cents
 
 LOGGER = logging.getLogger("fault_lab.api")
 ITEM_COUNT = 1000
@@ -53,6 +54,7 @@ class BehaviourUpdate(BaseModel):
     profile: Profile | None = None
     cpu_load: bool | None = None
     noise_seconds: Annotated[float, Field(ge=0, le=600)] | None = None
+    error_path: bool | None = None
     reset: bool = False
 
 
@@ -160,6 +162,8 @@ def create_app(
             behaviour.stop_cpu_load()
         if body.noise_seconds is not None:
             behaviour.start_noise(body.noise_seconds)
+        if body.error_path is not None:
+            behaviour.error_path = body.error_path
         _publish_release()
         return behaviour.snapshot()
 
@@ -170,6 +174,15 @@ def create_app(
         except InjectedFailureError as exc:
             LOGGER.error("request failed in release %s: %s", behaviour.release_id, exc)
             raise HTTPException(status_code=500, detail="internal error") from exc
+        if behaviour.takes_error_path(item_id):
+            try:
+                unit_price_cents({"id": item_id})
+            except Exception as exc:
+                # The stack trace is part of the log line so a log search finds it.
+                LOGGER.error(
+                    "unhandled exception serving item %s\n%s", item_id, traceback.format_exc()
+                )
+                raise HTTPException(status_code=500, detail="internal error") from exc
         try:
             await deps.touch_cache()
         except Exception as exc:

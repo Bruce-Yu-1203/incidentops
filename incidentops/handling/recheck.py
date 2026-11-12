@@ -100,7 +100,7 @@ def plan_recheck(
         .order_by(ActionProposalRow.created_at.desc())
         .limit(1)
     ).first()
-    spec = config.specs.get(action.action_type) if action is not None else None
+    spec = config.spec_for(action.action_type, action.target_id) if action is not None else None
     if spec is not None:
         metric_checks = [c for c in spec.checks if isinstance(c, MetricCheck)]
         return RecheckPlan(

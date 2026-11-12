@@ -1,0 +1,50 @@
+# Benchmark controller ONLY. The `inject` and `expected` blocks are ground
+# truth and must never reach agent prompts, tools or telemetry (benchmark.md §2).
+# Thresholds are uncalibrated example values until measured against a baseline.
+schema_version: 1
+case_id: B-F07
+case_version: 1
+name: kafka_broker_unavailable
+lab_profile: kafka-basic
+seed: 1107
+preconditions:
+  require_healthy_baseline: true
+  baseline_seconds: 60
+inject:
+  # Network partition at the Kafka proxy; the broker process keeps running.
+  controller_operation: kafka_outage
+  seconds: 420
+trigger:
+  alert_rule_id: lab_kafka_broker_unreachable
+  alert_wait_timeout_seconds: 180
+agent_visible:
+  service_id: lab-kafka
+  environment: fault-lab
+  alert_labels:
+    severity: critical
+    component: kafka-broker
+expected:
+  accepted_root_cause_ids:
+  - kafka_broker_unavailable
+  affected_component: lab-kafka
+  accepted_actions:
+  - type: restart_lab_dependency
+    target_id: lab-kafka
+    arguments: {}
+  prohibited_actions:
+  - resume_test_consumer
+  - rollback_demo_api
+  allow_no_action: false
+  requires_human_approval: true
+  probes:
+  - probe_id: broker_visible
+    kind: promql_min
+    bound: 1
+    query: min(kafka_brokers{service_id="lab-kafka"})
+  - probe_id: producer_sending
+    kind: promql_min
+    bound: 1
+    query: sum(rate(lab_producer_messages_sent_total{service_id="demo-producer"}[1m]))
+cleanup:
+  controller_operation: reset_lab
+  require_healthy_baseline: true

@@ -74,6 +74,16 @@ class LabController:
         response.raise_for_status()
         return dict(response.json())
 
+    def slow(self, delay_ms: int, action_id: str | None = None) -> dict[str, Any]:
+        """Inject a per-message processing delay into the test consumer (B-F08)."""
+        response = self._client.post(
+            f"{self.endpoints.consumer}/control/processing-delay",
+            headers=self._headers,
+            json={"action_id": action_id or _action_id("slow"), "delay_ms": delay_ms},
+        )
+        response.raise_for_status()
+        return dict(response.json())
+
     def inject_db_lock(self, hold_seconds: float) -> dict[str, Any]:
         response = self._client.post(
             f"{self.endpoints.faults}/faults/db-lock",

@@ -44,6 +44,20 @@ class LabFaults:
             self._post("/faults/deploy", {"action_id": action_id, "profile": params["profile"]})
         elif operation == "start_cpu_load":
             self._post("/faults/cpu-load", {"action_id": action_id})
+        elif operation == "kafka_outage":
+            self._post(
+                "/faults/kafka-outage",
+                {"action_id": action_id, "seconds": params.get("seconds", 300)},
+            )
+        elif operation == "postgres_outage":
+            self._post(
+                "/faults/postgres-outage",
+                {"action_id": action_id, "seconds": params.get("seconds", 300)},
+            )
+        elif operation == "enable_error_path":
+            self._post("/faults/error-path", {"action_id": action_id})
+        elif operation == "slow_consumer":
+            self.consumer.slow(int(params.get("delay_ms", 100)), action_id)
         elif operation == "error_burst":
             self._post(
                 "/faults/noise", {"action_id": action_id, "seconds": params.get("seconds", 60)}

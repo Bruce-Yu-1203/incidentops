@@ -11,7 +11,7 @@ from incidentops.agent.graph import Budgets, build_graph, initial_state
 from incidentops.agent.prompt import initial_message
 from incidentops.domain.catalog import load_catalog
 from incidentops.domain.ids import new_id
-from tests.unit.tool_fakes import FakeBackend, make_gateway
+from tests.unit.tool_fakes import NOW, FakeBackend, make_gateway
 
 
 async def _run(service_id: str, backend: FakeBackend) -> dict[str, Any]:
@@ -39,23 +39,106 @@ async def test_paused_consumer_yields_resume_proposal() -> None:
     assert set(report["diagnosis"]["supporting_evidence_ids"]) == set(final["evidence_ids"])
 
 
-@pytest.mark.parametrize(
-    ("paused", "brokers", "root_cause"),
-    [
-        (False, 1.0, "insufficient_evidence"),  # e.g. slow downstream, not paused (B-N02)
-        (True, 0.0, "kafka_broker_unavailable"),
-    ],
-)
-async def test_non_matching_signals_do_not_propose_resume(
-    paused: bool, brokers: float, root_cause: str
-) -> None:
+def _kafka_backend(
+    *,
+    paused: bool,
+    brokers: float,
+    lag: tuple[float, float] = (100.0, 1300.0),
+    **series: list[float],
+) -> FakeBackend:
     backend = FakeBackend()
     backend.paused = paused
     backend.brokers = brokers
-    report = (await _run("persist-demo-consumer", backend))["report"]
+    backend.lag = [(NOW.timestamp() - 60, lag[0]), (NOW.timestamp(), lag[1])]
+    backend.overrides = {
+        "lab_producer_messages_sent_total": [20.0, 20.0],
+        "lab_producer_send_errors_total": [0.0, 0.0],
+        "lab_consumer_messages_processed_total": [20.0, 20.0],
+    }
+    backend.overrides.update(series)
+    return backend
+
+
+@pytest.mark.parametrize(
+    ("service", "backend", "root_cause", "component", "action"),
+    [
+        # B-F03: paused worker, broker up -> resume.
+        (
+            "persist-demo-consumer",
+            _kafka_backend(
+                paused=True, brokers=1.0, lab_consumer_messages_processed_total=[20.0, 0.0]
+            ),
+            "consumer_paused",
+            "persist-demo-consumer",
+            "resume_test_consumer",
+        ),
+        # B-F07: broker gone for every client -> restart the broker, whichever
+        # service raised the incident.
+        (
+            "lab-kafka",
+            _kafka_backend(
+                paused=False,
+                brokers=0.0,
+                lag=(0.0, 0.0),
+                lab_producer_messages_sent_total=[20.0, 0.0],
+                lab_producer_send_errors_total=[0.0, 0.2],
+            ),
+            "kafka_broker_unavailable",
+            "lab-kafka",
+            "restart_lab_dependency",
+        ),
+        (
+            "persist-demo-consumer",
+            _kafka_backend(paused=True, brokers=0.0, lab_producer_send_errors_total=[0.0, 0.2]),
+            "kafka_broker_unavailable",
+            "lab-kafka",
+            "restart_lab_dependency",
+        ),
+        # B-F08: running but slow consumer -> consumer_slow, never resume.
+        (
+            "persist-demo-consumer",
+            _kafka_backend(
+                paused=False, brokers=1.0, lab_consumer_messages_processed_total=[20.0, 10.0]
+            ),
+            "consumer_slow",
+            "persist-demo-consumer",
+            None,
+        ),
+        # A consumer that is neither paused nor processing (e.g. its database
+        # is down, B-F09) matches no consumer rule.
+        (
+            "persist-demo-consumer",
+            _kafka_backend(
+                paused=False, brokers=1.0, lab_consumer_messages_processed_total=[20.0, 0.0]
+            ),
+            "insufficient_evidence",
+            "persist-demo-consumer",
+            None,
+        ),
+        # Broker count dropped but the producer still sends: not enough for
+        # a broker diagnosis (for example an exporter restart).
+        (
+            "lab-kafka",
+            _kafka_backend(paused=False, brokers=0.0, lag=(10.0, 10.0)),
+            "insufficient_evidence",
+            "lab-kafka",
+            None,
+        ),
+    ],
+)
+async def test_kafka_family_rules(
+    service: str, backend: FakeBackend, root_cause: str, component: str, action: str | None
+) -> None:
+    report = (await _run(service, backend))["report"]
     assert report["diagnosis"]["root_cause_id"] == root_cause
-    assert report.get("proposed_action") is None
-    assert report["needs_human_review"] is True
+    assert report["diagnosis"]["affected_component"] == component
+    proposed = report.get("proposed_action")
+    if action is None:
+        assert proposed is None
+        assert report["needs_human_review"] is True
+    else:
+        assert proposed["action_type"] == action
+        assert proposed["target_id"] == component
 
 
 async def test_api_incident_with_exclusive_lock() -> None:
@@ -76,6 +159,19 @@ def _api_backend(**overrides: list[float]) -> FakeBackend:
         "lab_api_http_requests_total": [0.0, 0.0],
     }
     backend.overrides.update(overrides)
+    return backend
+
+
+def _tracebacks(backend: FakeBackend, count: int = 5) -> FakeBackend:
+    backend.log_lines = [
+        "unhandled exception serving item 4\nTraceback (most recent call last):\n"
+        "KeyError: 'pricing'"
+    ] * count
+    return backend
+
+
+def _pg_down(backend: FakeBackend) -> FakeBackend:
+    backend.instant_overrides = {"pg_up": 0.0}
     return backend
 
 
@@ -161,6 +257,46 @@ def _deployed(backend: FakeBackend) -> FakeBackend:
             None,
             None,
         ),  # B-N01: errors without a cause
+        # B-F09: the database refuses connections -> restart it, from either
+        # the API's or the database's incident; never release a lock blocker.
+        (
+            "lab-api",
+            _pg_down(_api_backend(lab_api_http_requests_total=[0.5, 0.5])),
+            "postgres_unavailable",
+            "restart_lab_dependency",
+            "lab-postgres",
+        ),
+        (
+            "lab-postgres",
+            _pg_down(_api_backend(lab_api_http_requests_total=[0.5, 0.5])),
+            "postgres_unavailable",
+            "restart_lab_dependency",
+            "lab-postgres",
+        ),
+        # B-F10: errors with stack traces in the running release -> no action.
+        (
+            "lab-api",
+            _tracebacks(_api_backend(lab_api_http_requests_total=[0.25, 0.25])),
+            "application_error",
+            None,
+            None,
+        ),
+        # The same errors after a new release stay a bad deployment (B-F05).
+        (
+            "lab-api",
+            _tracebacks(_deployed(_api_backend(lab_api_http_requests_total=[0.3, 0.3]))),
+            "bad_deployment",
+            "rollback_demo_api",
+            "lab-api",
+        ),
+        # A couple of stack traces among transient errors are not enough (B-N01).
+        (
+            "lab-api",
+            _tracebacks(_api_backend(lab_api_http_requests_total=[0.2, 0.08]), count=2),
+            "insufficient_evidence",
+            None,
+            None,
+        ),
     ],
 )
 async def test_api_family_rules(

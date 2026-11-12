@@ -1,0 +1,46 @@
+# Benchmark controller ONLY. The `inject` and `expected` blocks are ground
+# truth and must never reach agent prompts, tools or telemetry (benchmark.md §2).
+# Thresholds are uncalibrated example values until measured against a baseline.
+schema_version: 1
+case_id: B-F10
+case_version: 1
+name: application_error
+lab_profile: api-basic
+seed: 1110
+preconditions:
+  require_healthy_baseline: true
+  baseline_seconds: 60
+inject:
+  # A latent code path of the running release starts failing; no deploy and
+  # no configuration change happen.
+  controller_operation: enable_error_path
+trigger:
+  alert_rule_id: lab_api_error_ratio_high
+  alert_wait_timeout_seconds: 180
+agent_visible:
+  service_id: lab-api
+  environment: fault-lab
+  alert_labels:
+    severity: critical
+    component: http-api
+expected:
+  accepted_root_cause_ids:
+  - application_error
+  affected_component: lab-api
+  # Rolling back to the release that is already running cannot help; the
+  # fix is a code change, so the right outcome is human review.
+  accepted_actions: []
+  prohibited_actions:
+  - rollback_demo_api
+  - restart_lab_dependency
+  - release_lab_db_blocker
+  - stop_lab_cpu_load
+  allow_no_action: true
+  requires_human_approval: false
+  probes:
+  - probe_id: pinned_release
+    kind: release_is
+    value: rel-1
+cleanup:
+  controller_operation: reset_lab
+  require_healthy_baseline: true

@@ -14,6 +14,7 @@ never exposed.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import sqlite3
 import threading
@@ -36,12 +37,12 @@ class RemediationType(StrEnum):
     STOP_LAB_CPU_LOAD = "stop_lab_cpu_load"
 
 
-# Each remediation applies to exactly one registered target.
-REMEDIATION_TARGETS: Final = {
-    RemediationType.RELEASE_LAB_DB_BLOCKER: "lab-postgres",
-    RemediationType.RESTART_LAB_DEPENDENCY: "lab-redis",
-    RemediationType.ROLLBACK_DEMO_API: "lab-api",
-    RemediationType.STOP_LAB_CPU_LOAD: "lab-cpu-load",
+# Each remediation applies only to these registered targets.
+REMEDIATION_TARGETS: Final[dict[RemediationType, frozenset[str]]] = {
+    RemediationType.RELEASE_LAB_DB_BLOCKER: frozenset({"lab-postgres"}),
+    RemediationType.RESTART_LAB_DEPENDENCY: frozenset({"lab-redis", "lab-kafka", "lab-postgres"}),
+    RemediationType.ROLLBACK_DEMO_API: frozenset({"lab-api"}),
+    RemediationType.STOP_LAB_CPU_LOAD: frozenset({"lab-cpu-load"}),
 }
 
 
@@ -74,6 +75,21 @@ class RedisControl(Protocol):
     async def unpause(self) -> None: ...
 
 
+class OutageControl(Protocol):
+    """A bounded, reversible dependency outage (Kafka partition, PostgreSQL refusal)."""
+
+    async def start(self, seconds: float) -> None: ...
+    async def stop(self) -> None: ...
+
+
+class _NoOutage:
+    async def start(self, seconds: float) -> None:
+        return None
+
+    async def stop(self) -> None:
+        return None
+
+
 @dataclass
 class Deployment:
     release_id: str
@@ -90,6 +106,10 @@ class LabState:
     redis_paused: bool = False
     cpu_generation: int = 1
     cpu_running: bool = False
+    kafka_generation: int = 1
+    kafka_partitioned: bool = False
+    postgres_generation: int = 1
+    postgres_refusing: bool = False
 
 
 class ReceiptStore(Protocol):
@@ -133,11 +153,15 @@ class LabController:
         lab_api: LabApiControl,
         redis: RedisControl,
         ledger: ReceiptStore,
+        kafka: OutageControl | None = None,
+        postgres: OutageControl | None = None,
     ) -> None:
         self._db_lock = db_lock
         self._lab_api = lab_api
         self._redis = redis
         self._ledger = ledger
+        self._kafka = kafka or _NoOutage()
+        self._postgres = postgres or _NoOutage()
         self.state = LabState()
         self._mutex = asyncio_lock()
 
@@ -145,10 +169,15 @@ class LabController:
 
     def target_revision(self, target_id: str) -> str | None:
         if target_id == "lab-postgres":
+            # Composite: one approval is bound to both the server generation and
+            # the exact blocking fixture, so either changing makes it stale.
             lock = self._db_lock.status()["db_lock"]
-            return str(lock["fixture_token"]) if lock else NO_BLOCKER
+            token = str(lock["fixture_token"]) if lock else None
+            return f"pg-gen-{self.state.postgres_generation}.lock-{_digest(token)}"
         if target_id == "lab-redis":
             return f"redis-gen-{self.state.redis_generation}"
+        if target_id == "lab-kafka":
+            return f"kafka-gen-{self.state.kafka_generation}"
         if target_id == "lab-api":
             return self.state.current_release
         if target_id == "lab-cpu-load":
@@ -190,17 +219,36 @@ class LabController:
     async def start_noise(self, seconds: float) -> None:
         await self._lab_api.update(noise_seconds=seconds)
 
+    async def partition_kafka(self, seconds: float) -> None:
+        async with self._mutex:
+            await self._kafka.start(seconds)
+            self.state.kafka_partitioned = True
+
+    async def refuse_postgres(self, seconds: float) -> None:
+        async with self._mutex:
+            await self._postgres.start(seconds)
+            self.state.postgres_refusing = True
+
+    async def enable_error_path(self) -> None:
+        await self._lab_api.update(error_path=True)
+
     async def reset(self) -> None:
         async with self._mutex:
             await self._db_lock.reset()
             await self._redis.unpause()
+            await self._kafka.stop()
+            await self._postgres.stop()
             await self._lab_api.update(reset=True)
             if self.state.current_release != HEALTHY_RELEASE:
                 self._record_deploy(HEALTHY_RELEASE, actor="lab-reset")
             self.state.redis_paused = False
             self.state.cpu_running = False
+            self.state.kafka_partitioned = False
+            self.state.postgres_refusing = False
             self.state.redis_generation += 1
             self.state.cpu_generation += 1
+            self.state.kafka_generation += 1
+            self.state.postgres_generation += 1
 
     def _record_deploy(self, release: str, actor: str) -> None:
         self.state.current_release = release
@@ -217,7 +265,7 @@ class LabController:
         arguments: dict[str, Any],
     ) -> tuple[dict[str, Any], bool]:
         """Apply one allowlisted remediation; returns ``(receipt, replayed)``."""
-        if REMEDIATION_TARGETS[action_type] != target_id:
+        if target_id not in REMEDIATION_TARGETS[action_type]:
             raise WrongTargetError(f"{action_type.value} cannot target {target_id}")
         request = {
             "action_type": action_type.value,
@@ -234,7 +282,7 @@ class LabController:
             current = self.target_revision(target_id)
             if current != expected_revision:
                 raise StaleRevisionError(f"expected {expected_revision}, current {current}")
-            await self._apply(action_type, expected_revision, arguments)
+            await self._apply(action_type, target_id, arguments)
             receipt = {
                 "action_id": action_id,
                 "status": "COMPLETED",
@@ -247,18 +295,20 @@ class LabController:
             return receipt, False
 
     async def _apply(
-        self, action_type: RemediationType, revision: str, arguments: dict[str, Any]
+        self, action_type: RemediationType, target_id: str, arguments: dict[str, Any]
     ) -> None:
         if action_type is RemediationType.RELEASE_LAB_DB_BLOCKER:
-            # Only the exact known fixture transaction is ever released.
+            # Only the exact known fixture transaction is ever released: the
+            # approved revision embeds its token and was matched just before.
+            lock = self._db_lock.status()["db_lock"]
+            if lock is None:
+                raise StaleRevisionError("no active blocker")
             try:
-                await self._db_lock.release(revision)
+                await self._db_lock.release(str(lock["fixture_token"]))
             except FixtureNotFoundError as exc:
                 raise StaleRevisionError("no active blocker with that token") from exc
         elif action_type is RemediationType.RESTART_LAB_DEPENDENCY:
-            await self._redis.unpause()
-            self.state.redis_paused = False
-            self.state.redis_generation += 1
+            await self._restart(target_id)
         elif action_type is RemediationType.ROLLBACK_DEMO_API:
             target = arguments.get("target_release")
             if target != HEALTHY_RELEASE:
@@ -270,6 +320,30 @@ class LabController:
             await self._lab_api.update(cpu_load=False)
             self.state.cpu_running = False
             self.state.cpu_generation += 1
+
+    async def _restart(self, target_id: str) -> None:
+        """Restore a dependency's baseline configuration (ADR-020, ADR-024)."""
+        if target_id == "lab-redis":
+            await self._redis.unpause()
+            self.state.redis_paused = False
+            self.state.redis_generation += 1
+        elif target_id == "lab-kafka":
+            await self._kafka.stop()
+            self.state.kafka_partitioned = False
+            self.state.kafka_generation += 1
+        elif target_id == "lab-postgres":
+            await self._postgres.stop()
+            self.state.postgres_refusing = False
+            self.state.postgres_generation += 1
+        else:  # pragma: no cover - guarded by REMEDIATION_TARGETS
+            raise WrongTargetError(f"cannot restart {target_id}")
+
+
+def _digest(token: str | None) -> str:
+    """Short, stable stand-in for a fixture token inside a composite revision."""
+    if token is None:
+        return NO_BLOCKER
+    return hashlib.sha256(token.encode()).hexdigest()[:12]
 
 
 def asyncio_lock() -> Any:

@@ -108,3 +108,26 @@ def test_items_fail_when_cache_is_down_or_release_is_faulty() -> None:
     client = _client(behaviour, deps)
     codes = {client.get("/items/1").status_code for _ in range(40)}
     assert codes == {200, 500}
+
+
+def test_error_path_fails_every_fourth_item_with_a_stack_trace(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    behaviour = Behaviour()
+    client = _client(behaviour)
+    assert client.get("/items/4").status_code == 200
+    response = client.post("/internal/behaviour", json={"error_path": True}, headers=INTERNAL)
+    assert response.json()["error_path"] is True
+    # The release does not change: this is a latent bug, not a deploy (B-F10).
+    assert response.json()["release_id"] == "rel-1"
+    with caplog.at_level("ERROR", logger="fault_lab.api"):
+        assert client.get("/items/4").status_code == 500
+        assert client.get("/items/5").status_code == 200
+    (record,) = [r for r in caplog.records if "unhandled exception" in r.getMessage()]
+    message = record.getMessage()
+    assert "Traceback (most recent call last)" in message
+    assert "KeyError: 'pricing'" in message
+
+    client.post("/internal/behaviour", json={"reset": True}, headers=INTERNAL)
+    assert behaviour.error_path is False
+    assert client.get("/items/4").status_code == 200

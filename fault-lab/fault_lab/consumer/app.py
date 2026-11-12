@@ -5,6 +5,7 @@ Endpoints (ADR-009):
 - ``POST /control/pause``                  benchmark role only (fault injection)
 - ``POST /control/resume``                 executor role only (remediation)
 - ``POST /control/reset``                  benchmark role only
+- ``POST /control/processing-delay``       benchmark role only (B-F08 fault injection)
 - ``GET  /control/operations/{action_id}`` any lab role (reconciliation)
 - ``GET  /metrics``, ``GET /healthz``      unauthenticated, read-only
 """
@@ -52,6 +53,30 @@ class ResetRequest(BaseModel):
     action_id: ActionId
 
 
+MAX_DELAY_MS = 1000
+
+
+class DelayRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    action_id: ActionId
+    delay_ms: Annotated[int, Field(ge=0, le=MAX_DELAY_MS)]
+
+
+class Throttle:
+    """Injected per-message processing delay (B-F08 slow consumer).
+
+    It is fault state, so it is never reported by the status endpoint or by
+    metrics: agents only see the processing rate drop while lag grows.
+    """
+
+    def __init__(self) -> None:
+        self.delay_ms = 0
+
+    async def wait(self, records: int) -> None:
+        if self.delay_ms and records:
+            await asyncio.sleep(self.delay_ms * records / 1000)
+
+
 class Metrics:
     """Per-app Prometheus registry so tests can create isolated apps."""
 
@@ -84,8 +109,10 @@ def create_app(
     controller: ConsumerController,
     authenticator: LabAuthenticator,
     consume_loop: ConsumeLoop | None = None,
+    throttle: Throttle | None = None,
 ) -> FastAPI:
     metrics = Metrics()
+    throttle = throttle or Throttle()
 
     def sync_metrics() -> None:
         status = controller.status()
@@ -168,7 +195,19 @@ def create_app(
 
     @app.post("/control/reset")
     async def reset(body: ResetRequest, caller: CallerRole) -> JSONResponse:
-        return _respond(Operation.RESET, caller, action_id=body.action_id, expected_generation=None)
+        response = _respond(
+            Operation.RESET, caller, action_id=body.action_id, expected_generation=None
+        )
+        throttle.delay_ms = 0
+        return response
+
+    @app.post("/control/processing-delay")
+    async def processing_delay(body: DelayRequest, caller: CallerRole) -> dict[str, str]:
+        if caller is not LabRole.BENCHMARK:
+            raise HTTPException(status_code=403, detail="benchmark controller only")
+        throttle.delay_ms = body.delay_ms
+        LOGGER.info("control processing-delay by %s action_id=%s", caller, body.action_id)
+        return {"status": "applied"}
 
     return app
 
@@ -183,7 +222,10 @@ def _status_json(controller: ConsumerController) -> dict[str, Any]:
 
 
 async def kafka_consume_loop(
-    controller: ConsumerController, metrics: Metrics, sink: MessageSink
+    controller: ConsumerController,
+    metrics: Metrics,
+    sink: MessageSink,
+    throttle: Throttle | None = None,
 ) -> None:  # pragma: no cover - exercised by the live lab smoke test
     """Consume ``demo.events.v1`` and persist records unless paused.
 
@@ -194,7 +236,7 @@ async def kafka_consume_loop(
 
     consumer = AIOKafkaConsumer(
         os.environ.get("LAB_TOPIC", "demo.events.v1"),
-        bootstrap_servers=os.environ.get("LAB_KAFKA_BOOTSTRAP", "lab-kafka:9092"),
+        bootstrap_servers=os.environ.get("LAB_KAFKA_BOOTSTRAP", "lab-kafka-proxy:9092"),
         group_id=controller.consumer_id,
         enable_auto_commit=False,
         auto_offset_reset="earliest",
@@ -222,6 +264,8 @@ async def kafka_consume_loop(
             ]
             if not records:
                 continue
+            if throttle is not None:
+                await throttle.wait(len(records))
             try:
                 await sink.persist(records)
             except Exception:
@@ -273,11 +317,12 @@ def main() -> None:  # pragma: no cover - container entry point
         os.environ.get("LAB_LEDGER_PATH", "/data/ledger.sqlite3"),
     )
     sink = PostgresSink(os.environ["LAB_DATABASE_DSN"])
+    throttle = Throttle()
 
     async def loop(ctrl: ConsumerController, metrics: Metrics) -> None:
-        await kafka_consume_loop(ctrl, metrics, sink)
+        await kafka_consume_loop(ctrl, metrics, sink, throttle)
 
-    app = create_app(controller, LabAuthenticator.from_env(), consume_loop=loop)
+    app = create_app(controller, LabAuthenticator.from_env(), consume_loop=loop, throttle=throttle)
     uvicorn.run(app, host="0.0.0.0", port=int(os.environ.get("PORT", "8081")))  # noqa: S104
 
 

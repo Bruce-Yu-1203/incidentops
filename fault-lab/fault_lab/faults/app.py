@@ -232,6 +232,21 @@ def create_app(
         await lab.start_cpu_load()
         return {"status": "injected"}
 
+    @app.post("/faults/kafka-outage", status_code=201)
+    async def kafka_outage(body: FaultRequest, _: Benchmark) -> dict[str, str]:
+        await lab.partition_kafka(body.seconds)
+        return {"status": "injected"}
+
+    @app.post("/faults/postgres-outage", status_code=201)
+    async def postgres_outage(body: FaultRequest, _: Benchmark) -> dict[str, str]:
+        await lab.refuse_postgres(body.seconds)
+        return {"status": "injected"}
+
+    @app.post("/faults/error-path", status_code=201)
+    async def error_path(body: FaultRequest, _: Benchmark) -> dict[str, str]:
+        await lab.enable_error_path()
+        return {"status": "injected"}
+
     @app.post("/faults/noise", status_code=201)
     async def noise(body: FaultRequest, _: Benchmark) -> dict[str, str]:
         await lab.start_noise(body.seconds)
@@ -386,6 +401,74 @@ class LiveRedis:  # pragma: no cover - live lab only
         self._restore = None
 
 
+class HttpKafkaPartition:  # pragma: no cover - live lab only
+    """Blocks the lab Kafka proxy, so every client loses the broker (B-F07)."""
+
+    def __init__(self, proxy_url: str, token: str) -> None:
+        self._base = proxy_url.rstrip("/")
+        self._headers = {"Authorization": f"Bearer {token}"}
+
+    async def _post(self, body: dict[str, Any]) -> None:
+        import httpx
+
+        async with httpx.AsyncClient(timeout=5) as client:
+            response = await client.post(
+                f"{self._base}/internal/partition", json=body, headers=self._headers
+            )
+            response.raise_for_status()
+
+    async def start(self, seconds: float) -> None:
+        await self._post({"blocked": True, "seconds": seconds})
+
+    async def stop(self) -> None:
+        await self._post({"blocked": False})
+
+
+class LivePostgresRefusal:  # pragma: no cover - live lab only
+    """Makes the lab database refuse every connection, without container control.
+
+    ``start`` sets ``ALLOW_CONNECTIONS false`` on the ``lab`` database and ends
+    its existing sessions, so the API, the consumer and the exporter cannot
+    reach PostgreSQL (``pg_up`` 0, B-F09). The controller works from the
+    ``postgres`` maintenance database, so ``stop`` can always restore access;
+    an automatic restore bounds the outage.
+    """
+
+    def __init__(self, dsn: str) -> None:
+        self._dsn = dsn
+        self._restore: asyncio.Task[None] | None = None
+
+    async def _run(self, *statements: str) -> None:
+        import psycopg
+
+        conn = await psycopg.AsyncConnection.connect(
+            self._dsn, dbname="postgres", autocommit=True, connect_timeout=3
+        )
+        async with conn:
+            for statement in statements:
+                await conn.execute(statement)
+
+    async def start(self, seconds: float) -> None:
+        await self._run(
+            "ALTER DATABASE lab ALLOW_CONNECTIONS false",
+            "SELECT pg_terminate_backend(pid) FROM pg_stat_activity"
+            " WHERE datname = 'lab' AND pid <> pg_backend_pid()",
+        )
+        if self._restore is not None:
+            self._restore.cancel()
+        self._restore = asyncio.create_task(self._auto_restore(seconds))
+
+    async def _auto_restore(self, seconds: float) -> None:
+        await asyncio.sleep(seconds)
+        await self.stop()
+
+    async def stop(self) -> None:
+        await self._run("ALTER DATABASE lab ALLOW_CONNECTIONS true")
+        if self._restore is not None and self._restore is not asyncio.current_task():
+            self._restore.cancel()
+        self._restore = None
+
+
 def main() -> None:  # pragma: no cover - container entry point
     import uvicorn
 
@@ -398,6 +481,11 @@ def main() -> None:  # pragma: no cover - container entry point
         HttpLabApi(os.environ["LAB_API_URL"], os.environ["FAULT_LAB_INTERNAL_TOKEN"]),
         LiveRedis(os.environ["LAB_REDIS_URL"]),
         Ledger(os.environ.get("LAB_LEDGER_PATH", "/data/remediations.sqlite3")),
+        kafka=HttpKafkaPartition(
+            os.environ.get("LAB_KAFKA_PROXY_URL", "http://lab-kafka-proxy:8094"),
+            os.environ["FAULT_LAB_INTERNAL_TOKEN"],
+        ),
+        postgres=LivePostgresRefusal(os.environ["LAB_DATABASE_DSN"]),
     )
     app = create_app(fixture, LabAuthenticator.from_env(), controller)
     uvicorn.run(app, host="0.0.0.0", port=int(os.environ.get("PORT", "8090")))  # noqa: S104
