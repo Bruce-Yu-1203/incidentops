@@ -10,7 +10,7 @@ import random
 import uuid
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
-from typing import Any
+from typing import Any, Protocol
 
 from fastapi import FastAPI
 from fastapi.responses import PlainTextResponse
@@ -31,9 +31,45 @@ def make_event(rng: random.Random, sequence: int) -> dict[str, Any]:
     }
 
 
+SEND_TIMEOUT_SECONDS = 5.0
+RETRY_PAUSE_SECONDS = 1.0
+
+
+class Producer(Protocol):
+    async def send_and_wait(self, topic: str, value: bytes) -> Any: ...
+
+
+async def send_one(
+    producer: Producer,
+    topic: str,
+    event: dict[str, Any],
+    sent: Counter,
+    errors: Counter,
+    timeout_s: float = SEND_TIMEOUT_SECONDS,
+) -> bool:
+    """Produce one event; count and log a failure instead of crashing the loop.
+
+    A broker that cannot be reached shows up as send errors, a dropping send
+    rate and warning logs (B-F07), never as a silently dead producer task.
+    """
+    try:
+        await asyncio.wait_for(producer.send_and_wait(topic, json.dumps(event).encode()), timeout_s)
+    except Exception as exc:
+        errors.inc()
+        LOGGER.warning(
+            "send of sequence %s to %s failed: %s", event.get("sequence"), topic, type(exc).__name__
+        )
+        return False
+    sent.inc()
+    return True
+
+
 def create_app(rate_per_second: float, seed: int, run_loop: bool = True) -> FastAPI:
     registry = CollectorRegistry()
     sent = Counter("lab_producer_messages_sent", "Messages produced", registry=registry)
+    errors = Counter(
+        "lab_producer_send_errors", "Messages that could not be produced", registry=registry
+    )
     rate = Gauge("lab_producer_target_rate", "Configured messages per second", registry=registry)
     rate.set(rate_per_second)
 
@@ -41,7 +77,7 @@ def create_app(rate_per_second: float, seed: int, run_loop: bool = True) -> Fast
         from aiokafka import AIOKafkaProducer
 
         producer = AIOKafkaProducer(
-            bootstrap_servers=os.environ.get("LAB_KAFKA_BOOTSTRAP", "lab-kafka:9092")
+            bootstrap_servers=os.environ.get("LAB_KAFKA_BOOTSTRAP", "lab-kafka-proxy:9092")
         )
         while True:
             try:
@@ -55,11 +91,14 @@ def create_app(rate_per_second: float, seed: int, run_loop: bool = True) -> Fast
         interval = 1.0 / rate_per_second
         sequence = 0
         try:
+            event = make_event(rng, sequence)
             while True:
-                event = make_event(rng, sequence)
-                await producer.send_and_wait(topic, json.dumps(event).encode())
-                sent.inc()
+                if not await send_one(producer, topic, event, sent, errors):
+                    # Retry the same event so the seeded sequence stays deterministic.
+                    await asyncio.sleep(RETRY_PAUSE_SECONDS)
+                    continue
                 sequence += 1
+                event = make_event(rng, sequence)
                 await asyncio.sleep(interval)
         finally:
             await producer.stop()

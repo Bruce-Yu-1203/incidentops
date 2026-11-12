@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import random
 from typing import Any
 
@@ -118,3 +119,43 @@ def test_loadgen_exposes_metrics() -> None:
     with TestClient(app) as client:
         assert client.get("/healthz").json() == {"status": "ok"}
         assert client.get("/metrics").status_code == 200
+
+
+class _FlakyProducer:
+    def __init__(self, fail: BaseException | None = None, hang: bool = False) -> None:
+        self.fail = fail
+        self.hang = hang
+        self.sent: list[bytes] = []
+
+    async def send_and_wait(self, topic: str, value: bytes) -> None:
+        if self.hang:
+            await asyncio.sleep(10)
+        if self.fail is not None:
+            raise self.fail
+        self.sent.append(value)
+
+
+@pytest.mark.parametrize(
+    ("producer", "ok"),
+    [
+        (_FlakyProducer(), True),
+        (_FlakyProducer(fail=ConnectionError("broker gone")), False),
+        (_FlakyProducer(hang=True), False),  # an unreachable broker never answers
+    ],
+)
+async def test_send_failures_are_counted_not_fatal(producer: _FlakyProducer, ok: bool) -> None:
+    from fault_lab.producer.app import send_one
+    from prometheus_client import CollectorRegistry, Counter
+
+    registry = CollectorRegistry()
+    sent = Counter("s", "sent", registry=registry)
+    errors = Counter("e", "errors", registry=registry)
+    event = make_event(random.Random(1), 0)  # noqa: S311 - deterministic test data
+    assert await send_one(producer, "demo.events.v1", event, sent, errors, timeout_s=0.05) is ok
+    assert registry.get_sample_value("s_total") == (1.0 if ok else 0.0)
+    assert registry.get_sample_value("e_total") == (0.0 if ok else 1.0)
+
+
+def test_producer_exposes_send_errors() -> None:
+    with TestClient(create_producer(rate_per_second=20, seed=1, run_loop=False)) as client:
+        assert "lab_producer_send_errors_total 0.0" in client.get("/metrics").text
