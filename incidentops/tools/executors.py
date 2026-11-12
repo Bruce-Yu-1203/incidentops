@@ -286,6 +286,10 @@ async def get_postgres_health(
     def count(value: float | None) -> str:
         return "?" if value is None else f"{value:.0f}"
 
+    # The share is part of the reading, so no threshold has to live in the prompt.
+    share = f" ({used / limit:.0%} of max)" if used is not None and limit else ""
+    readings["connection_share"] = round(used / limit, 3) if used is not None and limit else None
+
     return ToolOutput(
         EvidenceSource.PROMETHEUS,
         "postgres_health",
@@ -294,7 +298,7 @@ async def get_postgres_health(
         now,
         f"{service.service_id} up={up} locks={json.dumps(locks, sort_keys=True)} "
         f"longest_tx_seconds={json.dumps(longest, sort_keys=True)} "
-        f"connections={count(used)}/{count(limit)} idle={count(by_state.get('idle'))}",
+        f"connections={count(used)}/{count(limit)}{share} idle={count(by_state.get('idle'))}",
         readings,
     )
 

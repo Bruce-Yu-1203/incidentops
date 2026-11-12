@@ -242,3 +242,46 @@ _ALL: Final = (
 )
 
 TEMPLATES: Final[Mapping[str, MetricTemplate]] = MappingProxyType({t.template_id: t for t in _ALL})
+
+
+# The question each template helps answer; the tool manifest groups templates
+# by it so the model picks by purpose rather than by name.
+QUESTIONS: Final[Mapping[str, tuple[str, ...]]] = MappingProxyType(
+    {
+        "Is the service failing or slow, and since when?": (
+            "api_error_ratio",
+            "api_latency_p95",
+            "api_request_rate",
+        ),
+        "Did traffic change? (1.0 = the usual level)": ("api_request_rate_vs_baseline",),
+        "Is the process short of CPU or memory?": (
+            "api_cpu_cores",
+            "api_memory_bytes",
+            "api_memory_growth_rate",
+        ),
+        "Which release is running?": ("api_release",),
+        "Are messages flowing through Kafka?": (
+            "kafka_group_lag",
+            "kafka_group_lag_by_partition",
+            "consumer_processing_rate",
+            "producer_send_rate",
+            "producer_send_error_rate",
+            "kafka_broker_count",
+        ),
+        "Is the database reachable, and is it blocked or out of connections?": (
+            "postgres_up",
+            "postgres_connections_by_state",
+            "postgres_connection_utilization",
+            "postgres_max_connections",
+            "postgres_locks_by_mode",
+            "postgres_exclusive_locks",
+            "postgres_max_transaction_seconds",
+        ),
+        "Is the cache reachable and healthy?": (
+            "redis_up",
+            "redis_memory_used_bytes",
+            "redis_connected_clients",
+            "redis_commands_per_second",
+        ),
+    }
+)

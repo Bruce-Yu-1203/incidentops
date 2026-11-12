@@ -351,7 +351,7 @@ async def test_postgres_health_reports_connections_against_the_limit() -> None:
     result = await gateway.invoke(
         make_context(), "p", "get_postgres_health", {"service_id": "lab-postgres"}
     )
-    assert result.summary.endswith("connections=76/80 idle=?")
+    assert result.summary.endswith("connections=76/80 (95% of max) idle=?")
     assert 'max(pg_settings_max_connections{service_id="lab-postgres"})' in backend.queries
 
 
@@ -395,3 +395,29 @@ async def test_config_changes_tool_only_applies_to_http_services() -> None:
         make_context(), "c", "get_recent_config_changes", {"service_id": "lab-api-config"}
     )
     assert (result.status, result.error_code) == (ToolStatus.DENIED, "tool_not_applicable")
+
+
+def test_every_template_is_grouped_under_exactly_one_question() -> None:
+    from incidentops.tools.templates import QUESTIONS, TEMPLATES
+
+    grouped = [t for ids in QUESTIONS.values() for t in ids]
+    assert sorted(grouped) == sorted(TEMPLATES)
+
+
+def test_tool_descriptions_are_structured_and_parameters_documented() -> None:
+    gateway, _, _, _ = make_gateway()
+    for tool in gateway.manifest():
+        if tool["name"] == "query_metrics":
+            assert "[Did traffic change? (1.0 = the usual level)]" in tool["description"]
+        assert "Use it" in tool["description"], tool["name"]
+        for name, prop in tool["input_schema"]["properties"].items():
+            assert prop.get("description"), f"{tool['name']}.{name} has no description"
+
+
+def test_tool_descriptions_hold_no_root_cause_labels() -> None:
+    # Interpretation is generic domain knowledge, never a scenario answer.
+    from incidentops.agent.prompt import ROOT_CAUSE_TAXONOMY
+
+    gateway, _, _, _ = make_gateway()
+    text = json.dumps(gateway.manifest())
+    assert [label for label in ROOT_CAUSE_TAXONOMY if label in text] == []

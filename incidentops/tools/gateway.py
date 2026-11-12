@@ -29,7 +29,7 @@ from incidentops.time import utcnow
 from incidentops.tools.backends import TelemetryBackend
 from incidentops.tools.executors import EXECUTORS, Executor, ScopeError
 from incidentops.tools.specs import TOOL_SPECS, ToolSpec
-from incidentops.tools.templates import TEMPLATES
+from incidentops.tools.templates import QUESTIONS, TEMPLATES, MetricTemplate
 from incidentops.trajectory.recorder import StepKind, StepRecord, TrajectorySink
 
 DEFAULT_MAX_TOOL_CALLS = 40  # NFR-005
@@ -119,21 +119,21 @@ class ToolGateway:
             description = f"{spec.description} Applies to: {', '.join(applicable)}."
             if spec.name == "query_metrics":
                 schema["properties"]["template_id"]["enum"] = sorted(TEMPLATES)
-                lines = [
-                    f"{t.template_id} ({t.unit}; services: "
-                    + ", ".join(
-                        sorted(
-                            s.service_id
-                            for s in self._catalog.services
-                            if s.kind in t.service_kinds
-                        )
-                    )
-                    + f") - {t.description}"
-                    for t in TEMPLATES.values()
-                ]
-                description += " Templates: " + "; ".join(lines) + "."
+                description += " Templates by question: " + " ".join(
+                    f"[{question}] "
+                    + "; ".join(self._template_line(TEMPLATES[t]) for t in ids if t in TEMPLATES)
+                    + "."
+                    for question, ids in QUESTIONS.items()
+                )
             tools.append({"name": spec.name, "description": description, "input_schema": schema})
         return tools
+
+    def _template_line(self, template: MetricTemplate) -> str:
+        services = ", ".join(
+            sorted(s.service_id for s in self._catalog.services if s.kind in template.service_kinds)
+        )
+        head = f"{template.template_id} ({template.unit}; services: {services})"
+        return f"{head} - {template.description}"
 
     async def invoke(
         self, ctx: RunContext, tool_call_id: str, tool_name: str, raw_args: Any
