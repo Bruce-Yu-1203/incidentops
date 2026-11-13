@@ -207,6 +207,7 @@ def test_report_totals_usage_including_cached_input(tmp_path: Path) -> None:
     assert "| Cache-read input tokens | 1000 | 500 |" in text
     assert "| Output tokens | 100 | 50 |" in text
     assert "Total input (uncached + cache read + cache write): 1210." in text
+    assert "| Diagnosis fields parsed from JSON strings | 0 | 0 |" in text
     header = (tmp_path / "trials.csv").read_text().splitlines()[0].split(",")
     assert header.index("tokens_input") < header.index("tokens_cache_read")
     assert "tokens_cache_creation" in header
@@ -304,6 +305,7 @@ class FakeApi:
             "output_tokens": 30,
             "cache_read_input_tokens": 900,
             "cache_creation_input_tokens": 40,
+            "argument_coercions": 1,
             "finished_at": "2099-01-01T00:01:00+00:00",
         }
 
@@ -337,6 +339,7 @@ def test_runner_drives_a_full_trial_and_cleans_up() -> None:
     # Cached input is recorded apart from uncached input.
     assert (record["tokens_input"], record["tokens_cache_read"]) == (120, 900)
     assert (record["tokens_cache_creation"], record["tokens_output"]) == (40, 30)
+    assert record["argument_coercions"] == 1
 
 
 def test_runner_marks_unhealthy_baseline_invalid() -> None:

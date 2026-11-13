@@ -47,6 +47,8 @@ class InvestigationState(TypedDict):
     output_tokens: int
     cache_read_input_tokens: int
     cache_creation_input_tokens: int
+    # Nested report objects that arrived as JSON strings and were parsed.
+    argument_coercions: int
     deadline_epoch_ms: int
     repair_attempts: int
     report: dict[str, Any] | None
@@ -85,6 +87,7 @@ def initial_state(
         output_tokens=0,
         cache_read_input_tokens=0,
         cache_creation_input_tokens=0,
+        argument_coercions=0,
         deadline_epoch_ms=start_ms + budgets.wall_clock_seconds * 1000,
         repair_attempts=0,
         report=None,
@@ -93,11 +96,35 @@ def initial_state(
 
 
 MAX_VALIDATION_ERRORS = 10
+# Report fields some providers send as a JSON-encoded string instead of an object.
+JSON_STRING_FIELDS = ("diagnosis", "proposed_action")
 EMPTY_SUBMISSION_ERROR = (
     "invalid diagnosis: the submit_diagnosis arguments arrived empty. Call "
     "submit_diagnosis again with the complete report object as its arguments: "
     "diagnosis (required), proposed_action (or null) and needs_human_review."
 )
+
+
+def coerce_json_string_fields(payload: dict[str, Any]) -> tuple[dict[str, Any], list[str]]:
+    """Parse report objects that arrived JSON-encoded as strings.
+
+    Only a string that parses to a JSON object is replaced; anything else is
+    left for validation to reject as before. Returns the fields coerced.
+    """
+    coerced: list[str] = []
+    result = dict(payload)
+    for name in JSON_STRING_FIELDS:
+        value = result.get(name)
+        if not isinstance(value, str):
+            continue
+        try:
+            parsed = json.loads(value)
+        except ValueError:
+            continue
+        if isinstance(parsed, dict):
+            result[name] = parsed
+            coerced.append(name)
+    return result, coerced
 
 
 def _json_type(value: Any) -> str:
@@ -280,9 +307,11 @@ def build_graph(
         started = utcnow()
         error: str | None = None
         submitted_keys: list[str] | str | None = None
+        coerced: list[str] = []
         report: DiagnosisReport | None = None
         try:
             payload = dict(call["input"]) if isinstance(call["input"], dict) else {}
+            payload, coerced = coerce_json_string_fields(payload)
             payload["incident_id"] = state["incident_id"]
             report = DiagnosisReport.model_validate(payload)
             resolved = evidence.resolve(state["run_id"], report.cited_evidence_ids())
@@ -316,14 +345,25 @@ def build_graph(
                 {
                     "error": error,
                     "submitted_keys": submitted_keys,
+                    "coerced_fields": coerced,
                     "root_cause_id": report.diagnosis.root_cause_id if report else None,
                 },
             )
         )
+        # .get: checkpoints written before this field existed lack it.
+        coercions = state.get("argument_coercions", 0) + len(coerced)
         if error is None and report is not None:
-            return {"status": "COMPLETED", "report": report.model_dump(mode="json")}
+            return {
+                "status": "COMPLETED",
+                "report": report.model_dump(mode="json"),
+                "argument_coercions": coercions,
+            }
         if state["repair_attempts"] >= budgets.max_repair_attempts:
-            return {"status": "FAILED", "error_code": "invalid_diagnosis"}
+            return {
+                "status": "FAILED",
+                "error_code": "invalid_diagnosis",
+                "argument_coercions": coercions,
+            }
         # Every tool_use block must be answered; read calls made in the same turn
         # as the submission are skipped rather than executed.
         feedback = [
@@ -337,6 +377,7 @@ def build_graph(
         return {
             "messages": [*state["messages"], {"role": "user", "content": feedback}],
             "repair_attempts": state["repair_attempts"] + 1,
+            "argument_coercions": coercions,
         }
 
     def after_agent(state: InvestigationState) -> str:

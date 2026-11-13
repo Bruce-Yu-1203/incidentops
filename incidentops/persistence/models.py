@@ -157,6 +157,8 @@ class InvestigationRunRow(Base):
     cache_creation_input_tokens: Mapped[int] = mapped_column(
         Integer, nullable=False, server_default="0"
     )
+    # Diagnosis fields that arrived as JSON strings and were parsed (provider quirk).
+    argument_coercions: Mapped[int] = mapped_column(Integer, nullable=False, server_default="0")
     started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     created_at: Mapped[datetime] = _now()

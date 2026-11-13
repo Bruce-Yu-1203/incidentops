@@ -8,7 +8,13 @@ from typing import Any
 import pytest
 from langgraph.checkpoint.memory import InMemorySaver
 
-from incidentops.agent.graph import Budgets, build_graph, describe_invalid_diagnosis, initial_state
+from incidentops.agent.graph import (
+    Budgets,
+    build_graph,
+    coerce_json_string_fields,
+    describe_invalid_diagnosis,
+    initial_state,
+)
 from incidentops.agent.model import (
     ModelTurn,
     ScriptedModelAdapter,
@@ -418,3 +424,38 @@ async def test_three_repair_attempts_allow_a_late_valid_submission() -> None:
     assert final["status"] == "COMPLETED"
     statuses = [s.status for s in trajectory.steps if s.kind.value == "diagnosis"]
     assert statuses == ["INVALID", "INVALID", "INVALID", "SUCCESS"]
+
+
+async def test_diagnosis_sent_as_json_string_is_parsed_and_counted() -> None:
+    def stringified(messages: list[dict[str, Any]]) -> ModelTurn:
+        report = dict(submit(messages).tool_calls[0].arguments)
+        report["diagnosis"] = json.dumps(report["diagnosis"])
+        report["proposed_action"] = json.dumps(report["proposed_action"])
+        return ModelTurn(tool_calls=[ToolCall("final", "submit_diagnosis", report)])
+
+    model = ScriptedModelAdapter([lag_and_status(), stringified])
+    final, trajectory = await run(model)
+    assert final["status"] == "COMPLETED"
+    assert final["report"]["diagnosis"]["root_cause_id"] == "consumer_paused"
+    assert final["argument_coercions"] == 2
+    step = next(s for s in trajectory.steps if s.kind.value == "diagnosis")
+    assert step.metadata["coerced_fields"] == ["diagnosis", "proposed_action"]
+
+
+async def test_unparsable_string_diagnosis_is_still_rejected() -> None:
+    def broken(_: list[dict[str, Any]]) -> ModelTurn:
+        payload = {"diagnosis": '{"root_cause_id": "consumer_paused"'}  # truncated JSON
+        return ModelTurn(tool_calls=[ToolCall("x", "submit_diagnosis", payload)])
+
+    model = ScriptedModelAdapter([broken, broken, broken, broken])
+    final, trajectory = await run(model, Budgets(max_repair_attempts=3))
+    assert (final["status"], final["error_code"]) == ("FAILED", "invalid_diagnosis")
+    assert final["argument_coercions"] == 0
+    errors = [s.metadata["error"] for s in trajectory.steps if s.kind.value == "diagnosis"]
+    assert all("(got string)" in e for e in errors)
+
+
+def test_only_json_objects_are_coerced() -> None:
+    payload = {"diagnosis": "[1, 2]", "proposed_action": "null", "needs_human_review": "true"}
+    result, coerced = coerce_json_string_fields(payload)
+    assert (result, coerced) == (payload, [])

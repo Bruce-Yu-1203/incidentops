@@ -296,6 +296,9 @@ class TrialRunner:
                 "tokens_cache_creation": sum(
                     int(r.get("cache_creation_input_tokens", 0)) for r in obs.runs.values()
                 ),
+                "argument_coercions": sum(
+                    int(r.get("argument_coercions", 0)) for r in obs.runs.values()
+                ),
             }
         )
         return record
