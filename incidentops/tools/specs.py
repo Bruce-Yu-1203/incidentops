@@ -12,6 +12,7 @@ from pydantic import BaseModel, ConfigDict, Field, StringConstraints
 
 from incidentops.domain.catalog import ServiceKind
 from incidentops.domain.schemas import ResourceId, TypeId
+from incidentops.tools.json_schema import inline_refs
 
 MAX_LOOKBACK_MINUTES: Final = 60  # NFR-006
 
@@ -115,7 +116,7 @@ class ToolSpec:
 
     def model_schema(self) -> dict[str, Any]:
         """Input schema exposed to the model (no endpoints, no credentials)."""
-        return self.input_model.model_json_schema()
+        return inline_refs(self.input_model.model_json_schema())
 
 
 _ANY_KIND = frozenset(ServiceKind)

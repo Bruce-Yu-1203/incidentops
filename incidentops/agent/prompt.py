@@ -14,6 +14,7 @@ from incidentops.domain.catalog import ServiceCatalog
 from incidentops.domain.schemas import DiagnosisReport
 from incidentops.evidence.redaction import redact, truncate_utf8
 from incidentops.policy.engine import PolicyConfig, load_policy
+from incidentops.tools.json_schema import inline_refs
 
 PROMPT_VERSION: Final = "investigation-v7"
 
@@ -101,7 +102,7 @@ confidence_level is a categorical judgement, not a probability. Use:
 
 def submit_diagnosis_tool() -> dict[str, Any]:
     """Schema-constrained final answer; incident_id is filled in by the harness."""
-    schema = DiagnosisReport.model_json_schema()
+    schema = inline_refs(DiagnosisReport.model_json_schema())
     schema["properties"].pop("incident_id", None)
     schema["required"] = [r for r in schema.get("required", []) if r != "incident_id"]
     return {
