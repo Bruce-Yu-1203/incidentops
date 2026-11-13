@@ -9,11 +9,21 @@ output is schema-constrained rather than free text.
 from __future__ import annotations
 
 import json
+import logging
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
-from typing import Any, Protocol
+from typing import TYPE_CHECKING, Any, Protocol
+
+from incidentops.evidence.redaction import redact, truncate_utf8
+
+if TYPE_CHECKING:
+    import anthropic
 
 SUBMIT_DIAGNOSIS = "submit_diagnosis"
+# Provider error bodies are size-bounded before they reach logs or trajectories.
+MAX_PROVIDER_ERROR_BYTES = 2048
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -48,6 +58,24 @@ class ModelTurn:
 
 class ModelError(RuntimeError):
     """The provider failed or returned an unusable response."""
+
+
+def describe_api_error(exc: anthropic.APIError) -> str:
+    """A redacted, size-bounded description of a provider error.
+
+    Keeps the status code and the provider's response body so a rejected
+    request (e.g. a 400) can be diagnosed; secrets are redacted.
+    """
+    parts = [type(exc).__name__]
+    status = getattr(exc, "status_code", None)
+    if status is not None:
+        parts.append(f"status={status}")
+    body = exc.body if exc.body is not None else exc.message
+    if body is not None:
+        text = body if isinstance(body, str) else json.dumps(body, sort_keys=True, default=str)
+        parts.append(f"body={text}")
+    bounded, truncated = truncate_utf8(redact(" ".join(parts)), MAX_PROVIDER_ERROR_BYTES)
+    return bounded + (" [truncated]" if truncated else "")
 
 
 class ModelAdapter(Protocol):
@@ -146,7 +174,9 @@ class AnthropicModelAdapter:
                 timeout=self._timeout,
             )
         except anthropic.APIError as exc:
-            raise ModelError(type(exc).__name__) from exc
+            detail = describe_api_error(exc)
+            logger.warning("model call failed (model %s): %s", self._model_id, detail)
+            raise ModelError(detail) from exc
         calls: list[ToolCall] = []
         texts: list[str] = []
         for block in response.content:
