@@ -43,8 +43,10 @@ class InvestigationState(TypedDict):
     evidence_ids: list[str]
     step_count: int
     tool_call_count: int  # attempted tool calls, including refused ones
-    input_tokens: int
+    input_tokens: int  # uncached input only
     output_tokens: int
+    cache_read_input_tokens: int
+    cache_creation_input_tokens: int
     deadline_epoch_ms: int
     repair_attempts: int
     report: dict[str, Any] | None
@@ -81,6 +83,8 @@ def initial_state(
         tool_call_count=0,
         input_tokens=0,
         output_tokens=0,
+        cache_read_input_tokens=0,
+        cache_creation_input_tokens=0,
         deadline_epoch_ms=start_ms + budgets.wall_clock_seconds * 1000,
         repair_attempts=0,
         report=None,
@@ -192,6 +196,8 @@ def build_graph(
                     "text_preview": (turn.text or "")[:300],
                     "input_tokens": turn.usage.input_tokens,
                     "output_tokens": turn.usage.output_tokens,
+                    "cache_read_input_tokens": turn.usage.cache_read_input_tokens,
+                    "cache_creation_input_tokens": turn.usage.cache_creation_input_tokens,
                 },
                 trace_id=trace_id,
                 span_id=span_id,
@@ -204,6 +210,11 @@ def build_graph(
             "step_count": state["step_count"] + 1,
             "input_tokens": state["input_tokens"] + turn.usage.input_tokens,
             "output_tokens": state["output_tokens"] + turn.usage.output_tokens,
+            # .get: checkpoints written before these fields existed lack them.
+            "cache_read_input_tokens": state.get("cache_read_input_tokens", 0)
+            + turn.usage.cache_read_input_tokens,
+            "cache_creation_input_tokens": state.get("cache_creation_input_tokens", 0)
+            + turn.usage.cache_creation_input_tokens,
         }
         if not turn.tool_calls:
             update["messages"] = [

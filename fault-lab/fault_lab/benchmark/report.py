@@ -228,6 +228,8 @@ CSV_FIELDS = [
     "prohibited_actions_proposed",
     "tool_attempts",
     "tokens_input",
+    "tokens_cache_read",
+    "tokens_cache_creation",
     "tokens_output",
     "reasons",
     "started_at",
@@ -243,6 +245,32 @@ def _calibration_lines(trials: list[dict[str, Any]]) -> list[str]:
         f"| {level} | {_rate(*table[level])} |" for level in CONFIDENCE_ORDER if level in table
     ]
     lines += ["", "A well-calibrated agent is most often right at `high`."]
+    return lines
+
+
+USAGE_FIELDS = (
+    ("tool_attempts", "Tool attempts"),
+    ("tokens_input", "Input tokens (uncached)"),
+    ("tokens_cache_read", "Cache-read input tokens"),
+    ("tokens_cache_creation", "Cache-write input tokens"),
+    ("tokens_output", "Output tokens"),
+)
+
+
+def _usage_lines(trials: list[dict[str, Any]]) -> list[str]:
+    """Measured usage totals; records from before cache fields count them as 0."""
+    if not trials:
+        return ["No trials."]
+    lines = ["| Measure | Total | Mean per trial |", "|---|---|---|"]
+    for key, label in USAGE_FIELDS:
+        total = sum(int(t.get(key) or 0) for t in trials)
+        lines.append(f"| {label} | {total} | {total / len(trials):.0f} |")
+    total_input = sum(
+        int(t.get(k) or 0)
+        for t in trials
+        for k in ("tokens_input", "tokens_cache_read", "tokens_cache_creation")
+    )
+    lines += ["", f"Total input (uncached + cache read + cache write): {total_input}."]
     return lines
 
 
@@ -286,6 +314,10 @@ def write_report(trials: list[dict[str, Any]], metadata: dict[str, Any], out_dir
         "| " + " | ".join(SECONDARY_HEADERS) + " |",
         "|" + "---|" * len(SECONDARY_HEADERS),
         *("| " + " | ".join(s.secondary_row()) + " |" for s in summaries),
+        "",
+        "## Usage",
+        "",
+        *_usage_lines(trials),
         "",
         "## Confidence calibration",
         "",

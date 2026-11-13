@@ -35,8 +35,12 @@ class ToolCall:
 
 @dataclass(frozen=True)
 class Usage:
+    # Uncached input only; cached input is billed differently and counted in
+    # the two cache fields, so total input is the sum of all three.
     input_tokens: int = 0
     output_tokens: int = 0
+    cache_read_input_tokens: int = 0
+    cache_creation_input_tokens: int = 0
 
 
 THINKING_BLOCK_TYPES = frozenset({"thinking", "redacted_thinking"})
@@ -232,5 +236,10 @@ def turn_from_response(response: anthropic.types.Message) -> ModelTurn:
         tool_calls=calls,
         text="\n".join(texts) or None,
         blocks=blocks,
-        usage=Usage(response.usage.input_tokens, response.usage.output_tokens),
+        usage=Usage(
+            response.usage.input_tokens,
+            response.usage.output_tokens,
+            cache_read_input_tokens=response.usage.cache_read_input_tokens or 0,
+            cache_creation_input_tokens=response.usage.cache_creation_input_tokens or 0,
+        ),
     )

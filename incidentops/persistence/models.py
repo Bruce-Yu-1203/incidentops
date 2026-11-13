@@ -150,6 +150,13 @@ class InvestigationRunRow(Base):
     tool_call_count: Mapped[int] = mapped_column(Integer, nullable=False, server_default="0")
     input_tokens: Mapped[int] = mapped_column(Integer, nullable=False, server_default="0")
     output_tokens: Mapped[int] = mapped_column(Integer, nullable=False, server_default="0")
+    # Cached input, billed apart from input_tokens (which is uncached input).
+    cache_read_input_tokens: Mapped[int] = mapped_column(
+        Integer, nullable=False, server_default="0"
+    )
+    cache_creation_input_tokens: Mapped[int] = mapped_column(
+        Integer, nullable=False, server_default="0"
+    )
     started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     created_at: Mapped[datetime] = _now()

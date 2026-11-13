@@ -13,6 +13,7 @@ from incidentops.agent.model import (
     ModelTurn,
     ScriptedModelAdapter,
     ToolCall,
+    Usage,
     evidence_ids_in,
 )
 from incidentops.agent.prompt import SYSTEM_PROMPT, initial_message
@@ -248,6 +249,25 @@ async def test_thinking_only_turn_is_not_replayed_and_is_nudged() -> None:
             m["role"] == "assistant" and m["content"][0]["type"] == "thinking" for m in call
         )
     assert model.calls[1][-1]["content"][0]["text"].startswith("Call a read tool")
+
+
+async def test_cache_usage_is_accumulated_apart_from_input() -> None:
+    def with_usage(turn: ModelTurn, usage: Usage) -> ModelTurn:
+        return ModelTurn(tool_calls=turn.tool_calls, text=turn.text, usage=usage)
+
+    model = ScriptedModelAdapter(
+        [
+            with_usage(lag_and_status(), Usage(400, 50, 0, 300)),
+            lambda m: with_usage(submit(m), Usage(80, 60, 700, 0)),
+        ]
+    )
+    final, trajectory = await run(model)
+    assert final["status"] == "COMPLETED"
+    assert (final["input_tokens"], final["output_tokens"]) == (480, 110)
+    assert final["cache_read_input_tokens"] == 700
+    assert final["cache_creation_input_tokens"] == 300
+    first = next(s for s in trajectory.steps if s.kind.value == "model_call")
+    assert first.metadata["cache_creation_input_tokens"] == 300
 
 
 async def test_checkpointer_persists_state_by_thread() -> None:

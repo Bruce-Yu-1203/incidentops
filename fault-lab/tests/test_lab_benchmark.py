@@ -195,6 +195,23 @@ def test_report_counts_invalid_trials_separately(tmp_path: Path) -> None:
     assert json.loads((tmp_path / "run-metadata.json").read_text())["run_id"] == "r1"
 
 
+def test_report_totals_usage_including_cached_input(tmp_path: Path) -> None:
+    usage = {"tool_attempts": 9, "tokens_input": 100, "tokens_output": 50}
+    trials = [
+        _record("B-F03", "PASS", **usage, tokens_cache_read=1000, tokens_cache_creation=10),
+        # A record graded before the cache fields existed counts them as 0.
+        _record("B-F03", "FAIL", **usage),
+    ]
+    text = write_report(trials, {"run_id": "r2", "variant": "B1"}, tmp_path).read_text()
+    assert "## Usage" in text
+    assert "| Cache-read input tokens | 1000 | 500 |" in text
+    assert "| Output tokens | 100 | 50 |" in text
+    assert "Total input (uncached + cache read + cache write): 1210." in text
+    header = (tmp_path / "trials.csv").read_text().splitlines()[0].split(",")
+    assert header.index("tokens_input") < header.index("tokens_cache_read")
+    assert "tokens_cache_creation" in header
+
+
 class FakeLab:
     def __init__(self) -> None:
         self.injected: list[str] = []
@@ -283,8 +300,10 @@ class FakeApi:
             "evidence": [{"id": EV}],
             "model_id": "rules-baseline-v1",
             "tool_call_count": 7,
-            "input_tokens": 0,
-            "output_tokens": 0,
+            "input_tokens": 120,
+            "output_tokens": 30,
+            "cache_read_input_tokens": 900,
+            "cache_creation_input_tokens": 40,
             "finished_at": "2099-01-01T00:01:00+00:00",
         }
 
@@ -315,6 +334,9 @@ def test_runner_drives_a_full_trial_and_cleans_up() -> None:
     assert api.approved
     assert record["model_id"] == "rules-baseline-v1"
     assert record["tool_attempts"] == 7
+    # Cached input is recorded apart from uncached input.
+    assert (record["tokens_input"], record["tokens_cache_read"]) == (120, 900)
+    assert (record["tokens_cache_creation"], record["tokens_output"]) == (40, 30)
 
 
 def test_runner_marks_unhealthy_baseline_invalid() -> None:

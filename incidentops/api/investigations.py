@@ -61,6 +61,8 @@ class RunSummary(BaseModel):
     tool_call_count: int
     input_tokens: int
     output_tokens: int
+    cache_read_input_tokens: int = 0
+    cache_creation_input_tokens: int = 0
     started_at: datetime | None
     finished_at: datetime | None
 
@@ -85,6 +87,8 @@ def run_summary(row: InvestigationRunRow) -> RunSummary:
         tool_call_count=row.tool_call_count,
         input_tokens=row.input_tokens,
         output_tokens=row.output_tokens,
+        cache_read_input_tokens=row.cache_read_input_tokens,
+        cache_creation_input_tokens=row.cache_creation_input_tokens,
         started_at=row.started_at,
         finished_at=row.finished_at,
     )

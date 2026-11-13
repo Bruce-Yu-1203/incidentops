@@ -289,6 +289,13 @@ class TrialRunner:
                 "tool_attempts": sum(int(r.get("tool_call_count", 0)) for r in obs.runs.values()),
                 "tokens_input": sum(int(r.get("input_tokens", 0)) for r in obs.runs.values()),
                 "tokens_output": sum(int(r.get("output_tokens", 0)) for r in obs.runs.values()),
+                # tokens_input is uncached input; cached input is counted apart.
+                "tokens_cache_read": sum(
+                    int(r.get("cache_read_input_tokens", 0)) for r in obs.runs.values()
+                ),
+                "tokens_cache_creation": sum(
+                    int(r.get("cache_creation_input_tokens", 0)) for r in obs.runs.values()
+                ),
             }
         )
         return record
