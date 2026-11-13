@@ -2,10 +2,13 @@
 
 from __future__ import annotations
 
+import logging
 from typing import Any, Protocol
 
 from incidentops.domain.catalog import ServiceCatalog, ServiceKind, UnknownServiceError
 from incidentops.tools.backends import TelemetryBackend
+
+LOGGER = logging.getLogger(__name__)
 
 
 class TargetInspector(Protocol):
@@ -41,7 +44,8 @@ class ConsumerTargetInspector:
                     return None
                 return {"revision": generation, "paused": status.get("paused")}
             state = await self._backend.controller_get(target_id, url, f"/targets/{target_id}")
-        except Exception:
+        except Exception as exc:
+            LOGGER.warning("target revision read failed for %s: %s", target_id, type(exc).__name__)
             return None
         revision = state.get("revision")
         return {"revision": revision} if isinstance(revision, str) else None
