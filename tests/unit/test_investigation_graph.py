@@ -365,10 +365,18 @@ def test_prompt_states_exact_action_argument_contract() -> None:
     # The model must be told the exact contract instead of guessing.
     message = json.dumps(initial_message({"id": "inc_x"}, [], load_catalog()))
     assert (
-        '\\"action_arguments\\": {\\"resume_test_consumer\\": {\\"desired_paused\\": [false]}}'
-        in message
+        '\\"action_arguments\\": {\\"resume_test_consumer\\": '
+        '{\\"desired_paused\\": {\\"one_of\\": [false]}}}' in message
     )
     assert "exactly" in SYSTEM_PROMPT
+
+
+def test_prompt_says_to_pass_one_allowed_value_not_the_list() -> None:
+    # A live DeepSeek run copied the bare contract list {"desired_paused": [false]}
+    # as the argument value; the contract now names the allowed values explicitly.
+    assert "`one_of`" in SYSTEM_PROMPT
+    assert "never the\n  list" in SYSTEM_PROMPT
+    assert '`{"x": false}`' in SYSTEM_PROMPT
 
 
 async def test_spent_tool_budget_ends_the_run() -> None:

@@ -16,7 +16,7 @@ from incidentops.evidence.redaction import redact, truncate_utf8
 from incidentops.policy.engine import PolicyConfig, load_policy
 from incidentops.tools.json_schema import inline_refs
 
-PROMPT_VERSION: Final = "investigation-v7"
+PROMPT_VERSION: Final = "investigation-v8"
 
 # The label space of root causes the diagnosis may use. This is the generic
 # taxonomy, not the answer to any particular case.
@@ -54,8 +54,10 @@ from your tool calls, and hand a diagnosis to deterministic policy and a human.
   non-specialist can read (what it shows and why it matters). Do not add IDs you did
   not cite.
 - Only propose an action that the service catalog lists for that service, with exactly
-  the argument names and values given in its `action_arguments` contract. Any other
-  argument is denied by policy.
+  the argument names given in its `action_arguments` contract. Each argument lists its
+  allowed values under `one_of`; pass exactly one of them as a plain value, never the
+  list (`{{"x": {{"one_of": [false]}}}}` means arguments `{{"x": false}}`). Any other
+  argument or value is denied by policy.
 - Only propose an action type that the root-cause action contract lists for your
   root_cause_id. A root cause with no listed action gets no proposed_action and
   needs_human_review=true; any other combination is denied by policy.
@@ -131,7 +133,11 @@ def catalog_context(
             "environment": s.environment.value,
             "consumer_group": s.kafka.consumer_group if s.kafka else None,
             "allowed_actions": list(s.allowed_actions),
-            "action_arguments": {a: contracts.get(a, {}) for a in s.allowed_actions},
+            # {"arg": {"one_of": [...]}}: a bare list was copied as the value.
+            "action_arguments": {
+                a: {name: {"one_of": values} for name, values in contracts.get(a, {}).items()}
+                for a in s.allowed_actions
+            },
         }
         for s in catalog.services
     ]
