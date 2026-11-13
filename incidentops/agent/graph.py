@@ -93,6 +93,11 @@ def initial_state(
 
 
 MAX_VALIDATION_ERRORS = 10
+EMPTY_SUBMISSION_ERROR = (
+    "invalid diagnosis: the submit_diagnosis arguments arrived empty. Call "
+    "submit_diagnosis again with the complete report object as its arguments: "
+    "diagnosis (required), proposed_action (or null) and needs_human_review."
+)
 
 
 def _json_type(value: Any) -> str:
@@ -289,6 +294,10 @@ def build_graph(
                 error = f"unresolved evidence ids: {sorted(exc.missing)}"
             elif isinstance(exc, ConfidenceRuleError):
                 error = f"confidence rule: {exc}"
+            elif call["input"] in ({}, None, ""):
+                # Some providers drop a tool call's arguments; say so plainly so
+                # the model resends the whole report instead of a partial fix.
+                error = EMPTY_SUBMISSION_ERROR
             else:
                 error = f"invalid diagnosis: {describe_invalid_diagnosis(exc)}"
             # Key names only (never values) show the shape the model submitted.

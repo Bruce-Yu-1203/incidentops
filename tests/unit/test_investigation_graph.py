@@ -292,8 +292,17 @@ async def test_empty_tool_inputs_and_stop_reason_are_recorded() -> None:
     assert call.metadata["empty_tool_inputs"] == ["submit_diagnosis"]
     step = next(s for s in trajectory.steps if s.kind.value == "diagnosis")
     assert step.metadata["submitted_keys"] == []
-    assert "diagnosis: Field required" in step.metadata["error"]
-    assert "(got" not in step.metadata["error"]  # missing fields have no value type
+    assert "arguments arrived empty" in step.metadata["error"]
+    rejection = json.loads(model.calls[-1][-1]["content"][0]["content"])
+    assert rejection["status"] == "REJECTED"
+    assert "complete report object" in rejection["reason"]
+
+
+async def test_empty_submission_can_be_repaired() -> None:
+    empty = ModelTurn(tool_calls=[ToolCall("x", "submit_diagnosis", {})])
+    model = ScriptedModelAdapter([lag_and_status(), empty, submit])
+    final, _ = await run(model)
+    assert final["status"] == "COMPLETED"
 
 
 async def test_valid_submission_records_no_keys() -> None:
