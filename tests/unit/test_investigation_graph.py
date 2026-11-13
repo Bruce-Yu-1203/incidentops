@@ -135,6 +135,9 @@ async def test_invalid_report_names_the_failing_fields() -> None:
     assert error.startswith("invalid diagnosis: ValidationError (")
     assert "diagnosis." in error  # a field path, not just the class name
     assert secret_ish not in error  # input values are not echoed
+    step = next(s for s in trajectory.steps if s.kind.value == "diagnosis")
+    assert step.metadata["submitted_keys"] == ["diagnosis"]
+    assert secret_ish not in str(step.metadata)
     # The model gets the same detail so it can repair the submission.
     rejection = json.loads(model.calls[-1][-1]["content"][0]["content"])
     assert rejection["reason"] == error
@@ -249,6 +252,25 @@ async def test_thinking_only_turn_is_not_replayed_and_is_nudged() -> None:
             m["role"] == "assistant" and m["content"][0]["type"] == "thinking" for m in call
         )
     assert model.calls[1][-1]["content"][0]["text"].startswith("Call a read tool")
+
+
+async def test_flattened_submission_records_its_top_level_keys() -> None:
+    def flattened(_: list[dict[str, Any]]) -> ModelTurn:
+        payload = {"root_cause_id": "consumer_paused", "summary": "s", "confidence_level": "high"}
+        return ModelTurn(tool_calls=[ToolCall("x", "submit_diagnosis", payload)])
+
+    model = ScriptedModelAdapter([flattened, flattened])
+    _, trajectory = await run(model)
+    step = next(s for s in trajectory.steps if s.kind.value == "diagnosis")
+    assert step.metadata["submitted_keys"] == ["confidence_level", "root_cause_id", "summary"]
+    assert "consumer_paused" not in str(step.metadata["submitted_keys"])
+
+
+async def test_valid_submission_records_no_keys() -> None:
+    model = ScriptedModelAdapter([lag_and_status(), submit])
+    _, trajectory = await run(model)
+    step = next(s for s in trajectory.steps if s.kind.value == "diagnosis")
+    assert step.metadata["submitted_keys"] is None
 
 
 async def test_cache_usage_is_accumulated_apart_from_input() -> None:

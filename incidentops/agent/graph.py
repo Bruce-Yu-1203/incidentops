@@ -254,6 +254,7 @@ def build_graph(
         call = next(b for b in uses if b["name"] == SUBMIT_DIAGNOSIS)
         started = utcnow()
         error: str | None = None
+        submitted_keys: list[str] | str | None = None
         report: DiagnosisReport | None = None
         try:
             payload = dict(call["input"]) if isinstance(call["input"], dict) else {}
@@ -270,6 +271,12 @@ def build_graph(
                 error = f"confidence rule: {exc}"
             else:
                 error = f"invalid diagnosis: {describe_invalid_diagnosis(exc)}"
+            # Key names only (never values) show the shape the model submitted.
+            submitted_keys = (
+                sorted(str(k) for k in call["input"])[:MAX_VALIDATION_ERRORS]
+                if isinstance(call["input"], dict)
+                else type(call["input"]).__name__
+            )
         trajectory.record(
             StepRecord(
                 state["run_id"],
@@ -279,6 +286,7 @@ def build_graph(
                 utcnow(),
                 {
                     "error": error,
+                    "submitted_keys": submitted_keys,
                     "root_cause_id": report.diagnosis.root_cause_id if report else None,
                 },
             )
