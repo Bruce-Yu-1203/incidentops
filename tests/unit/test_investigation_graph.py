@@ -409,3 +409,12 @@ def test_prompt_has_rules_method_and_confidence_sections() -> None:
     assert "1." not in method
     rubric = SYSTEM_PROMPT.split("<confidence_rubric>")[1].split("</confidence_rubric>")[0]
     assert all(f"- {level}:" in rubric for level in ("high", "medium", "low"))
+
+
+async def test_three_repair_attempts_allow_a_late_valid_submission() -> None:
+    empty = ModelTurn(tool_calls=[ToolCall("x", "submit_diagnosis", {})])
+    model = ScriptedModelAdapter([lag_and_status(), empty, empty, empty, submit])
+    final, trajectory = await run(model, Budgets(max_repair_attempts=3))
+    assert final["status"] == "COMPLETED"
+    statuses = [s.status for s in trajectory.steps if s.kind.value == "diagnosis"]
+    assert statuses == ["INVALID", "INVALID", "INVALID", "SUCCESS"]

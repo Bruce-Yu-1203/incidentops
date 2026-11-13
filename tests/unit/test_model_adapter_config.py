@@ -8,7 +8,7 @@ from pydantic import SecretStr, ValidationError
 from incidentops.agent.baseline import RulesBaselineAdapter
 from incidentops.agent.model import AnthropicModelAdapter
 from incidentops.config import Settings
-from incidentops.workers.investigation import build_model
+from incidentops.workers.investigation import budgets_from, build_model
 
 
 def _settings(**values: object) -> Settings:
@@ -75,3 +75,17 @@ def test_output_cap_is_configurable(monkeypatch: pytest.MonkeyPatch) -> None:
 def test_out_of_range_output_caps_are_rejected(cap: int) -> None:
     with pytest.raises(ValidationError):
         _settings(model_id="m", model_max_output_tokens=cap)
+
+
+def test_llm_runs_get_three_repair_attempts_by_default() -> None:
+    budgets = budgets_from(_settings(model_id="deepseek-flash"))
+    assert budgets.max_repair_attempts == 3
+
+
+def test_rules_baseline_keeps_one_repair_attempt() -> None:
+    budgets = budgets_from(_settings(model_id="rules-baseline-v1", max_repair_attempts=5))
+    assert budgets.max_repair_attempts == 1
+
+
+def test_repair_attempts_are_configurable_for_llm_runs() -> None:
+    assert budgets_from(_settings(model_id="m", max_repair_attempts=5)).max_repair_attempts == 5

@@ -142,10 +142,14 @@ def build_model(settings: Settings) -> ModelAdapter:
 
 
 def budgets_from(settings: Settings) -> Budgets:
+    baseline = settings.model_id == BASELINE_MODEL_ID
     return Budgets(
         max_steps=settings.max_agent_steps,
         max_tool_calls=settings.max_tool_calls,
         wall_clock_seconds=settings.investigation_timeout_seconds,
+        max_repair_attempts=Budgets.max_repair_attempts
+        if baseline
+        else settings.max_repair_attempts,
     )
 
 
