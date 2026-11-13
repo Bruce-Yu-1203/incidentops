@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 from typing import Any
 
@@ -83,3 +84,28 @@ def test_digest_changes_with_content(tmp_path: Path) -> None:
     path = tmp_path / "catalog.yaml"
     path.write_text(yaml.safe_dump(_raw()), encoding="utf-8")
     assert load_catalog(path).digest() == a.digest()
+
+
+def _example_endpoint_overrides() -> dict[str, str]:
+    """Parse INCIDENTOPS_ENDPOINT_OVERRIDES from the repository's .env.example."""
+    env_example = Path(__file__).resolve().parents[2] / ".env.example"
+    for line in env_example.read_text(encoding="utf-8").splitlines():
+        if line.startswith("INCIDENTOPS_ENDPOINT_OVERRIDES="):
+            raw = line.split("=", 1)[1].strip().strip("'")
+            overrides: dict[str, str] = json.loads(raw)
+            return overrides
+    raise AssertionError("INCIDENTOPS_ENDPOINT_OVERRIDES missing from .env.example")
+
+
+def test_every_compose_management_url_has_a_host_override() -> None:
+    # Host-run workers cannot resolve compose service names, so a catalog
+    # target without an override gets an unknown revision and is denied.
+    overrides = _example_endpoint_overrides()
+    missing = [
+        service.service_id
+        for service in load_catalog().services
+        if service.management_url is not None
+        and service.management_url.host not in {"localhost", "127.0.0.1", "::1"}
+        and service.service_id not in overrides
+    ]
+    assert missing == []
