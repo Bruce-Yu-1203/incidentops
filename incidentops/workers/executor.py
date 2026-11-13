@@ -10,13 +10,14 @@ from __future__ import annotations
 import asyncio
 import logging
 import sys
+from collections.abc import Mapping
 from typing import Any, Final
 
 import httpx
 
 from incidentops.actions.approvals import EXECUTE_ACTION_JOB
 from incidentops.config import Settings, get_settings
-from incidentops.domain.catalog import load_catalog
+from incidentops.domain.catalog import ServiceCatalog, load_catalog
 from incidentops.execution.adapters import (
     LAB_CONTROLLER_ACTIONS,
     ConsumerResumeAdapter,
@@ -49,6 +50,22 @@ def handlers(executor: ActionExecutor) -> dict[str, Handler]:
     return {EXECUTE_ACTION_JOB: execute, RECONCILE_ACTION_JOB: reconcile}
 
 
+def build_adapters(
+    client: httpx.AsyncClient,
+    catalog: ServiceCatalog,
+    token: str,
+    endpoint_overrides: Mapping[str, str],
+) -> dict[str, RemediationAdapter]:
+    """The executor's action_type -> adapter registry (allowlisted actions only)."""
+    overrides = dict(endpoint_overrides)
+    adapters: dict[str, RemediationAdapter] = {
+        "resume_test_consumer": ConsumerResumeAdapter(client, catalog, token, overrides)
+    }
+    controller = LabControllerAdapter(client, catalog, token, overrides)
+    adapters.update({action: controller for action in LAB_CONTROLLER_ACTIONS})
+    return adapters
+
+
 async def serve(settings: Settings) -> None:  # pragma: no cover - process entry point
     assert_credential_scope(Role.EXECUTOR, settings)
     if settings.executor_lab_token is None:
@@ -56,20 +73,12 @@ async def serve(settings: Settings) -> None:  # pragma: no cover - process entry
     factory = make_session_factory(make_engine(settings.control_database_url.get_secret_value()))
     catalog = load_catalog()
     async with httpx.AsyncClient(timeout=httpx.Timeout(5.0)) as client:
-        adapter = ConsumerResumeAdapter(
+        adapters = build_adapters(
             client,
             catalog,
             settings.executor_lab_token.get_secret_value(),
             settings.endpoint_overrides,
         )
-        controller = LabControllerAdapter(
-            client,
-            catalog,
-            settings.executor_lab_token.get_secret_value(),
-            settings.endpoint_overrides,
-        )
-        adapters: dict[str, RemediationAdapter] = {"resume_test_consumer": adapter}
-        adapters.update({action: controller for action in LAB_CONTROLLER_ACTIONS})
         executor = ActionExecutor(factory, PolicyEngine(load_policy(), catalog), adapters)
         await run_forever(
             factory,

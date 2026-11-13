@@ -205,7 +205,10 @@ class LabControllerAdapter:
 
 LAB_CONTROLLER_ACTIONS = (
     "release_lab_db_blocker",
+    "release_lab_idle_connections",
+    "reset_lab_load_profile",
     "restart_lab_dependency",
+    "revert_lab_config",
     "rollback_demo_api",
     "stop_lab_cpu_load",
 )
