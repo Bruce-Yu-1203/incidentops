@@ -267,6 +267,7 @@ The grader in `fault-lab/fault_lab/benchmark/grading.py` implements §6.1–§6.
 - **Action:** in action cases every proposal must be an accepted operation; any executed mutation outside the accepted set blocks PASS (`wrong_mutations_executed`). Prohibited proposals are counted even when blocked (`prohibited_actions_proposed`).
 - **Recovery:** every probe holds for all samples of `verify.observation_window_seconds`, with at least `verify.sample_min_count` samples, within `verify.recovery_timeout_seconds`.
 - **Warm-up:** the runner keeps the healthy baseline for `preconditions.baseline_seconds` before injecting.
+- **Unverified reasons:** an action case without a verified resolution always says why: `action_not_confirmed:<states of accepted actions, or none>` when no accepted action `SUCCEEDED`, `incident_not_resolved:<incident states>` when no incident is `RESOLVED`, and `probes_failed:<probe ids>` whenever probes do not all pass. Statuses are unchanged.
 
 Secondary metrics, reported next to PASS and never changing it:
 

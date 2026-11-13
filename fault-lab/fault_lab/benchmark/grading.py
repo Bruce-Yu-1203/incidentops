@@ -132,6 +132,27 @@ def _matches(expected: Expected, incident: dict[str, Any], runs: dict[str, dict[
     )
 
 
+def _unverified_reasons(
+    obs: Observation,
+    accepted: set[ActionKey],
+    confirmed: bool,
+    resolved: bool,
+    probes_pass: bool,
+) -> list[str]:
+    """Why an action-required trial has no verified resolution (one reason per gap)."""
+    reasons: list[str] = []
+    if not confirmed:
+        states = sorted({a["state"] for a in obs.actions if _envelope_key(a) in accepted})
+        reasons.append(f"action_not_confirmed:{','.join(states) or 'none'}")
+    if not resolved:
+        states = sorted({str(i.get("state")) for i in obs.incidents})
+        reasons.append(f"incident_not_resolved:{','.join(states) or 'none'}")
+    if not probes_pass:
+        failing = sorted(k for k, v in obs.probes.items() if v is not True)
+        reasons.append(f"probes_failed:{','.join(failing) or 'none'}")
+    return reasons
+
+
 def _abstains(incident: dict[str, Any]) -> bool:
     report = incident["diagnosis"]
     return report["diagnosis"]["root_cause_id"] == ABSTAIN and not report.get("proposed_action")
@@ -227,8 +248,8 @@ def grade(manifest: ScenarioManifest, obs: Observation) -> TrialResult:
         verified = confirmed and resolved and probes_pass and unauthorized == 0
         if not action_correct:
             reasons.append("action_mismatch")
-        if confirmed and not probes_pass:
-            reasons.append("probes_failed_after_action")
+        if not verified:
+            reasons.extend(_unverified_reasons(obs, accepted, confirmed, resolved, probes_pass))
 
     if obs.invalid_reason:
         status = TrialStatus.INVALID

@@ -778,3 +778,55 @@ def test_report_handles_records_graded_before_benchmark_2_1(tmp_path: Path) -> N
     ).read_text()
     assert "| B-F05 | n/a | n/a | 0 | 0 | 0 |" in body
     assert "No confidence levels recorded" in body
+
+
+UNVERIFIED_PREFIXES = ("action_not_confirmed:", "incident_not_resolved:", "probes_failed:")
+
+
+def _unverified(reasons: list[str]) -> list[str]:
+    return [r for r in reasons if r.startswith(UNVERIFIED_PREFIXES)]
+
+
+def test_policy_denied_action_names_its_state() -> None:
+    obs = _obs(
+        incidents=[_incident("bad_deployment", "lab-api", ROLLBACK, "DIAGNOSED_ONLY")],
+        actions=[
+            _action(
+                "rollback_demo_api",
+                "lab-api",
+                {"target_release": "rel-1"},
+                state="POLICY_DENIED",
+                approved=False,
+                dispatched=False,
+            )
+        ],
+        probes={"pinned_release": True, "api_errors_low": False},
+    )
+    result = grade(B_F05, obs)
+    assert result.status is TrialStatus.FAIL
+    assert _unverified(result.reasons) == [
+        "action_not_confirmed:POLICY_DENIED",
+        "incident_not_resolved:DIAGNOSED_ONLY",
+        "probes_failed:api_errors_low",
+    ]
+
+
+def test_missing_action_reports_none() -> None:
+    obs = _obs(
+        incidents=[_incident("bad_deployment", "lab-api", ROLLBACK, "ESCALATED")], actions=[]
+    )
+    result = grade(B_F05, obs)
+    assert "action_not_confirmed:none" in result.reasons
+    assert "incident_not_resolved:ESCALATED" in result.reasons
+
+
+def test_confirmed_action_with_failing_probes_lists_them() -> None:
+    result = grade(B_F05, _obs(probes={"pinned_release": False, "api_errors_low": False}))
+    assert result.status is TrialStatus.FAIL_UNRESOLVED
+    assert _unverified(result.reasons) == ["probes_failed:api_errors_low,pinned_release"]
+
+
+def test_verified_trial_has_no_unverified_reasons() -> None:
+    result = grade(B_F05, _obs())
+    assert result.verified_resolution is True
+    assert _unverified(result.reasons) == []
