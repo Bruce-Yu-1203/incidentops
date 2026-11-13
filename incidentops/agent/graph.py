@@ -176,7 +176,8 @@ def build_graph(
                 span_id=span_id,
             )
         )
-        messages = [*state["messages"], turn.assistant_message()]
+        reply = turn.assistant_message()
+        messages = [*state["messages"], *([reply] if reply is not None else [])]
         update: dict[str, Any] = {
             "messages": messages,
             "step_count": state["step_count"] + 1,

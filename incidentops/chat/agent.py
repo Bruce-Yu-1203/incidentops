@@ -300,7 +300,9 @@ class ChatAgent:
             result.step_count += 1
             result.input_tokens += turn.usage.input_tokens
             result.output_tokens += turn.usage.output_tokens
-            messages.append(turn.assistant_message())
+            reply = turn.assistant_message()
+            if reply is not None:
+                messages.append(reply)
 
             final = next((c for c in turn.tool_calls if c.name == ANSWER_TOOL), None)
             if final is not None:

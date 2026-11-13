@@ -39,21 +39,52 @@ class Usage:
     output_tokens: int = 0
 
 
+THINKING_BLOCK_TYPES = frozenset({"thinking", "redacted_thinking"})
+
+
 @dataclass(frozen=True)
 class ModelTurn:
     tool_calls: list[ToolCall] = field(default_factory=list)
     text: str | None = None
     usage: Usage = field(default_factory=Usage)
+    # The provider's content blocks in their original order, as request
+    # params. Thinking blocks must be sent back unchanged on the next request.
+    # Empty for turns that did not come from a provider (scripted, baseline).
+    blocks: list[dict[str, Any]] = field(default_factory=list)
 
-    def assistant_message(self) -> dict[str, Any]:
-        content: list[dict[str, Any]] = []
-        if self.text:
-            content.append({"type": "text", "text": self.text})
-        content.extend(
-            {"type": "tool_use", "id": c.id, "name": c.name, "input": c.arguments}
-            for c in self.tool_calls
-        )
+    def assistant_message(self) -> dict[str, Any] | None:
+        """The turn as an assistant message for the next request.
+
+        ``None`` when the turn has no text and no tool call (e.g. a thinking-only
+        turn cut off by ``max_tokens``): providers reject assistant messages
+        with empty content, so such a turn is not replayed.
+        """
+        if not self.text and not self.tool_calls:
+            return None
+        if self.blocks:
+            content = [b for b in self.blocks if not (b["type"] == "text" and not b["text"])]
+        else:
+            content = []
+            if self.text:
+                content.append({"type": "text", "text": self.text})
+            content.extend(
+                {"type": "tool_use", "id": c.id, "name": c.name, "input": c.arguments}
+                for c in self.tool_calls
+            )
         return {"role": "assistant", "content": content}
+
+
+def block_param(block: Any) -> dict[str, Any] | None:
+    """A response content block as a request param, or ``None`` if not replayed."""
+    if block.type == "thinking":
+        return {"type": "thinking", "thinking": block.thinking, "signature": block.signature}
+    if block.type == "redacted_thinking":
+        return {"type": "redacted_thinking", "data": block.data}
+    if block.type == "text":
+        return {"type": "text", "text": block.text}
+    if block.type == "tool_use":
+        return {"type": "tool_use", "id": block.id, "name": block.name, "input": block.input}
+    return None
 
 
 class ModelError(RuntimeError):
@@ -177,15 +208,25 @@ class AnthropicModelAdapter:
             detail = describe_api_error(exc)
             logger.warning("model call failed (model %s): %s", self._model_id, detail)
             raise ModelError(detail) from exc
-        calls: list[ToolCall] = []
-        texts: list[str] = []
-        for block in response.content:
-            if block.type == "tool_use":
-                calls.append(ToolCall(block.id, block.name, block.input))
-            elif block.type == "text":
-                texts.append(block.text)
-        return ModelTurn(
-            tool_calls=calls,
-            text="\n".join(texts) or None,
-            usage=Usage(response.usage.input_tokens, response.usage.output_tokens),
-        )
+        return turn_from_response(response)
+
+
+def turn_from_response(response: anthropic.types.Message) -> ModelTurn:
+    """Map a Messages API response onto a ModelTurn, keeping block order."""
+    calls: list[ToolCall] = []
+    texts: list[str] = []
+    blocks: list[dict[str, Any]] = []
+    for block in response.content:
+        if block.type == "tool_use":
+            calls.append(ToolCall(block.id, block.name, block.input))
+        elif block.type == "text" and block.text:
+            texts.append(block.text)
+        param = block_param(block)
+        if param is not None:
+            blocks.append(param)
+    return ModelTurn(
+        tool_calls=calls,
+        text="\n".join(texts) or None,
+        blocks=blocks,
+        usage=Usage(response.usage.input_tokens, response.usage.output_tokens),
+    )

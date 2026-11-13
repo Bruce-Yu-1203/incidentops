@@ -211,6 +211,22 @@ async def test_text_only_turn_is_nudged() -> None:
     assert model.calls[1][-1]["content"][0]["text"].startswith("Call a read tool")
 
 
+async def test_thinking_only_turn_is_not_replayed_and_is_nudged() -> None:
+    thinking_only = ModelTurn(
+        blocks=[{"type": "thinking", "thinking": "cut off", "signature": "s"}]
+    )
+    model = ScriptedModelAdapter([thinking_only, lag_and_status(), submit])
+    final, _ = await run(model)
+    assert final["status"] == "COMPLETED"
+    # No assistant message with empty content reaches the provider.
+    for call in model.calls:
+        assert all(m["content"] for m in call)
+        assert not any(
+            m["role"] == "assistant" and m["content"][0]["type"] == "thinking" for m in call
+        )
+    assert model.calls[1][-1]["content"][0]["text"].startswith("Call a read tool")
+
+
 async def test_checkpointer_persists_state_by_thread() -> None:
     gateway, _, evidence, trajectory = make_gateway()
     saver = InMemorySaver()
