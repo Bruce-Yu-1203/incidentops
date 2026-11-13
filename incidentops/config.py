@@ -63,6 +63,10 @@ class Settings(BaseSettings):
     max_agent_steps: int = Field(default=20, ge=1, le=100)
     max_tool_calls: int = Field(default=40, ge=1, le=200)
     investigation_timeout_seconds: int = Field(default=300, ge=10, le=3600)
+    # Per-response output cap. Thinking models spend part of it on thinking,
+    # so a small cap can cut off a tool call (e.g. submit_diagnosis) mid-way;
+    # raise it for thinking models.
+    model_max_output_tokens: int = Field(default=2048, ge=256, le=64000)
 
     @field_validator("anthropic_base_url")
     @classmethod

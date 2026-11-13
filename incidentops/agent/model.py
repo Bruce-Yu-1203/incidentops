@@ -187,6 +187,10 @@ class AnthropicModelAdapter:
         return self._model_id
 
     @property
+    def max_output_tokens(self) -> int:
+        return self._max_tokens
+
+    @property
     def base_url(self) -> str:
         return str(self._client.base_url)
 

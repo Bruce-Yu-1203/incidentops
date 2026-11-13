@@ -112,6 +112,8 @@ verifier resolve it. `make demo-down` stops everything.
 The investigation worker uses the no-key rules baseline by default. To use a
 model, set `INCIDENTOPS_MODEL_ID`, `INCIDENTOPS_ANTHROPIC_API_KEY` and, for an
 Anthropic-compatible provider, `INCIDENTOPS_ANTHROPIC_BASE_URL` in `.env`.
+`INCIDENTOPS_MODEL_MAX_OUTPUT_TOKENS` (default 2048) caps each model response;
+thinking counts against it, so raise it (e.g. 8192) for thinking models.
 
 | Command | What it does |
 |---|---|

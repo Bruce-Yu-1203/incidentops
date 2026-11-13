@@ -136,6 +136,7 @@ def build_model(settings: Settings) -> ModelAdapter:
     return AnthropicModelAdapter(
         settings.anthropic_api_key.get_secret_value(),
         settings.model_id,
+        max_output_tokens=settings.model_max_output_tokens,
         base_url=settings.anthropic_base_url,
     )
 

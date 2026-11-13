@@ -55,3 +55,23 @@ def test_rules_baseline_needs_no_key() -> None:
 def test_missing_key_stops_the_worker() -> None:
     with pytest.raises(SystemExit):
         build_model(_settings(model_id="deepseek-chat"))
+
+
+def test_output_cap_defaults_to_2048() -> None:
+    model = build_model(_settings(model_id="m", anthropic_api_key=SecretStr("k" * 20)))
+    assert isinstance(model, AnthropicModelAdapter)
+    assert model.max_output_tokens == 2048
+
+
+def test_output_cap_is_configurable(monkeypatch: pytest.MonkeyPatch) -> None:
+    # Thinking models spend part of the cap on thinking, so it must be raisable.
+    monkeypatch.setenv("INCIDENTOPS_MODEL_MAX_OUTPUT_TOKENS", "8192")
+    model = build_model(Settings(model_id="m", anthropic_api_key=SecretStr("k" * 20)))
+    assert isinstance(model, AnthropicModelAdapter)
+    assert model.max_output_tokens == 8192
+
+
+@pytest.mark.parametrize("cap", [0, 100, 100_000])
+def test_out_of_range_output_caps_are_rejected(cap: int) -> None:
+    with pytest.raises(ValidationError):
+        _settings(model_id="m", model_max_output_tokens=cap)
