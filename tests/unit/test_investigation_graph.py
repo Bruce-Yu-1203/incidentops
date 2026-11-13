@@ -8,7 +8,7 @@ from typing import Any
 import pytest
 from langgraph.checkpoint.memory import InMemorySaver
 
-from incidentops.agent.graph import Budgets, build_graph, initial_state
+from incidentops.agent.graph import Budgets, build_graph, describe_invalid_diagnosis, initial_state
 from incidentops.agent.model import (
     ModelTurn,
     ScriptedModelAdapter,
@@ -119,6 +119,29 @@ async def test_repeated_invalid_reports_fail_the_run() -> None:
         "INVALID",
         "INVALID",
     ]
+
+
+async def test_invalid_report_names_the_failing_fields() -> None:
+    secret_ish = "do-not-echo-this-value"
+
+    def malformed(_: list[dict[str, Any]]) -> ModelTurn:
+        payload = {"diagnosis": {"root_cause_id": secret_ish}}
+        return ModelTurn(tool_calls=[ToolCall("x", "submit_diagnosis", payload)])
+
+    model = ScriptedModelAdapter([malformed, malformed])
+    _, trajectory = await run(model)
+    error = next(s for s in trajectory.steps if s.kind.value == "diagnosis").metadata["error"]
+    assert error.startswith("invalid diagnosis: ValidationError (")
+    assert "diagnosis." in error  # a field path, not just the class name
+    assert secret_ish not in error  # input values are not echoed
+    # The model gets the same detail so it can repair the submission.
+    rejection = json.loads(model.calls[-1][-1]["content"][0]["content"])
+    assert rejection["reason"] == error
+
+
+def test_plain_value_errors_keep_their_message() -> None:
+    error = describe_invalid_diagnosis(ValueError("a proposed action requires supporting evidence"))
+    assert error == "ValueError: a proposed action requires supporting evidence"
 
 
 async def test_prompt_injection_in_logs_cannot_cause_mutation() -> None:

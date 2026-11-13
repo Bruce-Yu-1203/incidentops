@@ -88,6 +88,27 @@ def initial_state(
     )
 
 
+MAX_VALIDATION_ERRORS = 10
+
+
+def describe_invalid_diagnosis(exc: Exception) -> str:
+    """Which fields of a submitted diagnosis failed, without echoing input values.
+
+    The text is recorded in the trajectory and returned to the model so it can
+    repair the submission.
+    """
+    if isinstance(exc, ValidationError):
+        errors = exc.errors(include_url=False, include_input=False, include_context=False)
+        parts = [
+            f"{'.'.join(str(p) for p in e['loc']) or '<root>'}: {e['msg']}"
+            for e in errors[:MAX_VALIDATION_ERRORS]
+        ]
+        if len(errors) > MAX_VALIDATION_ERRORS:
+            parts.append(f"... {len(errors) - MAX_VALIDATION_ERRORS} more")
+        return f"ValidationError ({len(errors)}): " + "; ".join(parts)
+    return f"{type(exc).__name__}: {exc}"
+
+
 def _tool_result(tool_use_id: str, body: dict[str, Any], is_error: bool = False) -> dict[str, Any]:
     return {
         "type": "tool_result",
@@ -237,7 +258,7 @@ def build_graph(
             elif isinstance(exc, ConfidenceRuleError):
                 error = f"confidence rule: {exc}"
             else:
-                error = f"invalid diagnosis: {type(exc).__name__}"
+                error = f"invalid diagnosis: {describe_invalid_diagnosis(exc)}"
         trajectory.record(
             StepRecord(
                 state["run_id"],
