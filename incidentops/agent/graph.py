@@ -95,6 +95,22 @@ def initial_state(
 MAX_VALIDATION_ERRORS = 10
 
 
+def _json_type(value: Any) -> str:
+    if value is None:
+        return "null"
+    if isinstance(value, bool):
+        return "boolean"
+    if isinstance(value, int | float):
+        return "number"
+    if isinstance(value, str):
+        return "string"
+    if isinstance(value, list | tuple):
+        return "array"
+    if isinstance(value, dict):
+        return "object"
+    return type(value).__name__
+
+
 def describe_invalid_diagnosis(exc: Exception) -> str:
     """Which fields of a submitted diagnosis failed, without echoing input values.
 
@@ -102,9 +118,11 @@ def describe_invalid_diagnosis(exc: Exception) -> str:
     repair the submission.
     """
     if isinstance(exc, ValidationError):
-        errors = exc.errors(include_url=False, include_input=False, include_context=False)
+        errors = exc.errors(include_url=False, include_context=False)
+        # The submitted value's JSON type is shown, never the value itself.
         parts = [
             f"{'.'.join(str(p) for p in e['loc']) or '<root>'}: {e['msg']}"
+            + (f" (got {_json_type(e['input'])})" if e["type"] != "missing" else "")
             for e in errors[:MAX_VALIDATION_ERRORS]
         ]
         if len(errors) > MAX_VALIDATION_ERRORS:
@@ -193,6 +211,8 @@ def build_graph(
                 {
                     "model_id": model.model_id,
                     "tool_calls": [c.name for c in turn.tool_calls],
+                    "stop_reason": turn.stop_reason,
+                    "empty_tool_inputs": [c.name for c in turn.tool_calls if not c.arguments],
                     "text_preview": (turn.text or "")[:300],
                     "input_tokens": turn.usage.input_tokens,
                     "output_tokens": turn.usage.output_tokens,

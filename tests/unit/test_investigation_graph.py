@@ -266,6 +266,36 @@ async def test_flattened_submission_records_its_top_level_keys() -> None:
     assert "consumer_paused" not in str(step.metadata["submitted_keys"])
 
 
+async def test_rejection_names_the_submitted_value_type_not_the_value() -> None:
+    def wrong_type(messages: list[dict[str, Any]]) -> ModelTurn:
+        turn = submit(messages)
+        report = dict(turn.tool_calls[0].arguments)
+        action = dict(report["proposed_action"])
+        action["arguments"] = {"desired_paused": ["listed-value"]}
+        report["proposed_action"] = action
+        return ModelTurn(tool_calls=[ToolCall("final", "submit_diagnosis", report)])
+
+    model = ScriptedModelAdapter([lag_and_status(), wrong_type, wrong_type])
+    _, trajectory = await run(model)
+    error = next(s for s in trajectory.steps if s.kind.value == "diagnosis").metadata["error"]
+    assert "proposed_action.arguments.desired_paused" in error
+    assert "(got array)" in error
+    assert "listed-value" not in error
+
+
+async def test_empty_tool_inputs_and_stop_reason_are_recorded() -> None:
+    empty = ModelTurn(tool_calls=[ToolCall("x", "submit_diagnosis", {})], stop_reason="tool_use")
+    model = ScriptedModelAdapter([empty, empty])
+    _, trajectory = await run(model)
+    call = next(s for s in trajectory.steps if s.kind.value == "model_call")
+    assert call.metadata["stop_reason"] == "tool_use"
+    assert call.metadata["empty_tool_inputs"] == ["submit_diagnosis"]
+    step = next(s for s in trajectory.steps if s.kind.value == "diagnosis")
+    assert step.metadata["submitted_keys"] == []
+    assert "diagnosis: Field required" in step.metadata["error"]
+    assert "(got" not in step.metadata["error"]  # missing fields have no value type
+
+
 async def test_valid_submission_records_no_keys() -> None:
     model = ScriptedModelAdapter([lag_and_status(), submit])
     _, trajectory = await run(model)

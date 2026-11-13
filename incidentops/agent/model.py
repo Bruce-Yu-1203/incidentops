@@ -55,6 +55,8 @@ class ModelTurn:
     # params. Thinking blocks must be sent back unchanged on the next request.
     # Empty for turns that did not come from a provider (scripted, baseline).
     blocks: list[dict[str, Any]] = field(default_factory=list)
+    # Provider stop reason (e.g. "tool_use", "max_tokens"); None for scripted turns.
+    stop_reason: str | None = None
 
     def assistant_message(self) -> dict[str, Any] | None:
         """The turn as an assistant message for the next request.
@@ -236,6 +238,7 @@ def turn_from_response(response: anthropic.types.Message) -> ModelTurn:
         tool_calls=calls,
         text="\n".join(texts) or None,
         blocks=blocks,
+        stop_reason=response.stop_reason,
         usage=Usage(
             response.usage.input_tokens,
             response.usage.output_tokens,

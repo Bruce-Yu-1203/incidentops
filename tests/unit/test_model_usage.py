@@ -38,6 +38,11 @@ def test_cache_usage_is_kept_separately() -> None:
     assert turn.usage == TurnUsage(250, 40, 3000, 120)
 
 
+def test_stop_reason_is_kept() -> None:
+    assert turn_from_response(_message(input_tokens=1, output_tokens=1)).stop_reason == "tool_use"
+    assert ModelTurn().stop_reason is None
+
+
 def test_missing_cache_usage_counts_as_zero() -> None:
     turn = turn_from_response(_message(input_tokens=5, output_tokens=1))
     assert (turn.usage.cache_read_input_tokens, turn.usage.cache_creation_input_tokens) == (0, 0)
