@@ -54,3 +54,13 @@ with `required_evidence_missing`.
   with no current broker or producer signal; it would now be denied.
 - **28 proposals denied at the time for other reasons** (duplicate active
   action): all would pass this precondition.
+
+### 3c. Range summaries lead with the current value and date the peak
+
+Every range reading's summary (metrics, consumer lag) now reads, for
+example, "now last=0 locks; peak max=1 at 21:02:00Z, 12 min before the
+latest sample; first=0". The snapshot also stores `peak_at` and `latest_at`
+(the most recent sample at the peak value, and the latest sample). An old
+peak is visibly old, and a current one says "(the latest sample)". The
+`first=`, `last=` and `max=` tokens are kept, so the rules baseline reads
+the same values.

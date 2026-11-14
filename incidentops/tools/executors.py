@@ -6,7 +6,7 @@ import json
 import re
 from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import dataclass, field
-from datetime import datetime, timedelta
+from datetime import UTC, datetime, timedelta
 from types import MappingProxyType
 from typing import Any, Final
 
@@ -63,9 +63,15 @@ def summarize_series(series: list[Series], unit: str) -> tuple[str, list[dict[st
         values = [v for _, v in item.points]
         if not values:
             continue
+        peak = max(values)
+        # The most recent sample at the peak value: an old spike that recurs now
+        # counts as current.
+        peak_at = max(ts for ts, v in item.points if v == peak)
         rows.append(
             {
                 "labels": item.labels,
+                "peak_at": int(peak_at),
+                "latest_at": int(item.points[-1][0]),
                 "first": round(values[0], 6),
                 "last": round(values[-1], 6),
                 "min": round(min(values), 6),
@@ -82,10 +88,24 @@ def summarize_series(series: list[Series], unit: str) -> tuple[str, list[dict[st
         return "no data", rows
     parts = [
         f"{','.join(f'{k}={v}' for k, v in r['labels'].items()) or 'total'}: "
-        f"first={r['first']} last={r['last']} max={r['max']} {unit}"
+        f"now last={r['last']} {unit}; peak max={r['max']} {_peak_when(r)}; first={r['first']}"
         for r in rows[:5]
     ]
     return "; ".join(parts), rows
+
+
+def _peak_when(row: dict[str, Any]) -> str:
+    """When the peak happened relative to the latest sample (ADR-029).
+
+    A window can still hold an earlier, resolved peak; saying how long ago it
+    was lets a reader tell it from the current state.
+    """
+    peak_ts, latest_ts = row["peak_at"], row["latest_at"]
+    when = datetime.fromtimestamp(peak_ts, UTC).strftime("%H:%M:%SZ")
+    ago = round((latest_ts - peak_ts) / 60)
+    if ago <= 0:
+        return f"at {when} (the latest sample)"
+    return f"at {when}, {ago} min before the latest sample"
 
 
 def _service(catalog: ServiceCatalog, service_id: str) -> ServiceEntry:
