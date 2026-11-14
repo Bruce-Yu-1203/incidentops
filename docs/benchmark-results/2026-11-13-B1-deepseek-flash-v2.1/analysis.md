@@ -15,7 +15,7 @@ states) were read from the control-plane database after the run.
 | Code | `main` at `3c1a0bc`, prompt `investigation-v8` |
 | Model | `deepseek-flash` through DeepSeek's Anthropic-compatible endpoint |
 | Worker overrides (env, not `.env`) | `INCIDENTOPS_INVESTIGATION_TIMEOUT_SECONDS=400`, `INCIDENTOPS_MODEL_MAX_OUTPUT_TOKENS=8192`; repair attempts 3 (default for model runs) |
-| Wall clock | 2026-11-13 21:57Z to 2026-11-14 ~04:02Z (35 of 70 trials started in DeepSeek peak hours) |
+| Wall clock | 2026-11-13 21:57Z (Friday) to 2026-11-14 ~04:02Z (Saturday); all off-peak for DeepSeek pricing |
 | Smoke pass | `20261113T202100Z-B1_DEEPSEEK`, 14x1 on `7ce6a64` (before the JSON-string fix), 13/14 PASS |
 
 The harness fixes made on 2026-11-13 before this run (provider error bodies,
@@ -173,17 +173,20 @@ absent.
 Cost estimate at the deepseek-flash rates on DeepSeek's pricing page
 (<https://api-docs.deepseek.com/quick_start/pricing/>, read 2026-11-13):
 off-peak $0.15 per 1M cache-miss input, $0.003 per 1M cache-hit input and
-$0.60 per 1M output; peak hours (weekdays 01:00-04:00 and 06:00-10:00 UTC)
-cost twice that. Split by trial start time, 35 trials ran off-peak and 35 in
-peak hours:
+$0.60 per 1M output. Peak hours (01:00-04:00 and 06:00-10:00 UTC, Monday to
+Friday, excluding Chinese public holidays) cost twice that. The run went from
+Friday 21:57Z to Saturday ~04:02Z, so it was entirely off-peak.
 
-- Full run: about **$1.40** (off-peak ~$0.47, peak ~$0.93). Output is about
-  75% of the cost.
-- Smoke pass (all off-peak): about $0.17.
+- Full run: about **$0.93**. Output is about 76% of the cost.
+- Smoke pass: about $0.17.
+
+*Correction (2026-11-14):* an earlier version of this note priced the trials
+started between 01:00 and 04:00Z on Saturday at peak rates ($1.40 in total).
+Peak pricing applies on weekdays only.
 
 DeepSeek's homepage (<https://www.deepseek.com/en/platform/>) listed lower
 V4-Flash prices on the same day; at those rates the full run would cost
-about $0.81. The provider's billing console is authoritative.
+about $0.54. The provider's billing console is authoritative.
 
 ## Comparison with the B0 rules baseline (2026-11-10)
 
@@ -217,6 +220,6 @@ mutation; B1 executed four, all of which failed harmlessly in the lab.
 
 See `limitations.md`. Specific to this run: one provider and one model
 version; DeepSeek's tool-argument instability inflates FAILs that a different
-provider would not produce; peak-hour pricing affects cost, not results; and
+provider would not produce; pricing hours affect cost, not results; and
 the benchmark approver approves everything, which overstates the impact of
 wrong proposals compared with a human-reviewed flow.
