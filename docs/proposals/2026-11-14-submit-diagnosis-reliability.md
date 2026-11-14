@@ -60,8 +60,9 @@ Add a `description` to every field of `DiagnosisReport`, `Diagnosis` and
 `ActionProposalDraft`. These descriptions are what the model reads in the
 tool schema. Say explicitly where each field belongs, e.g.
 "`needs_human_review` (top level, next to `diagnosis`, not inside it)".
-Expand the tool description to two or three sentences that give the
-top-level shape.
+Also say that `diagnosis` and `proposed_action` are JSON objects, never
+JSON-encoded strings. Expand the tool description to two or three sentences
+that give the top-level shape.
 
 - **Effort:** about 1 hour.
 - **Risk:** none for validation. It changes the model's input, so prompt
