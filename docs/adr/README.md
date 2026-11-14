@@ -28,3 +28,4 @@ it with a new ADR that supersedes the old one.
 | [ADR-026](ADR-026-benchmark-grading-2-1.md) | Benchmark grading 2.1: stricter gates and secondary metrics | Accepted |
 | [ADR-027](ADR-027-evidence-preconditions-and-abstention.md) | Evidence preconditions for database releases, and no-fault abstention | Accepted |
 | [ADR-028](ADR-028-submit-diagnosis-schema.md) | A self-describing submit_diagnosis schema | Accepted |
+| [ADR-029](ADR-029-current-state-evidence.md) | Root-cause component, restart precondition and current-state telemetry | Accepted |

@@ -16,7 +16,7 @@ from incidentops.evidence.redaction import redact, truncate_utf8
 from incidentops.policy.engine import PolicyConfig, load_policy
 from incidentops.tools.json_schema import inline_refs
 
-PROMPT_VERSION: Final = "investigation-v10"
+PROMPT_VERSION: Final = "investigation-v11"
 
 # The label space of root causes the diagnosis may use. This is the generic
 # taxonomy, not the answer to any particular case.
@@ -50,6 +50,10 @@ from your tool calls, and hand a diagnosis to deterministic policy and a human.
 - Use only the template IDs and services listed in each tool description; anything
   else is denied and still counts against your tool budget.
 - Finish by calling `submit_diagnosis` exactly once.
+- diagnosis.affected_component is the component where the root cause lives. If the
+  alerting service fails because one of its dependencies fails, name the dependency, even
+  in the incident opened on the alerting service; every incident caused by one fault gets
+  the same affected_component.
 - In diagnosis.evidence_notes, give each cited evidence ID one short, plain sentence a
   non-specialist can read (what it shows and why it matters). Do not add IDs you did
   not cite.
@@ -126,7 +130,7 @@ SUBMIT_DIAGNOSIS_DESCRIPTION: Final = (
     "Never put proposed_action or needs_human_review inside diagnosis, and never send an "
     "object as a JSON-encoded string. Shape (IDs and values are placeholders): "
     '{"diagnosis": {"root_cause_id": "<allowed root cause>", "affected_component": '
-    '"<failing service>", "confidence_level": "medium", "summary": "<explanation>", '
+    '"<root-cause component>", "confidence_level": "medium", "summary": "<explanation>", '
     '"supporting_evidence_ids": ["ev_<32 hex>"], "evidence_notes": {"ev_<32 hex>": '
     '"<what it shows>"}}, "proposed_action": {"action_type": "<listed action>", '
     '"environment": "fault-lab", "target_id": "<service>", "arguments": {}, "reason": '

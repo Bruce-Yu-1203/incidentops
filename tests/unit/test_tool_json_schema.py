@@ -141,3 +141,13 @@ def test_tool_schema_holds_no_scenario_ground_truth() -> None:
     text = json.dumps(submit_diagnosis_tool())
     for leak in ("expected", "accepted_root_cause_ids", "prohibited_actions", "B-F", "B-N"):
         assert leak not in text
+
+
+def test_affected_component_names_the_root_cause_dependency() -> None:
+    # 2026-11-14 r2: B-F12's downstream incident named the alerting service.
+    schema = submit_diagnosis_tool()["input_schema"]
+    description = schema["properties"]["diagnosis"]["properties"]["affected_component"][
+        "description"
+    ]
+    assert "where the root cause lives" in description
+    assert "name that dependency, not the service that surfaces the errors" in description

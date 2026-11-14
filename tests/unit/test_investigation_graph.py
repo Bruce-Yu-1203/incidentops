@@ -432,6 +432,10 @@ def test_prompt_expects_abstention_when_no_fault_is_confirmed() -> None:
     assert "direct, current evidence of the mechanism" in rubric
 
 
+def test_prompt_says_one_fault_gets_one_affected_component() -> None:
+    assert "every incident caused by one fault gets\n  the same affected_component" in SYSTEM_PROMPT
+
+
 def test_prompt_names_no_benchmark_case_or_scenario() -> None:
     assert not re.search(r"\bB-[FN]\d\d\b", SYSTEM_PROMPT)
     for scenario in ("transient_error_noise", "kafka_consumer_paused", "fault-lab/scenarios"):
