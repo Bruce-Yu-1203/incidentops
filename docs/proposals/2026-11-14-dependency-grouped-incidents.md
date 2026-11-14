@@ -6,7 +6,7 @@
 
 ## Problem
 
-Today an incident is keyed by `environment:service_id` (ADR-007/FR-002). One
+Today an incident is keyed by `environment:service_id` (FR-002). One
 fault in a shared dependency therefore opens one incident per service that
 alerts. In the r2 run, four cases did this every time:
 
