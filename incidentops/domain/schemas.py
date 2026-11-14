@@ -140,39 +140,80 @@ class ConfidenceLevel(StrEnum):
 class ActionProposalDraft(_Contract):
     """What the agent may propose. It is untrusted intent, never a command."""
 
-    action_type: TypeId
-    environment: Environment
-    target_id: ResourceId
-    arguments: dict[TypeId, ArgumentValue] = Field(default_factory=dict)
-    reason: ShortText
-    evidence_ids: list[RecordId] = Field(min_length=1)
+    # Descriptions are part of the submit_diagnosis tool schema the model reads
+    # (ADR-028); they state where each field lives because models misplaced them.
+    action_type: TypeId = Field(
+        description="An action listed for target_id in the service catalog and for "
+        "root_cause_id in the root-cause action contract."
+    )
+    environment: Environment = Field(description="The target's environment, e.g. fault-lab.")
+    target_id: ResourceId = Field(
+        description="The service the action changes (it may differ from affected_component)."
+    )
+    arguments: dict[TypeId, ArgumentValue] = Field(
+        default_factory=dict,
+        description="Exactly the argument names of the action's `action_arguments` contract, "
+        "each set to one plain value from its `one_of` list; {} only when the contract lists "
+        "no arguments.",
+    )
+    reason: ShortText = Field(description="One or two sentences on why this action fixes it.")
+    evidence_ids: list[RecordId] = Field(
+        min_length=1, description="Evidence IDs showing the condition this action fixes."
+    )
 
 
 class Diagnosis(_Contract):
-    root_cause_id: TypeId
-    affected_component: ResourceId
+    root_cause_id: TypeId = Field(
+        description="One of the allowed root causes; insufficient_evidence when no causal "
+        "signal is confirmed."
+    )
+    affected_component: ResourceId = Field(
+        description="The registered service that is failing (where the mechanism is), not the "
+        "object an action would change, e.g. lab-api rather than its configuration."
+    )
     confidence_level: ConfidenceLevel = Field(
         description="high: direct mechanism evidence on the component, consistent onset and a "
         "look-alike check, from at least two tools including a non-symptom check; medium: "
         "component clear, mechanism indirect or no look-alike check; low: symptoms only or "
         "conflicting evidence (use insufficient_evidence and propose nothing)."
     )
-    summary: ShortText
-    supporting_evidence_ids: list[RecordId]
-    contradicting_evidence_ids: list[RecordId] = Field(default_factory=list)
-    unresolved_questions: list[ShortText] = Field(default_factory=list)
+    summary: ShortText = Field(description="Plain-language explanation of the cause.")
+    supporting_evidence_ids: list[RecordId] = Field(
+        description="Evidence IDs returned by your tool calls that support the diagnosis."
+    )
+    contradicting_evidence_ids: list[RecordId] = Field(
+        default_factory=list, description="Evidence IDs that argue against it, if any."
+    )
+    unresolved_questions: list[ShortText] = Field(
+        default_factory=list, description="Open questions for the human reviewer."
+    )
     # One plain-language sentence per cited evidence ID, for the console.
     # Optional: the UI falls back to the stored evidence summary.
-    evidence_notes: dict[RecordId, EvidenceNote] = Field(default_factory=dict)
+    evidence_notes: dict[RecordId, EvidenceNote] = Field(
+        default_factory=dict,
+        description="Map from each cited evidence ID to one short sentence on what it shows; "
+        "only IDs cited in this report.",
+    )
 
 
 class DiagnosisReport(_Contract):
     """Terminal output of an investigation run (architecture §6.4)."""
 
     incident_id: RecordId
-    diagnosis: Diagnosis
-    proposed_action: ActionProposalDraft | None = None
-    needs_human_review: bool = False
+    diagnosis: Diagnosis = Field(
+        description="The diagnosis, as a JSON object (never a JSON-encoded string). It does "
+        "not contain proposed_action or needs_human_review: those are top-level fields."
+    )
+    proposed_action: ActionProposalDraft | None = Field(
+        default=None,
+        description="Top-level field next to diagnosis: the action as a JSON object, or null "
+        "when no action is proposed.",
+    )
+    needs_human_review: bool = Field(
+        default=False,
+        description="Top-level field next to diagnosis (not inside it); true when "
+        "proposed_action is null.",
+    )
 
     def model_post_init(self, _context: object) -> None:
         if self.proposed_action is None and not self.needs_human_review:

@@ -66,3 +66,28 @@ def test_recursive_and_external_references_are_rejected() -> None:
         inline_refs(recursive)
     with pytest.raises(ValueError, match="unsupported"):
         inline_refs({"$ref": "https://example.com/schema.json"})
+
+
+def test_every_submit_diagnosis_field_is_described() -> None:
+    # ADR-028: models misplaced fields; each field says what it is and where it lives.
+    schema = submit_diagnosis_tool()["input_schema"]
+    action = next(
+        s for s in schema["properties"]["proposed_action"]["anyOf"] if s.get("type") == "object"
+    )
+    for name, prop in [
+        *schema["properties"].items(),
+        *schema["properties"]["diagnosis"]["properties"].items(),
+        *action["properties"].items(),
+    ]:
+        assert prop.get("description"), f"{name} has no description"
+    assert "not inside it" in schema["properties"]["needs_human_review"]["description"]
+    assert "never a JSON-encoded string" in schema["properties"]["diagnosis"]["description"]
+
+
+def test_tool_description_gives_the_top_level_shape() -> None:
+    description = submit_diagnosis_tool()["description"]
+    assert "exactly three top-level fields" in description
+    shape = description.split("Shape (IDs and values are placeholders): ")[1]
+    top = json.loads(shape)
+    assert set(top) == {"diagnosis", "proposed_action", "needs_human_review"}
+    assert "needs_human_review" not in top["diagnosis"]

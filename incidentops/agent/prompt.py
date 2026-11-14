@@ -16,7 +16,7 @@ from incidentops.evidence.redaction import redact, truncate_utf8
 from incidentops.policy.engine import PolicyConfig, load_policy
 from incidentops.tools.json_schema import inline_refs
 
-PROMPT_VERSION: Final = "investigation-v9"
+PROMPT_VERSION: Final = "investigation-v10"
 
 # The label space of root causes the diagnosis may use. This is the generic
 # taxonomy, not the answer to any particular case.
@@ -119,6 +119,21 @@ confidence_level is a categorical judgement, not a probability. Use:
 """
 
 
+SUBMIT_DIAGNOSIS_DESCRIPTION: Final = (
+    "Submit the final, evidence-linked diagnosis. Call exactly once. The arguments are one "
+    "JSON object with exactly three top-level fields: diagnosis (an object), "
+    "proposed_action (an object or null) and needs_human_review (true or false). "
+    "Never put proposed_action or needs_human_review inside diagnosis, and never send an "
+    "object as a JSON-encoded string. Shape (IDs and values are placeholders): "
+    '{"diagnosis": {"root_cause_id": "<allowed root cause>", "affected_component": '
+    '"<failing service>", "confidence_level": "medium", "summary": "<explanation>", '
+    '"supporting_evidence_ids": ["ev_<32 hex>"], "evidence_notes": {"ev_<32 hex>": '
+    '"<what it shows>"}}, "proposed_action": {"action_type": "<listed action>", '
+    '"environment": "fault-lab", "target_id": "<service>", "arguments": {}, "reason": '
+    '"<why>", "evidence_ids": ["ev_<32 hex>"]}, "needs_human_review": false}'
+)
+
+
 def submit_diagnosis_tool() -> dict[str, Any]:
     """Schema-constrained final answer; incident_id is filled in by the harness."""
     schema = inline_refs(DiagnosisReport.model_json_schema())
@@ -126,7 +141,7 @@ def submit_diagnosis_tool() -> dict[str, Any]:
     schema["required"] = [r for r in schema.get("required", []) if r != "incident_id"]
     return {
         "name": "submit_diagnosis",
-        "description": "Submit the final, evidence-linked diagnosis. Call exactly once.",
+        "description": SUBMIT_DIAGNOSIS_DESCRIPTION,
         "input_schema": schema,
     }
 
