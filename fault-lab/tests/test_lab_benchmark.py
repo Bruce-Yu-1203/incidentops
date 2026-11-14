@@ -731,7 +731,14 @@ def test_pretrial_warm_up_waits_baseline_seconds() -> None:
         cast(Any, FakeApi()),
         "http://am",
         Timeouts(
-            quiet_s=1, baseline_s=1, detect_s=1, investigate_s=0, finish_s=1, probe_s=0, poll_s=0
+            quiet_s=1,
+            baseline_s=1,
+            detect_s=1,
+            investigate_s=0,
+            finish_s=1,
+            probe_s=0,
+            poll_s=0,
+            clean_history_s=0,
         ),
         sleep=slept.append,
         log=lambda _: None,
@@ -739,6 +746,27 @@ def test_pretrial_warm_up_waits_baseline_seconds() -> None:
     assert runner.run(B_F05, "warm")["status"] == "PASS"
     assert B_F05.preconditions["baseline_seconds"] in slept
     assert load_scenario("B-F04").preconditions["baseline_seconds"] >= 300
+
+
+def test_warm_up_keeps_the_history_window_clear_of_the_previous_trial() -> None:
+    # ADR-029: reads go back at most 5 min before the incident, so the warm-up
+    # lasts at least that long (plus margin) even when the case asks for less.
+    slept: list[float] = []
+    runner = TrialRunner(
+        cast(Any, FakeLab()),
+        cast(Any, FakeProm()),
+        cast(Any, FakeApi()),
+        "http://am",
+        Timeouts(
+            quiet_s=1, baseline_s=1, detect_s=1, investigate_s=0, finish_s=1, probe_s=0, poll_s=0
+        ),
+        sleep=slept.append,
+        log=lambda _: None,
+    )
+    assert B_F05.preconditions["baseline_seconds"] < Timeouts().clean_history_s
+    assert runner.run(B_F05, "clean")["status"] == "PASS"
+    assert Timeouts().clean_history_s in slept
+    assert Timeouts().clean_history_s >= 5 * 60 + 30
 
 
 def test_baseline_that_degrades_during_warm_up_is_invalid() -> None:

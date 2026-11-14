@@ -116,6 +116,9 @@ Anthropic-compatible provider, `INCIDENTOPS_ANTHROPIC_BASE_URL` in `.env`.
 thinking counts against it, so raise it (e.g. 8192) for thinking models.
 `INCIDENTOPS_MAX_REPAIR_ATTEMPTS` (default 3) is how often a model may resubmit
 a rejected diagnosis; the rules baseline keeps 1.
+`INCIDENTOPS_HISTORY_PRE_WINDOW_MINUTES` (default 5) limits how far before an
+incident the read tools look; the benchmark warms up for at least
+`BENCHMARK_CLEAN_HISTORY_S` (default 330) so trials never see each other.
 
 | Command | What it does |
 |---|---|

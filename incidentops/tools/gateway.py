@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import math
 from collections import Counter
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
@@ -82,6 +83,24 @@ class RunContext:
     max_tool_calls: int = DEFAULT_MAX_TOOL_CALLS
     calls_by_tool: Counter[str] = field(default_factory=Counter)
     total_calls: int = 0
+    # Windowed reads never start before this instant (ADR-029); None: no limit.
+    history_floor: datetime | None = None
+
+
+def _clamp_history(args: Any, floor: datetime | None, now: datetime) -> tuple[Any, int | None]:
+    """Shorten a windowed read so it starts no earlier than ``floor`` (ADR-029).
+
+    Back-to-back incidents (and benchmark trials) otherwise read each other's
+    faults out of a long look-back window. Returns the new arguments and the
+    clamped look-back in minutes, or None when nothing changed.
+    """
+    requested = getattr(args, "lookback_minutes", None)
+    if floor is None or not isinstance(requested, int):
+        return args, None
+    allowed = max(1, math.ceil((now - floor).total_seconds() / 60))
+    if requested <= allowed:
+        return args, None
+    return args.model_copy(update={"lookback_minutes": allowed}), allowed
 
 
 class ToolGateway:
@@ -209,6 +228,8 @@ class ToolGateway:
             ):
                 return fail(ToolStatus.DENIED, "environment_denied", "environment not allowed")
 
+        args, clamped_to = _clamp_history(args, ctx.history_floor, started)
+
         if ctx.total_calls >= ctx.max_tool_calls:
             return fail(ToolStatus.BUDGET_EXCEEDED, "run_budget_exceeded", "run tool budget used")
         if ctx.calls_by_tool[tool_name] >= spec.max_calls_per_run:
@@ -238,7 +259,13 @@ class ToolGateway:
                 window_start=output.window_start,
                 window_end=output.window_end,
                 observed_at=self._clock(),
-                summary=output.summary,
+                summary=output.summary
+                + (
+                    f" [window limited to the last {clamped_to} min: reads start shortly "
+                    "before this incident opened]"
+                    if clamped_to is not None
+                    else ""
+                ),
                 data=output.data,
             )
         )

@@ -16,7 +16,7 @@ import json
 import uuid
 from collections.abc import Callable
 from dataclasses import dataclass
-from datetime import timedelta
+from datetime import datetime, timedelta
 from typing import Any, Final
 
 from langgraph.checkpoint.base import BaseCheckpointSaver
@@ -200,6 +200,14 @@ class InvestigationRunner:
             ]
             return StartedRun(run_id, version, thread_id, summary, alerts)
 
+    def _history_floor(self, incident: dict[str, Any]) -> float | None:
+        """Earliest instant read tools may look at: shortly before the incident opened."""
+        minutes = self._budgets.history_pre_window_minutes
+        created = incident.get("created_at")
+        if minutes is None or not isinstance(created, str):
+            return None
+        return datetime.fromisoformat(created).timestamp() - minutes * 60
+
     async def run(self, incident_id: str) -> RunOutcome:
         started = self._start(incident_id)
         if started is None:
@@ -233,6 +241,7 @@ class InvestigationRunner:
             message,
             self._budgets,
             now_ms=self._clock_ms() if self._clock_ms else None,
+            history_floor_epoch_s=self._history_floor(started.incident_summary),
         )
         try:
             final: dict[str, Any] = await graph.ainvoke(

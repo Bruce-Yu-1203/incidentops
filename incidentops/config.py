@@ -67,6 +67,11 @@ class Settings(BaseSettings):
     # Providers sometimes drop or mangle tool arguments, so LLM runs get more
     # than one retry. The rules baseline never needs a repair and keeps 1.
     max_repair_attempts: int = Field(default=3, ge=0, le=10)
+    # Read tools look back at most this many minutes before the incident was
+    # opened (ADR-029); 0 disables the limit. Lab alerts fire within about two
+    # minutes of a fault, so five minutes shows the onset without reaching
+    # back into earlier, unrelated incidents.
+    history_pre_window_minutes: int = Field(default=5, ge=0, le=60)
     # Per-response output cap. Thinking models spend part of it on thinking,
     # so a small cap can cut off a tool call (e.g. submit_diagnosis) mid-way;
     # raise it for thinking models.

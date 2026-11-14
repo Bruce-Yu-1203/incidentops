@@ -150,6 +150,7 @@ def budgets_from(settings: Settings) -> Budgets:
         max_repair_attempts=Budgets.max_repair_attempts
         if baseline
         else settings.max_repair_attempts,
+        history_pre_window_minutes=settings.history_pre_window_minutes or None,
     )
 
 
