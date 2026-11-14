@@ -64,36 +64,3 @@ latest sample; first=0". The snapshot also stores `peak_at` and `latest_at`
 peak is visibly old, and a current one says "(the latest sample)". The
 `first=`, `last=` and `max=` tokens are kept, so the rules baseline reads
 the same values.
-
-### 3b. History reads start shortly before the incident
-
-Windowed read tools (metrics, logs, traces, consumer lag) never look back
-further than `INCIDENTOPS_HISTORY_PRE_WINDOW_MINUTES` (default **5**) before
-the incident was opened. The tool gateway shortens a longer requested
-`lookback_minutes` to that limit (at least 1 minute) and says so in the
-reading ("window limited to the last N min ..."). The stored evidence records
-the look-back actually used. Setting the value to 0 disables the limit.
-
-Why 5 minutes: lab alerts fire within about two minutes of a fault (the
-longest time to detection measured in the 2026-11-13/14 runs was about 80
-s), so the onset stays visible. A longer window reaches back into earlier,
-unrelated incidents, which is what misled the agent in both runs.
-Deployment and configuration history are not windowed and are unaffected.
-The chat agent is not limited either: it answers questions about an
-incident at any later time.
-
-In the benchmark, the runner keeps the lab healthy for at least
-`clean_history_s` (default 330 s = 5 min + 30 s margin) before each injection,
-even when a case's `baseline_seconds` is shorter. A 5-minute window can then
-never contain the previous trial's fault. This lengthens each trial by about
-4.5 minutes (a 14x5 run takes about five hours longer).
-`--clean-history` / `BENCHMARK_CLEAN_HISTORY_S` overrides it; it must stay at
-or above the pre-window.
-
-## Consequences
-
-- Policy `p7`, prompt `investigation-v11`. Grading and ground truth are
-  unchanged.
-- No-fault and back-to-back trials no longer see earlier faults. The agent
-  can no longer see slow trends that started more than 5 minutes before an
-  incident; raise the pre-window if that matters more than isolation.

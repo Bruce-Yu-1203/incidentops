@@ -37,11 +37,6 @@ IN_PROGRESS = {"RECEIVED", "TRIAGED", "INVESTIGATING", "DIAGNOSED"}
 class Timeouts:
     quiet_s: float = 300
     baseline_s: float = 180
-    # Minimum healthy warm-up before injection (ADR-029). Investigations read
-    # at most INCIDENTOPS_HISTORY_PRE_WINDOW_MINUTES (default 5) before the
-    # incident opens; 330 s keeps that window clear of the previous trial's
-    # fault, with 30 s margin.
-    clean_history_s: float = 330
     detect_s: float = 240
     investigate_s: float = 420
     finish_s: float = 480
@@ -157,9 +152,7 @@ class TrialRunner:
         # Warm-up: keep the healthy baseline for ``baseline_seconds`` so that
         # look-back windows of the next investigation do not still contain the
         # previous trial's fault (B-F04 lost 3 trials to an old memory peak).
-        warmup = max(
-            float(manifest.preconditions.get("baseline_seconds", 0)), self._t.clean_history_s
-        )
+        warmup = float(manifest.preconditions.get("baseline_seconds", 0))
         if warmup > 0:
             self._sleep(warmup)
             if not all(v is True for v in self._probes(manifest).values()):

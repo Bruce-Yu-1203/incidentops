@@ -22,7 +22,7 @@ import httpx
 
 from fault_lab.benchmark.clients import IncidentOpsApi, LabFaults, Prometheus
 from fault_lab.benchmark.report import write_report
-from fault_lab.benchmark.runner import Timeouts, TrialRunner
+from fault_lab.benchmark.runner import TrialRunner
 from fault_lab.scenarios import all_scenarios, load_scenario
 from fault_lab.scripts.labctl import LabEndpoints
 
@@ -56,7 +56,6 @@ def _run(args: argparse.Namespace) -> int:
             Prometheus(client, args.prometheus),
             api,
             args.alertmanager,
-            Timeouts(clean_history_s=args.clean_history),
         )
         counts: dict[str, int] = {}
         for manifest in schedule:
@@ -78,7 +77,6 @@ def _run(args: argparse.Namespace) -> int:
         "cases": sorted({m.case_id for m in manifests}),
         "trials_per_case": args.trials,
         "order_seed": args.seed,
-        "clean_history_s": args.clean_history,
         "scenario_versions": {m.case_id: m.case_version for m in manifests},
     }
     path = write_report(trials, metadata, out_dir)
@@ -108,13 +106,6 @@ def main(argv: list[str] | None = None) -> int:
     )
     run.add_argument("--prometheus", default="http://127.0.0.1:9090")
     run.add_argument("--alertmanager", default="http://127.0.0.1:9093")
-    run.add_argument(
-        "--clean-history",
-        type=float,
-        default=float(os.environ.get("BENCHMARK_CLEAN_HISTORY_S", Timeouts().clean_history_s)),
-        help="minimum healthy warm-up in seconds before each injection, so the "
-        "investigation's history window holds no earlier trial (env BENCHMARK_CLEAN_HISTORY_S)",
-    )
     report = sub.add_parser("report")
     report.add_argument("--input", required=True)
     args = parser.parse_args(argv)

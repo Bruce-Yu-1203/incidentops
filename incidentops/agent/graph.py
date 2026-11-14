@@ -15,7 +15,6 @@ import json
 import time
 from collections.abc import Callable
 from dataclasses import dataclass
-from datetime import UTC, datetime
 from typing import Any, Literal, TypedDict
 
 from langgraph.checkpoint.base import BaseCheckpointSaver
@@ -52,8 +51,6 @@ class InvestigationState(TypedDict):
     argument_coercions: int
     # Top-level report fields found inside diagnosis and moved up (ADR-028 C).
     field_lifts: int
-    # Read tools never look back before this instant (ADR-029); None: no limit.
-    history_floor_epoch_s: float | None
     deadline_epoch_ms: int
     repair_attempts: int
     report: dict[str, Any] | None
@@ -68,9 +65,6 @@ class Budgets:
     max_tool_calls: int = 40
     wall_clock_seconds: int = 300
     max_repair_attempts: int = 1
-    # Read tools' windows start at most this many minutes before the incident
-    # was opened (ADR-029); None: no limit.
-    history_pre_window_minutes: int | None = None
 
 
 def initial_state(
@@ -80,7 +74,6 @@ def initial_state(
     first_message: dict[str, Any],
     budgets: Budgets,
     now_ms: int | None = None,
-    history_floor_epoch_s: float | None = None,
 ) -> InvestigationState:
     start_ms = now_ms if now_ms is not None else int(time.time() * 1000)
     return InvestigationState(
@@ -98,7 +91,6 @@ def initial_state(
         cache_creation_input_tokens=0,
         argument_coercions=0,
         field_lifts=0,
-        history_floor_epoch_s=history_floor_epoch_s,
         deadline_epoch_ms=start_ms + budgets.wall_clock_seconds * 1000,
         repair_attempts=0,
         report=None,
@@ -225,12 +217,10 @@ def build_graph(
         # Budget counters are rebuilt from the checkpointed state on resume.
         ctx = contexts.get(state["run_id"])
         if ctx is None:
-            floor = state.get("history_floor_epoch_s")
             ctx = RunContext(
                 incident_id=state["incident_id"],
                 run_id=state["run_id"],
                 max_tool_calls=budgets.max_tool_calls,
-                history_floor=None if floor is None else datetime.fromtimestamp(floor, UTC),
             )
             ctx.total_calls = state["tool_call_count"]
             contexts[state["run_id"]] = ctx
