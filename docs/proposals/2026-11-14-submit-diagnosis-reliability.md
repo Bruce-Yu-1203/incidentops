@@ -34,6 +34,22 @@ the long arguments the model generated (e.g. an unescaped character in
 `summary`) and drops them. We cannot confirm this through the
 Anthropic-compatible endpoint, because it never returns the raw text.
 
+Two causes from DeepSeek's documentation were checked against the 57 empty
+submissions (2026-11-14):
+
+- **Invalid JSON replaced by empty content.** DeepSeek documents this for
+  JSON Output mode (`response_format: json_object`): when the model's output
+  is not valid JSON, the API blanks the content and still reports a normal
+  finish reason. We do not use that mode, but the behaviour matches: 55 of
+  the 57 had `stop_reason: tool_use` and 1,228-7,549 output tokens, yet
+  arrived as `{}`. The model also produced broken JSON visibly in 9
+  string-encoded submissions. This is the most likely main cause; option E
+  would confirm it.
+- **Truncation by `max_tokens`.** Only 2 of the 57 stopped at the 8,192-token
+  cap. Raising the cap would cover those two. A client timeout raises an
+  error in our adapter and cannot produce an empty `{}`, so timeouts are
+  ruled out.
+
 ## Why the schema invites mistakes
 
 The tool the model sees has a one-line description ("Submit the final,
