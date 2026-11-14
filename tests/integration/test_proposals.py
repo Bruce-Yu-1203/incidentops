@@ -58,7 +58,7 @@ async def test_valid_proposal_opens_approval_with_frozen_envelope(
         "PENDING",
         "AWAITING_APPROVAL",
     )
-    assert (policy_audit.decision, policy_audit.policy_version) == ("REQUIRES_APPROVAL", "p5")
+    assert (policy_audit.decision, policy_audit.policy_version) == ("REQUIRES_APPROVAL", "p6")
 
 
 async def test_production_proposal_is_denied(session_factory: sessionmaker[Session]) -> None:
@@ -188,3 +188,81 @@ async def test_second_action_on_same_target_is_denied_while_first_is_active(
         assert session.get_one(ActionProposalRow, second.action_id).reason_code == (
             "duplicate_active_action"
         )
+
+
+def _lock_release_diagnosis(
+    factory: sessionmaker[Session], diagnosis_id: str, lock_peak: float
+) -> None:
+    """Turn the stored diagnosis into a lock-release proposal citing lock evidence."""
+    import json
+    from datetime import UTC, datetime
+
+    from incidentops.domain.ids import new_id
+    from incidentops.persistence.models import EvidenceRow
+
+    with factory.begin() as session:
+        diagnosis = session.get_one(DiagnosisRow, diagnosis_id)
+        evidence_id = new_id("ev")
+        now = datetime.now(UTC)
+        session.add(
+            EvidenceRow(
+                id=evidence_id,
+                incident_id=session.get_one(InvestigationRunRow, diagnosis.run_id).incident_id,
+                run_id=diagnosis.run_id,
+                source="prometheus",
+                query_ref={
+                    "template_id": "postgres_exclusive_locks",
+                    "parameters": {"service_id": "lab-postgres", "lookback_minutes": 30},
+                },
+                window_start=now,
+                window_end=now,
+                observed_at=now,
+                digest="sha256:" + "0" * 64,
+                summary=f"Held or awaited ACCESS EXCLUSIVE locks: max={lock_peak}",
+                snapshot=json.dumps([{"labels": {}, "max": lock_peak, "last": lock_peak}]),
+            )
+        )
+        report = dict(diagnosis.report)
+        report["diagnosis"] = {
+            **report["diagnosis"],
+            "root_cause_id": "postgres_lock_contention",
+            "affected_component": "lab-postgres",
+            "supporting_evidence_ids": [evidence_id],
+            "evidence_notes": {},
+        }
+        report["proposed_action"] = {
+            "action_type": "release_lab_db_blocker",
+            "environment": "fault-lab",
+            "target_id": "lab-postgres",
+            "arguments": {},
+            "reason": "Release the blocking lab transaction.",
+            "evidence_ids": [evidence_id],
+        }
+        diagnosis.report = report
+
+
+@pytest.mark.parametrize(
+    ("lock_peak", "decision", "reason_code"),
+    [
+        (1.0, Decision.REQUIRES_APPROVAL, "approval_required"),
+        # B-F07/B-F13/B-N01 in the 2026-11-13 run: no lock, release was executed anyway.
+        (0.0, Decision.DENY, "required_evidence_missing"),
+    ],
+)
+async def test_lock_release_needs_cited_lock_evidence(
+    session_factory: sessionmaker[Session],
+    lock_peak: float,
+    decision: Decision,
+    reason_code: str,
+) -> None:
+    incident_id, diagnosis_id = await diagnosed_incident(session_factory)
+    _lock_release_diagnosis(session_factory, diagnosis_id, lock_peak)
+    outcome = await _evaluator(session_factory, FakeInspector("pg-gen-1")).evaluate(
+        incident_id, diagnosis_id
+    )
+    assert outcome.decision is decision
+    with session_factory() as session:
+        policy_audit = session.scalars(
+            select(AuditEventRow).where(AuditEventRow.event_type == "policy_evaluated")
+        ).one()
+    assert policy_audit.reason == reason_code

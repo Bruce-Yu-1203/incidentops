@@ -11,7 +11,7 @@ from __future__ import annotations
 from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime, timedelta
-from typing import Final
+from typing import Any, Final
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session, sessionmaker
@@ -26,10 +26,12 @@ from incidentops.persistence.models import (
     ApprovalRequestRow,
     AuditEventRow,
     DiagnosisRow,
+    EvidenceRow,
     IncidentRow,
 )
 from incidentops.persistence.transitions import AuditSpec, transition
 from incidentops.policy.engine import Decision, PolicyEngine, PolicyRequest, ReasonCode
+from incidentops.policy.evidence_facts import CitedEvidence, facts_for_target
 from incidentops.time import utcnow
 
 ACTOR: Final = "service:proposal-evaluator"
@@ -78,6 +80,31 @@ class ProposalEvaluator:
                 is not None
             )
 
+    def _cited_evidence(self, run_id: str, evidence_ids: set[str]) -> list[CitedEvidence]:
+        """The run's own evidence rows the diagnosis cites (others are ignored)."""
+        if not evidence_ids:
+            return []
+        with self._factory() as session:
+            rows = session.scalars(
+                select(EvidenceRow).where(
+                    EvidenceRow.run_id == run_id, EvidenceRow.id.in_(sorted(evidence_ids))
+                )
+            ).all()
+        cited: list[CitedEvidence] = []
+        for row in rows:
+            ref: dict[str, Any] = row.query_ref if isinstance(row.query_ref, dict) else {}
+            raw_params = ref.get("parameters")
+            params: dict[str, Any] = raw_params if isinstance(raw_params, dict) else {}
+            service = params.get("service_id")
+            cited.append(
+                CitedEvidence(
+                    str(ref.get("template_id", "")),
+                    service if isinstance(service, str) else None,
+                    row.snapshot,
+                )
+            )
+        return cited
+
     async def evaluate(self, incident_id: str, diagnosis_id: str) -> EvaluationOutcome:
         with self._factory() as session:
             diagnosis = session.get(DiagnosisRow, diagnosis_id)
@@ -106,6 +133,15 @@ class ProposalEvaluator:
                 target_revision=revision,
                 root_cause_id=report.diagnosis.root_cause_id,
                 confidence_level=report.diagnosis.confidence_level.value,
+                evidence_facts=facts_for_target(
+                    # Supporting and action evidence only: contradicting evidence
+                    # must never satisfy a precondition.
+                    self._cited_evidence(
+                        diagnosis.run_id,
+                        {*report.diagnosis.supporting_evidence_ids, *draft.evidence_ids},
+                    ),
+                    draft.target_id,
+                ),
             )
         )
         if decision.decision is Decision.REQUIRES_APPROVAL and self._has_active_action(

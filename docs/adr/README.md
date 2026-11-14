@@ -26,3 +26,4 @@ it with a new ADR that supersedes the old one.
 | [ADR-024](ADR-024-root-cause-coverage.md) | Root-cause/action consistency and expanded root-cause coverage | Accepted |
 | [ADR-025](ADR-025-tool-descriptions-prompt-confidence.md) | Tool descriptions, investigation method and confidence rules | Accepted |
 | [ADR-026](ADR-026-benchmark-grading-2-1.md) | Benchmark grading 2.1: stricter gates and secondary metrics | Accepted |
+| [ADR-027](ADR-027-evidence-preconditions-and-abstention.md) | Evidence preconditions for database releases, and no-fault abstention | Accepted |

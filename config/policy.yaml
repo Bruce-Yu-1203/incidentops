@@ -3,7 +3,7 @@
 # Write operations can only be DENY or REQUIRES_APPROVAL: the MVP never
 # executes a mutation without a human approval.
 schema_version: 1
-policy_version: p5
+policy_version: p6
 approval_ttl_seconds: 900
 require_separation_of_duties: true
 # A diagnosis below this confidence never leads to an approval request
@@ -23,6 +23,9 @@ rules:
     risk_class: low
     # The exact blocker is the target revision (its fixture token), not an argument.
     allowed_arguments: {}
+    # ADR-027: only when the cited evidence shows an ACCESS EXCLUSIVE lock on the
+    # target. Without one there is nothing to release.
+    required_evidence: [postgres_exclusive_lock_present]
   - action_type: restart_lab_dependency
     environments: [fault-lab]
     decision: REQUIRES_APPROVAL
@@ -54,6 +57,8 @@ rules:
     decision: REQUIRES_APPROVAL
     risk_class: low
     allowed_arguments: {}
+    # ADR-027: only when the cited evidence shows connections near max_connections.
+    required_evidence: [postgres_connections_near_limit]
   # Only the pinned last-known-good configuration; never an arbitrary one.
   - action_type: revert_lab_config
     environments: [fault-lab]

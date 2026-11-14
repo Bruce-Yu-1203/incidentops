@@ -18,6 +18,7 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from incidentops.domain.catalog import ServiceCatalog
 from incidentops.domain.schemas import ArgumentValue, Environment, TypeId
+from incidentops.policy.evidence_facts import KNOWN_FACTS
 
 DEFAULT_POLICY_PATH = Path(__file__).resolve().parents[2] / "config" / "policy.yaml"
 
@@ -40,6 +41,7 @@ class ReasonCode(StrEnum):
     DUPLICATE_ACTIVE_ACTION = "duplicate_active_action"
     ACTION_NOT_ALLOWED_FOR_ROOT_CAUSE = "action_not_allowed_for_root_cause"
     CONFIDENCE_BELOW_MINIMUM = "confidence_below_minimum"
+    REQUIRED_EVIDENCE_MISSING = "required_evidence_missing"
 
 
 _CONFIDENCE_RANK: Final = {"low": 0, "medium": 1, "high": 2}
@@ -53,11 +55,18 @@ class PolicyRule(BaseModel):
     decision: Literal[Decision.DENY, Decision.REQUIRES_APPROVAL]
     risk_class: Literal["low", "medium", "high"]
     allowed_arguments: dict[TypeId, tuple[ArgumentValue, ...]] = Field(default_factory=dict)
+    # Facts the diagnosis' cited evidence must show about the target before the
+    # action may be proposed (ADR-027), e.g. an exclusive lock for releasing a
+    # lock blocker. Names come from incidentops.policy.evidence_facts.
+    required_evidence: tuple[TypeId, ...] = ()
 
     @model_validator(mode="after")
     def _never_production(self) -> Self:
         if Environment.PRODUCTION in self.environments:
             raise ValueError(f"{self.action_type}: production remediation is not supported")
+        unknown = set(self.required_evidence) - KNOWN_FACTS
+        if unknown:
+            raise ValueError(f"{self.action_type}: unknown evidence facts {sorted(unknown)}")
         return self
 
 
@@ -117,6 +126,10 @@ class PolicyRequest(BaseModel):
     # The diagnosis' confidence_level; None on the executor's re-check, for the
     # same reason as root_cause_id.
     confidence_level: str | None = None
+    # Facts derived from the diagnosis' cited evidence about the target
+    # (ADR-027); None on the executor's re-check, for the same reason as
+    # root_cause_id.
+    evidence_facts: frozenset[str] | None = None
 
 
 class PolicyDecision(BaseModel):
@@ -169,6 +182,10 @@ class PolicyEngine:
         ):
             # Unknown levels rank below everything (fail closed).
             return self._deny(ReasonCode.CONFIDENCE_BELOW_MINIMUM)
+        if request.evidence_facts is not None and not set(rule.required_evidence) <= (
+            request.evidence_facts
+        ):
+            return self._deny(ReasonCode.REQUIRED_EVIDENCE_MISSING)
         if not self._catalog.allows_action(request.target_id, request.action_type):
             return self._deny(ReasonCode.TARGET_NOT_ALLOWLISTED)
         target = self._catalog.get(request.target_id)

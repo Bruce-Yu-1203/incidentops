@@ -39,7 +39,7 @@ def test_resume_requires_human_approval() -> None:
     decision = _engine().evaluate(_request())
     assert decision.decision is Decision.REQUIRES_APPROVAL
     assert decision.reason_code is ReasonCode.APPROVAL_REQUIRED
-    assert decision.policy_version == "p5"
+    assert decision.policy_version == "p6"
     assert decision.risk_class == "low"
 
 

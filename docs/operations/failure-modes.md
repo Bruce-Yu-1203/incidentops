@@ -72,7 +72,7 @@ stateDiagram-v2
 
 | `reason_code` | Where | Meaning |
 |---|---|---|
-| `arguments_not_allowed`, `production_disabled`, `target_not_allowlisted`, `unknown_operation`, `environment_not_allowed`, `missing_target_revision`, `policy_error`, `duplicate_active_action` (another action on the same target is already in flight), `action_not_allowed_for_root_cause` (the action type does not remediate the diagnosed root cause, ADR-024), `confidence_below_minimum` (the diagnosis confidence is below the policy minimum, ADR-025) | `POLICY_DENIED` | Deterministic policy refused the proposal (fail closed) |
+| `arguments_not_allowed`, `production_disabled`, `target_not_allowlisted`, `unknown_operation`, `environment_not_allowed`, `missing_target_revision`, `policy_error`, `duplicate_active_action` (another action on the same target is already in flight), `action_not_allowed_for_root_cause` (the action type does not remediate the diagnosed root cause, ADR-024), `confidence_below_minimum` (the diagnosis confidence is below the policy minimum, ADR-025), `required_evidence_missing` (the cited evidence does not show the condition the action fixes, e.g. no exclusive lock for `release_lab_db_blocker`, ADR-027) | `POLICY_DENIED` | Deterministic policy refused the proposal (fail closed) |
 | `approval_rejected` / `approval_expired` | `REJECTED` / `EXPIRED` | Human decision or TTL |
 | `approval_not_valid` | `FAILED` before dispatch | The approval was missing or no longer `APPROVED` |
 | `action_hash_mismatch` | `FAILED` before dispatch | The stored envelope no longer matches the approved hash (tampering) |
