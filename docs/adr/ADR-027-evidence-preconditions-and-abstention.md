@@ -1,7 +1,7 @@
 # ADR-027: Evidence preconditions for database releases, and no-fault abstention
 
 - **Status:** Accepted
-- **Relates to:** ADR-024, ADR-025, ADR-026; policy `p6`
+- **Relates to:** ADR-024, ADR-025, ADR-026; policy `p6`; prompt `investigation-v9`
 
 ## Context
 
@@ -55,6 +55,17 @@ Replaying the run's 18 release proposals against their stored evidence: the
 four wrong executions above are denied, and all nine releases that succeeded
 are still allowed. The rules baseline cites `postgres_health` and proposes the
 idle-connection release only at >= 0.9 utilization, so it is unaffected.
+
+### 2. No-fault abstention (prompt investigation-v9)
+
+All five B-N01 (no fault) trials named a root cause, three of them with
+high confidence. The prompt now says explicitly that `insufficient_evidence`
+is the expected answer when no causal signal is confirmed. That covers an
+alert whose symptom has resolved or is within normal noise, and services,
+changes and dependencies that all look healthy. A root cause and any proposed
+action require a confirmed, current causal signal, and `high` confidence
+requires explicit confirming evidence for the mechanism. No scenario data is
+added to the prompt.
 
 ## Consequences
 

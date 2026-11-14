@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import re
 from typing import Any
 
 import pytest
@@ -415,6 +416,25 @@ def test_prompt_has_rules_method_and_confidence_sections() -> None:
     assert "1." not in method
     rubric = SYSTEM_PROMPT.split("<confidence_rubric>")[1].split("</confidence_rubric>")[0]
     assert all(f"- {level}:" in rubric for level in ("high", "medium", "low"))
+
+
+def test_prompt_expects_abstention_when_no_fault_is_confirmed() -> None:
+    # 2026-11-13: deepseek-flash named a root cause in 5/5 no-fault trials.
+    section = SYSTEM_PROMPT.split("<when_no_fault_is_confirmed>")[1].split(
+        "</when_no_fault_is_confirmed>"
+    )[0]
+    assert '"insufficient_evidence" is a\ncorrect answer in its own right' in section
+    assert "confidence low, no\nproposed_action and needs_human_review=true" in section
+    assert "already-resolved peak" in section
+    assert "still present" in section
+    rubric = SYSTEM_PROMPT.split("<confidence_rubric>")[1]
+    assert "direct, current evidence of the mechanism" in rubric
+
+
+def test_prompt_names_no_benchmark_case_or_scenario() -> None:
+    assert not re.search(r"\bB-[FN]\d\d\b", SYSTEM_PROMPT)
+    for scenario in ("transient_error_noise", "kafka_consumer_paused", "fault-lab/scenarios"):
+        assert scenario not in SYSTEM_PROMPT
 
 
 async def test_three_repair_attempts_allow_a_late_valid_submission() -> None:

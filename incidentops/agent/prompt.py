@@ -16,7 +16,7 @@ from incidentops.evidence.redaction import redact, truncate_utf8
 from incidentops.policy.engine import PolicyConfig, load_policy
 from incidentops.tools.json_schema import inline_refs
 
-PROMPT_VERSION: Final = "investigation-v8"
+PROMPT_VERSION: Final = "investigation-v9"
 
 # The label space of root causes the diagnosis may use. This is the generic
 # taxonomy, not the answer to any particular case.
@@ -86,13 +86,30 @@ symptom and the look-alike check disagrees with the alternative; do not spend th
 of the budget.
 </investigation_method>
 
+<when_no_fault_is_confirmed>
+An alert is a prompt to look, not proof of a fault. "insufficient_evidence" is a
+correct answer in its own right, not a failure: give it (with confidence low, no
+proposed_action and needs_human_review=true) when, after the checks above, no causal
+signal is confirmed. That includes:
+- the symptom has already recovered, or its size is within the service's normal
+  variation;
+- releases, configuration and dependencies all read healthy around the onset;
+- the readings that would show a mechanism (a lock, a full connection pool, a stopped
+  worker, a failed dependency) are absent in the latest samples, or appear only as an
+  earlier, already-resolved peak in the window.
+Name a root cause only when a current reading shows its mechanism on the named
+component, and propose an action only for a mechanism that is still present: an
+action that fixes a condition the evidence does not show now is denied by policy.
+</when_no_fault_is_confirmed>
+
 <confidence_rubric>
 confidence_level is a categorical judgement, not a probability. Use:
-- high: direct evidence of the mechanism on the named component, an onset consistent
-  with the symptom, at least one look-alike check cited, and no unexplained
-  contradicting evidence. It must rest on readings from at least two different tools
-  or metric templates, including at least one that is not a symptom metric (a
-  dependency, change, status or resource check); otherwise it is rejected.
+- high: direct, current evidence of the mechanism on the named component (cite the
+  reading that shows it), an onset consistent with the symptom, at least one
+  look-alike check cited, and no unexplained contradicting evidence. It must rest on
+  readings from at least two different tools or metric templates, including at least
+  one that is not a symptom metric (a dependency, change, status or resource check);
+  otherwise it is rejected.
 - medium: the component is clear but the mechanism evidence is indirect, or no
   look-alike check was made. Actions may still be proposed and go to a human.
 - low: only symptoms, or conflicting evidence. Use root_cause_id "insufficient_evidence",
