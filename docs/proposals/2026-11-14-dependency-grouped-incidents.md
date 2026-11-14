@@ -90,25 +90,60 @@ they are) and add an **incident group** on top, instead of merging rows.
 3. **Primary incident:** the most upstream member of the group. When a more
    upstream incident joins later (e.g. lab-api alerts before lab-postgres),
    it becomes the primary.
-4. **Settle before investigating:** the investigation job for a new group
-   waits a short settle time (**60 s**) so related alerts can join, like
-   Alertmanager's `group_wait`. Only the **primary** is investigated. Its
-   prompt lists the other group members and their alerts as context, which
-   tells it which services are failing downstream.
-5. **Members follow the primary:** non-primary incidents get the state
+4. **Settle before investigating, only where it helps:** a new incident on a
+   service that has `depends_on` waits a short settle time (**60 s**) before
+   its investigation starts, so a more upstream incident can join first,
+   like Alertmanager's `group_wait`. The most upstream services (lab-postgres,
+   lab-redis, lab-kafka: no `depends_on`) are investigated immediately. Only
+   the **primary** is investigated. Its prompt lists the other group members
+   and their alerts as context, which tells it which services are failing
+   downstream.
+5. **Late upstream member:** if a more upstream incident joins after the old
+   primary's investigation has started, that run is not interrupted. The new
+   upstream incident becomes the primary and is investigated. The old run
+   finishes, is kept as context for the new primary, and may not propose an
+   action.
+6. **Members follow the primary:** non-primary incidents get the state
    `GROUPED` (a new state that points to the primary). They get no
-   investigation and no proposal of their own. When the primary is
-   resolved, the verifier also checks the members' alerts. Members still
-   firing afterwards are split out and investigated on their own.
-6. **Console and chat:** one card per group showing the primary and its
+   investigation and no proposal of their own, and they follow the primary
+   into `ESCALATED` when it is handed to a human.
+7. **Console and chat:** one card per group showing the primary and its
    members; a member's page links to the primary.
+
+### Guards against wrong grouping
+
+| Guard | Rule |
+|---|---|
+| G1 Join window | An incident joins a group only if a related service has an **active** incident opened within the last **3 minutes**. Resolved or older incidents never attract new members. |
+| G2 Symptom class | Alert rules get a label `symptom_class`: `dependency` for symptoms a failing dependency produces (error ratio, latency, consumer lag, slow processing), and `intrinsic` for symptoms that start in the service itself (memory growth, high CPU, request-rate surge). An incident opened by an `intrinsic` alert never becomes a non-primary member; it starts its own group or is the primary. |
+| G3 Unexplained members | The primary's diagnosis may list members it cannot explain. Those are split out immediately and investigated on their own. |
+| G4 Verifier split | When the primary is resolved, the verifier also checks the members' alerts. Members still firing are split out and investigated on their own. |
+| G5 Manual ungroup | A human can remove a member from a group in the console; it is then investigated on its own. |
+
+### Approvals, locking and audit
+
+- **Approvals stay valid:** the approval hash covers the action envelope,
+  not the member list. A member joining after a proposal was made never
+  invalidates the approval.
+- **Serialized grouping:** grouping, joining and re-primarying run in the
+  ingestion transaction under a per-environment advisory lock, so two alerts
+  arriving at once cannot form two groups for one fault. Today's dedup row
+  locks stay as they are.
+- **Audit:** every join, primary change and split is an audit event with the
+  reason (window, guard, verifier or human).
+
+### Why not Alertmanager `inhibit_rules`
+
+Alertmanager can suppress downstream alerts while an upstream one fires. We
+do not use it: inhibited alerts never reach IncidentOps. G4 could then not
+check whether a downstream service recovered, and the audit trail would lose
+the downstream symptoms. Grouping keeps every alert and decides in one
+place.
 
 ### Data model
 
 `incidents.group_id` (nullable) and `incident_groups(id, primary_incident_id,
-opened_at, window_ends_at)`, plus a migration. Grouping and re-primarying
-happen in the ingestion transaction, under the same row locks as today's
-dedup.
+opened_at, window_ends_at)`, plus a migration.
 
 ## Effect and risks
 
@@ -116,23 +151,36 @@ dedup.
   repairs). No duplicate proposals, and no conflicting diagnoses across
   members of one fault. B-F02, B-F09 and B-F12 become one diagnosis each.
 - **Risk: two unrelated faults in related services within 3 minutes** get
-  grouped. Mitigation: a member that keeps firing after the primary
-  recovers is split out (step 5), and a human can ungroup in the console.
-- **Risk: delay.** Detection to diagnosis gets about 60 s longer (the settle
-  time). In r2, diagnosis took a median of 47 s after the incident opened.
-- **Benchmark grading:** grading 2.1 looks at every incident of a trial. With
-  grouping, members have no diagnosis of their own, so grading must judge
-  the group by its primary's diagnosis. That is a grading change and needs
-  your approval and a new grading version (2.2), so it is not comparable 1:1
-  with r1/r2.
+  grouped. Mitigations: G2 keeps intrinsic symptoms out, G3 and G4 split out
+  what the primary does not explain or fix, and G5 lets a human ungroup.
+- **Risk: delay.** Diagnosis of dependent services starts up to 60 s later
+  (the settle time). The most upstream services are not delayed. In r2,
+  diagnosis took a median of 47 s after the incident opened.
+
+## Benchmark
+
+- **Storm cases already exist:** B-F02, B-F09 and B-F12 each open 2-3
+  incidents from one fault. They should become one group with one diagnosis.
+- **New B-F14 (two faults, one group, then a split):** PostgreSQL refuses
+  connections and a bad API release (as in B-F05) goes out at the same time.
+  Expected: lab-api first joins the PostgreSQL group, then G4 (or G3) splits
+  lab-api off and it is diagnosed as a bad deployment and rolled back.
+- **New B-N03 (two faults, two groups):** PostgreSQL goes down while lab-api
+  has a memory leak (as in B-F04). Expected: two separate groups, because the
+  leak alert is `intrinsic` (tests G2).
+- **Grading 2.2:** a trial is judged by each group's primary diagnosis. A wrong
+  merge that is never split out is a FAIL; a missed merge (two groups for one
+  fault) is only a secondary-metric penalty. That is a grading change, needs
+  your approval, and is not comparable 1:1 with r1/r2.
 
 ## Effort and phases
 
 | Phase | What | Effort |
 |---|---|---|
-| 1 | Catalog `depends_on`/`co_located_with` and validation; the investigation prompt lists related open incidents and the dependency edges as context (no change to incident lifecycle) | about half a day |
-| 2 | Incident groups, primary selection, settle time, `GROUPED` state, only the primary investigated, verifier follow-up, migration | about 1.5 days |
-| 3 | Console group cards, manual ungroup, grading 2.2 (judge groups by the primary) | about 1 day |
+| 1 | Catalog `depends_on`/`co_located_with` and validation; `symptom_class` labels on alert rules; the investigation prompt lists related open incidents and the dependency edges as context (no change to incident lifecycle) | about half a day |
+| 2 | Incident groups, primary selection, settle time, `GROUPED` state, guards G1-G4, advisory lock, audit events, migration | about 1.5 days |
+| 3 | Console group cards, manual ungroup (G5) | about 1 day |
+| 4 | Scenarios B-F14 and B-N03, grading 2.2 (judge groups by the primary) | about 1 day, plus run time |
 
 Each phase gets its own ADR section, tests and `make check`.
 
@@ -147,4 +195,6 @@ Each phase gets its own ADR section, tests and `make check`.
   2. Group (keep incidents, add a primary) as proposed, or hard-merge into one
      incident?
   3. Grouping window 3 minutes and settle time 60 s: OK as lab values?
-  4. Grading 2.2 for grouped incidents (phase 3): yes or no.
+  4. G2 `symptom_class` labels on the alert rules: yes or no.
+  5. Alertmanager `inhibit_rules`: not used (recommended no).
+  6. Scenarios B-F14/B-N03 and grading 2.2 (phase 4): yes or no.
