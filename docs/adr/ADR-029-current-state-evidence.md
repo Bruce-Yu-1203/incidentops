@@ -64,3 +64,21 @@ latest sample; first=0". The snapshot also stores `peak_at` and `latest_at`
 peak is visibly old, and a current one says "(the latest sample)". The
 `first=`, `last=` and `max=` tokens are kept, so the rules baseline reads
 the same values.
+
+### 3b. Deferred: history reads limited to shortly before the incident
+
+Follow-up 3b was implemented in `170b4d5` and reverted in `949097d` at the
+owner's request; it is deferred. It would have clamped windowed reads to
+start at most a few minutes before the incident opened, plus a longer
+benchmark warm-up (about 4.5 minutes per trial). Earlier faults can therefore
+still appear in an investigation's look-back window. Policy p6/p7 and the
+current-value summaries (3c) limit the damage: a stale peak is visibly old,
+and releases and restarts need current evidence.
+
+## Consequences
+
+- Policy `p7`, prompt `investigation-v11`. Grading and ground truth are
+  unchanged.
+- The benchmark's back-to-back trials can still see the previous trial's
+  fault in long look-back windows (a known threat to validity until 3b is
+  revisited).

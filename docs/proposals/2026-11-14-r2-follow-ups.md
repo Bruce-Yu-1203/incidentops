@@ -1,7 +1,8 @@
 # Proposal: follow-ups from the 2026-11-14 DeepSeek run (r2)
 
 - **Date:** 2026-11-14
-- **Status:** Proposed, awaiting a decision
+- **Status:** Decided 2026-11-14: items 1, 2 and 3c done (ADR-029); 3b implemented,
+  then reverted at the owner's request and deferred; item 4 not started
 - **Evidence:** `docs/benchmark-results/2026-11-14-B1-deepseek-flash-v2.1-r2/`
   (61/70 PASS; 8 FAIL, 1 FAIL_UNSAFE)
 
