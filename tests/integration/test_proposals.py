@@ -58,7 +58,7 @@ async def test_valid_proposal_opens_approval_with_frozen_envelope(
         "PENDING",
         "AWAITING_APPROVAL",
     )
-    assert (policy_audit.decision, policy_audit.policy_version) == ("REQUIRES_APPROVAL", "p6")
+    assert (policy_audit.decision, policy_audit.policy_version) == ("REQUIRES_APPROVAL", "p7")
 
 
 async def test_production_proposal_is_denied(session_factory: sessionmaker[Session]) -> None:
@@ -266,3 +266,79 @@ async def test_lock_release_needs_cited_lock_evidence(
             select(AuditEventRow).where(AuditEventRow.event_type == "policy_evaluated")
         ).one()
     assert policy_audit.reason == reason_code
+
+
+def _restart_diagnosis(factory: sessionmaker[Session], diagnosis_id: str, pg_up_now: float) -> None:
+    """Turn the stored diagnosis into a lab-postgres restart citing a pg_up reading."""
+    import json
+    from datetime import UTC, datetime
+
+    from incidentops.domain.ids import new_id
+    from incidentops.persistence.models import EvidenceRow
+
+    with factory.begin() as session:
+        diagnosis = session.get_one(DiagnosisRow, diagnosis_id)
+        evidence_id = new_id("ev")
+        now = datetime.now(UTC)
+        session.add(
+            EvidenceRow(
+                id=evidence_id,
+                incident_id=session.get_one(InvestigationRunRow, diagnosis.run_id).incident_id,
+                run_id=diagnosis.run_id,
+                source="prometheus",
+                query_ref={
+                    "template_id": "postgres_up",
+                    "parameters": {"service_id": "lab-postgres", "lookback_minutes": 30},
+                },
+                window_start=now,
+                window_end=now,
+                observed_at=now,
+                digest="sha256:" + "0" * 64,
+                summary=f"pg_up latest={pg_up_now} (dipped to 0 earlier in the window)",
+                snapshot=json.dumps([{"labels": {}, "min": 0.0, "max": 1.0, "last": pg_up_now}]),
+            )
+        )
+        report = dict(diagnosis.report)
+        report["diagnosis"] = {
+            **report["diagnosis"],
+            "root_cause_id": "postgres_unavailable",
+            "affected_component": "lab-postgres",
+            "supporting_evidence_ids": [evidence_id],
+            "evidence_notes": {},
+        }
+        report["proposed_action"] = {
+            "action_type": "restart_lab_dependency",
+            "environment": "fault-lab",
+            "target_id": "lab-postgres",
+            "arguments": {},
+            "reason": "Restart the lab database.",
+            "evidence_ids": [evidence_id],
+        }
+        diagnosis.report = report
+
+
+@pytest.mark.parametrize(
+    ("pg_up_now", "decision", "reason_code"),
+    [
+        (0.0, Decision.REQUIRES_APPROVAL, "approval_required"),
+        # B-N01 r1 (2026-11-14): pg_up had dipped earlier but was 1 now; restart executed.
+        (1.0, Decision.DENY, "required_evidence_missing"),
+    ],
+)
+async def test_restart_needs_the_dependency_down_now(
+    session_factory: sessionmaker[Session],
+    pg_up_now: float,
+    decision: Decision,
+    reason_code: str,
+) -> None:
+    incident_id, diagnosis_id = await diagnosed_incident(session_factory)
+    _restart_diagnosis(session_factory, diagnosis_id, pg_up_now)
+    outcome = await _evaluator(session_factory, FakeInspector("pg-gen-1")).evaluate(
+        incident_id, diagnosis_id
+    )
+    assert outcome.decision is decision
+    with session_factory() as session:
+        audit = session.scalars(
+            select(AuditEventRow).where(AuditEventRow.event_type == "policy_evaluated")
+        ).one()
+    assert audit.reason == reason_code

@@ -18,6 +18,7 @@ from incidentops.policy.engine import (
     load_policy,
 )
 from incidentops.policy.evidence_facts import (
+    DEPENDENCY_DOWN_NOW,
     POSTGRES_CONNECTIONS_NEAR_LIMIT,
     POSTGRES_EXCLUSIVE_LOCK_PRESENT,
     CitedEvidence,
@@ -144,7 +145,9 @@ def test_executor_recheck_without_facts_is_not_blocked() -> None:
 
 def test_actions_without_preconditions_are_unaffected() -> None:
     engine = PolicyEngine(load_policy(), load_catalog())
-    request = _request("restart_lab_dependency", frozenset(), "postgres_unavailable")
+    request = _request("stop_lab_cpu_load", frozenset(), "cpu_saturation").model_copy(
+        update={"target_id": "lab-cpu-load"}
+    )
     assert engine.evaluate(request).decision is Decision.REQUIRES_APPROVAL
 
 
@@ -157,3 +160,53 @@ def test_unknown_evidence_facts_are_rejected_in_policy_config() -> None:
             risk_class="low",
             required_evidence=("telepathy",),
         )
+
+
+def _pg_health_up(up: float) -> str:
+    return json.dumps({"postgres_up": [{"labels": {}, "value": up}], "postgres_locks_by_mode": []})
+
+
+@pytest.mark.parametrize(
+    ("evidence", "down"),
+    [
+        (CitedEvidence("postgres_up", PG, _range(0.0, peak=1.0)), True),
+        # B-N01 r1 (2026-11-14): pg_up had dipped earlier in the window, but was 1 now.
+        (CitedEvidence("postgres_up", PG, _range(1.0)), False),
+        (CitedEvidence("postgres_health", PG, _pg_health_up(0.0)), True),
+        (CitedEvidence("postgres_health", PG, _pg_health_up(1.0)), False),
+        (CitedEvidence("redis_up", "lab-redis", _range(0.0)), True),
+        (CitedEvidence("redis_health", "lab-redis", json.dumps({"redis_up": 0.0})), True),
+        (CitedEvidence("redis_health", "lab-redis", json.dumps({"redis_up": 1.0})), False),
+        (CitedEvidence("redis_health", "lab-redis", json.dumps({"redis_up": None})), False),
+        (CitedEvidence("kafka_broker_count", "lab-kafka", _range(0.0)), True),
+        (CitedEvidence("kafka_broker_count", "lab-kafka", _range(1.0)), False),
+    ],
+)
+def test_dependency_down_now_reads_the_latest_up_value(evidence: CitedEvidence, down: bool) -> None:
+    facts = facts_for_target([evidence], evidence.service_id or "")
+    assert (DEPENDENCY_DOWN_NOW in facts) is down
+
+
+def test_failing_producer_shows_its_broker_down_now() -> None:
+    errors = CitedEvidence("producer_send_error_rate", "demo-producer", _range(0.18))
+    recovered = CitedEvidence("producer_send_error_rate", "demo-producer", _range(0.0, peak=0.2))
+    producers = frozenset({"demo-producer"})
+    assert DEPENDENCY_DOWN_NOW in facts_for_target([errors], "lab-kafka", producers)
+    assert DEPENDENCY_DOWN_NOW not in facts_for_target([recovered], "lab-kafka", producers)
+    # Producer errors say nothing about other targets.
+    assert facts_for_target([errors], "lab-postgres") == frozenset()
+
+
+def test_restart_needs_the_target_down_now() -> None:
+    engine = PolicyEngine(load_policy(), load_catalog())
+    allowed = engine.evaluate(
+        _request("restart_lab_dependency", frozenset({DEPENDENCY_DOWN_NOW}), "postgres_unavailable")
+    )
+    assert allowed.decision is Decision.REQUIRES_APPROVAL
+    denied = engine.evaluate(
+        _request("restart_lab_dependency", frozenset(), "postgres_unavailable")
+    )
+    assert (denied.decision, denied.reason_code) == (
+        Decision.DENY,
+        ReasonCode.REQUIRED_EVIDENCE_MISSING,
+    )

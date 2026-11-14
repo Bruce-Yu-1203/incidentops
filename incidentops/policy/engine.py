@@ -151,6 +151,10 @@ class PolicyEngine:
     def version(self) -> str:
         return self.config.policy_version
 
+    @property
+    def catalog(self) -> ServiceCatalog:
+        return self._catalog
+
     def evaluate(self, request: PolicyRequest) -> PolicyDecision:
         try:
             return self._evaluate(request)

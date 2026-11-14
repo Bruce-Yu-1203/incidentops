@@ -18,6 +18,7 @@ from sqlalchemy.orm import Session, sessionmaker
 
 from incidentops.actions.targets import TargetInspector
 from incidentops.domain.actions import ActionEnvelope
+from incidentops.domain.catalog import ServiceKind
 from incidentops.domain.ids import new_id
 from incidentops.domain.schemas import DiagnosisReport
 from incidentops.domain.state_machines import ActionState, ApprovalState, IncidentState
@@ -80,6 +81,22 @@ class ProposalEvaluator:
                 is not None
             )
 
+    def _producers_of(self, target_id: str) -> frozenset[str]:
+        """Producers whose send errors count as evidence about a broker target.
+
+        The lab has one broker, and producers bind a topic, not a broker, so every
+        registered producer writes to it. A catalog with several brokers needs a
+        producer-to-broker binding first (ADR-029).
+        """
+        catalog = self._policy.catalog
+        if not catalog.is_registered(target_id):
+            return frozenset()
+        if catalog.get(target_id).kind is not ServiceKind.KAFKA_BROKER:
+            return frozenset()
+        return frozenset(
+            s.service_id for s in catalog.services if s.kind is ServiceKind.KAFKA_PRODUCER
+        )
+
     def _cited_evidence(self, run_id: str, evidence_ids: set[str]) -> list[CitedEvidence]:
         """The run's own evidence rows the diagnosis cites (others are ignored)."""
         if not evidence_ids:
@@ -141,6 +158,7 @@ class ProposalEvaluator:
                         {*report.diagnosis.supporting_evidence_ids, *draft.evidence_ids},
                     ),
                     draft.target_id,
+                    self._producers_of(draft.target_id),
                 ),
             )
         )

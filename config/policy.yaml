@@ -3,7 +3,7 @@
 # Write operations can only be DENY or REQUIRES_APPROVAL: the MVP never
 # executes a mutation without a human approval.
 schema_version: 1
-policy_version: p6
+policy_version: p7
 approval_ttl_seconds: 900
 require_separation_of_duties: true
 # A diagnosis below this confidence never leads to an approval request
@@ -31,6 +31,9 @@ rules:
     decision: REQUIRES_APPROVAL
     risk_class: medium
     allowed_arguments: {}
+    # ADR-029: only when the cited evidence shows the target down now (its up or
+    # broker reading is 0 in the latest sample, or a producer fails to send now).
+    required_evidence: [dependency_down_now]
   - action_type: rollback_demo_api
     environments: [fault-lab]
     decision: REQUIRES_APPROVAL
