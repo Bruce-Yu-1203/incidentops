@@ -91,3 +91,53 @@ def test_tool_description_gives_the_top_level_shape() -> None:
     top = json.loads(shape)
     assert set(top) == {"diagnosis", "proposed_action", "needs_human_review"}
     assert "needs_human_review" not in top["diagnosis"]
+
+
+def test_root_cause_enum_is_the_taxonomy_and_matches_policy() -> None:
+    from incidentops.agent.prompt import ROOT_CAUSE_TAXONOMY
+    from incidentops.policy.engine import load_policy
+
+    schema = submit_diagnosis_tool()["input_schema"]
+    enum = schema["properties"]["diagnosis"]["properties"]["root_cause_id"]["enum"]
+    assert enum == list(ROOT_CAUSE_TAXONOMY)
+    assert "insufficient_evidence" in enum
+    # Every root cause the model may name has an entry in the policy contract.
+    assert set(enum) == set(load_policy().root_cause_actions)
+
+
+def test_component_and_action_enums_come_from_catalog_and_policy() -> None:
+    from incidentops.domain.catalog import load_catalog
+    from incidentops.policy.engine import load_policy
+
+    catalog, policy = load_catalog(), load_policy()
+    schema = submit_diagnosis_tool()["input_schema"]
+    diagnosis = schema["properties"]["diagnosis"]["properties"]
+    assert diagnosis["affected_component"]["enum"] == sorted(s.service_id for s in catalog.services)
+    action = next(
+        s for s in schema["properties"]["proposed_action"]["anyOf"] if s.get("type") == "object"
+    )["properties"]
+    assert action["action_type"]["enum"] == sorted(r.action_type for r in policy.rules)
+    assert set(action["target_id"]["enum"]) <= {s.service_id for s in catalog.services}
+
+
+def test_arguments_are_a_closed_set_with_per_action_contracts() -> None:
+    arguments = next(
+        s
+        for s in submit_diagnosis_tool()["input_schema"]["properties"]["proposed_action"]["anyOf"]
+        if s.get("type") == "object"
+    )["properties"]["arguments"]
+    assert arguments["additionalProperties"] is False
+    assert arguments["properties"]["desired_paused"] == {"enum": [False]}
+    assert arguments["properties"]["target_release"] == {"enum": ["rel-1"]}
+    # B-F04 r5 left target_release out; the contract is stated in the schema itself,
+    # in the one_of form (a bare list was copied as the value before).
+    assert (
+        '"rollback_demo_api": {"target_release": {"one_of": ["rel-1"]}}'
+        in (arguments["description"])
+    )
+
+
+def test_tool_schema_holds_no_scenario_ground_truth() -> None:
+    text = json.dumps(submit_diagnosis_tool())
+    for leak in ("expected", "accepted_root_cause_ids", "prohibited_actions", "B-F", "B-N"):
+        assert leak not in text

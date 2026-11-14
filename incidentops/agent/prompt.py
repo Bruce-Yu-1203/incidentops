@@ -10,7 +10,7 @@ from __future__ import annotations
 import json
 from typing import Any, Final
 
-from incidentops.domain.catalog import ServiceCatalog
+from incidentops.domain.catalog import ServiceCatalog, load_catalog
 from incidentops.domain.schemas import DiagnosisReport
 from incidentops.evidence.redaction import redact, truncate_utf8
 from incidentops.policy.engine import PolicyConfig, load_policy
@@ -134,11 +134,56 @@ SUBMIT_DIAGNOSIS_DESCRIPTION: Final = (
 )
 
 
-def submit_diagnosis_tool() -> dict[str, Any]:
+def _closed_vocabularies(
+    schema: dict[str, Any], catalog: ServiceCatalog, policy: PolicyConfig
+) -> None:
+    """Replace free-form IDs with the allowed values (ADR-028 B).
+
+    Built from the taxonomy, the service catalog and the policy, never from a
+    scenario, so the tool schema names what is possible, not what is right.
+    Validation still re-checks every value.
+    """
+    services = sorted(s.service_id for s in catalog.services)
+    diagnosis = schema["properties"]["diagnosis"]["properties"]
+    diagnosis["root_cause_id"]["enum"] = list(ROOT_CAUSE_TAXONOMY)
+    diagnosis["affected_component"]["enum"] = services
+    action = next(
+        s for s in schema["properties"]["proposed_action"]["anyOf"] if s.get("type") == "object"
+    )
+    props = action["properties"]
+    props["action_type"]["enum"] = sorted(rule.action_type for rule in policy.rules)
+    props["target_id"]["enum"] = sorted(s.service_id for s in catalog.services if s.allowed_actions)
+    contracts = action_contracts(policy)
+    allowed: dict[str, list[Any]] = {}
+    for contract in contracts.values():
+        for name, values in contract.items():
+            allowed.setdefault(name, [])
+            allowed[name] += [v for v in values if v not in allowed[name]]
+    props["arguments"] = {
+        "type": "object",
+        "additionalProperties": False,
+        "properties": {name: {"enum": values} for name, values in sorted(allowed.items())},
+        "description": props["arguments"].get("description", "")
+        + " Required arguments per action_type (pass one value from each one_of): "
+        + json.dumps(
+            {
+                a: {name: {"one_of": values} for name, values in c.items()}
+                for a, c in contracts.items()
+            },
+            sort_keys=True,
+        )
+        + ".",
+    }
+
+
+def submit_diagnosis_tool(
+    catalog: ServiceCatalog | None = None, policy: PolicyConfig | None = None
+) -> dict[str, Any]:
     """Schema-constrained final answer; incident_id is filled in by the harness."""
     schema = inline_refs(DiagnosisReport.model_json_schema())
     schema["properties"].pop("incident_id", None)
     schema["required"] = [r for r in schema.get("required", []) if r != "incident_id"]
+    _closed_vocabularies(schema, catalog or load_catalog(), policy or load_policy())
     return {
         "name": "submit_diagnosis",
         "description": SUBMIT_DIAGNOSIS_DESCRIPTION,

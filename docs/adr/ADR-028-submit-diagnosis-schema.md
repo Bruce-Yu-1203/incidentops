@@ -27,6 +27,25 @@ would change. The tool description gives the three top-level fields and one
 complete example of the shape, with placeholder values only. Prompt version
 `investigation-v10`.
 
+### B. Closed vocabularies instead of free-form IDs
+
+The tool schema replaces free-form IDs with the values that are possible,
+built from existing configuration:
+
+| Field | Allowed values from |
+|---|---|
+| `diagnosis.root_cause_id` | the root-cause taxonomy (incl. `insufficient_evidence`); a test keeps it equal to the policy's `root_cause_actions` keys |
+| `diagnosis.affected_component` | registered service IDs (catalog) |
+| `proposed_action.action_type` | policy rule action types |
+| `proposed_action.target_id` | registered services that allow any action |
+| `proposed_action.arguments` | a closed object: every argument name any policy rule allows, each with its allowed values; the description lists each action's required arguments in the `one_of` form |
+
+The schema names what is *possible*, never what is right for a case, and
+no scenario data reaches it (tested). The schema grows from about 2.8 KB to
+about 5.8 KB. JSON Schema cannot tie the required arguments to
+`action_type` in a form that models follow reliably, so the per-action
+contract is in the arguments description. Policy still enforces it exactly.
+
 ## Consequences
 
 - Validation is unchanged: descriptions only guide the model.
