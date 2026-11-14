@@ -159,6 +159,8 @@ class InvestigationRunRow(Base):
     )
     # Diagnosis fields that arrived as JSON strings and were parsed (provider quirk).
     argument_coercions: Mapped[int] = mapped_column(Integer, nullable=False, server_default="0")
+    # Top-level report fields found inside diagnosis and moved up (ADR-028).
+    field_lifts: Mapped[int] = mapped_column(Integer, nullable=False, server_default="0")
     started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     created_at: Mapped[datetime] = _now()

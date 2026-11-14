@@ -408,6 +408,7 @@ class InvestigationRunner:
             "cache_read_input_tokens": final.get("cache_read_input_tokens", 0),
             "cache_creation_input_tokens": final.get("cache_creation_input_tokens", 0),
             "argument_coercions": final.get("argument_coercions", 0),
+            "field_lifts": final.get("field_lifts", 0),
             "finished_at": utcnow(),
             "error_code": final.get("error_code"),
         }
@@ -461,6 +462,7 @@ class InvestigationRunner:
             "cache_read_input_tokens": final.get("cache_read_input_tokens", 0),
             "cache_creation_input_tokens": final.get("cache_creation_input_tokens", 0),
             "argument_coercions": final.get("argument_coercions", 0),
+            "field_lifts": final.get("field_lifts", 0),
             "finished_at": utcnow(),
             "error_code": final.get("error_code"),
         }

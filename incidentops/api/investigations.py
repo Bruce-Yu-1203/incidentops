@@ -64,6 +64,7 @@ class RunSummary(BaseModel):
     cache_read_input_tokens: int = 0
     cache_creation_input_tokens: int = 0
     argument_coercions: int = 0
+    field_lifts: int = 0
     started_at: datetime | None
     finished_at: datetime | None
 
@@ -91,6 +92,7 @@ def run_summary(row: InvestigationRunRow) -> RunSummary:
         cache_read_input_tokens=row.cache_read_input_tokens,
         cache_creation_input_tokens=row.cache_creation_input_tokens,
         argument_coercions=row.argument_coercions,
+        field_lifts=row.field_lifts,
         started_at=row.started_at,
         finished_at=row.finished_at,
     )

@@ -15,6 +15,7 @@ from incidentops.agent.graph import (
     coerce_json_string_fields,
     describe_invalid_diagnosis,
     initial_state,
+    lift_misplaced_fields,
 )
 from incidentops.agent.model import (
     ModelTurn,
@@ -479,3 +480,54 @@ def test_only_json_objects_are_coerced() -> None:
     payload = {"diagnosis": "[1, 2]", "proposed_action": "null", "needs_human_review": "true"}
     result, coerced = coerce_json_string_fields(payload)
     assert (result, coerced) == (payload, [])
+
+
+async def test_misplaced_top_level_fields_are_lifted_and_counted() -> None:
+    def nested(messages: list[dict[str, Any]]) -> ModelTurn:
+        report = dict(submit(messages).tool_calls[0].arguments)
+        inner = dict(report.pop("diagnosis"))
+        inner["needs_human_review"] = False
+        inner["proposed_action"] = report.pop("proposed_action")
+        return ModelTurn(tool_calls=[ToolCall("final", "submit_diagnosis", {"diagnosis": inner})])
+
+    model = ScriptedModelAdapter([lag_and_status(), nested])
+    final, trajectory = await run(model)
+    assert final["status"] == "COMPLETED"
+    assert final["report"]["proposed_action"]["action_type"] == "resume_test_consumer"
+    assert final["field_lifts"] == 2
+    step = next(s for s in trajectory.steps if s.kind.value == "diagnosis")
+    assert step.metadata["lifted_fields"] == ["proposed_action", "needs_human_review"]
+
+
+def test_conflicting_copies_are_not_lifted() -> None:
+    payload: dict[str, Any] = {
+        "diagnosis": {"root_cause_id": "x", "needs_human_review": True},
+        "needs_human_review": False,
+    }
+    result, lifted = lift_misplaced_fields(payload)
+    assert lifted == []
+    assert result["diagnosis"]["needs_human_review"] is True  # left for validation to reject
+
+
+def test_identical_copies_collapse_to_the_top_level() -> None:
+    payload = {"diagnosis": {"needs_human_review": True}, "needs_human_review": True}
+    result, lifted = lift_misplaced_fields(payload)
+    assert (lifted, result) == (
+        ["needs_human_review"],
+        {"diagnosis": {}, "needs_human_review": True},
+    )
+
+
+async def test_conflicting_submission_is_still_rejected() -> None:
+    def conflicting(messages: list[dict[str, Any]]) -> ModelTurn:
+        report = dict(submit(messages).tool_calls[0].arguments)
+        report["needs_human_review"] = False
+        report["diagnosis"] = {**report["diagnosis"], "needs_human_review": True}
+        return ModelTurn(tool_calls=[ToolCall("final", "submit_diagnosis", report)])
+
+    model = ScriptedModelAdapter([lag_and_status(), conflicting, conflicting])
+    final, trajectory = await run(model)
+    assert final["status"] == "FAILED"
+    assert final["field_lifts"] == 0
+    errors = [s.metadata["error"] for s in trajectory.steps if s.kind.value == "diagnosis"]
+    assert all("diagnosis.needs_human_review" in e for e in errors)

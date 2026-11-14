@@ -208,6 +208,7 @@ def test_report_totals_usage_including_cached_input(tmp_path: Path) -> None:
     assert "| Output tokens | 100 | 50 |" in text
     assert "Total input (uncached + cache read + cache write): 1210." in text
     assert "| Diagnosis fields parsed from JSON strings | 0 | 0 |" in text
+    assert "| Top-level fields moved out of diagnosis | 0 | 0 |" in text
     header = (tmp_path / "trials.csv").read_text().splitlines()[0].split(",")
     assert header.index("tokens_input") < header.index("tokens_cache_read")
     assert "tokens_cache_creation" in header
@@ -306,6 +307,7 @@ class FakeApi:
             "cache_read_input_tokens": 900,
             "cache_creation_input_tokens": 40,
             "argument_coercions": 1,
+            "field_lifts": 2,
             "finished_at": "2099-01-01T00:01:00+00:00",
         }
 
@@ -340,6 +342,7 @@ def test_runner_drives_a_full_trial_and_cleans_up() -> None:
     assert (record["tokens_input"], record["tokens_cache_read"]) == (120, 900)
     assert (record["tokens_cache_creation"], record["tokens_output"]) == (40, 30)
     assert record["argument_coercions"] == 1
+    assert record["field_lifts"] == 2
 
 
 def test_runner_marks_unhealthy_baseline_invalid() -> None:

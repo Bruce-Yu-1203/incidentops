@@ -228,6 +228,7 @@ CSV_FIELDS = [
     "prohibited_actions_proposed",
     "tool_attempts",
     "argument_coercions",
+    "field_lifts",
     "tokens_input",
     "tokens_cache_read",
     "tokens_cache_creation",
@@ -252,6 +253,7 @@ def _calibration_lines(trials: list[dict[str, Any]]) -> list[str]:
 USAGE_FIELDS = (
     ("tool_attempts", "Tool attempts"),
     ("argument_coercions", "Diagnosis fields parsed from JSON strings"),
+    ("field_lifts", "Top-level fields moved out of diagnosis"),
     ("tokens_input", "Input tokens (uncached)"),
     ("tokens_cache_read", "Cache-read input tokens"),
     ("tokens_cache_creation", "Cache-write input tokens"),

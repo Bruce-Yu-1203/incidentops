@@ -46,7 +46,20 @@ about 5.8 KB. JSON Schema cannot tie the required arguments to
 `action_type` in a form that models follow reliably, so the per-action
 contract is in the arguments description. Policy still enforces it exactly.
 
+### C. Lift one known misplacement
+
+When `proposed_action` or `needs_human_review` appears inside `diagnosis`,
+the harness moves it up to the top level before validation. It does that
+only if the top level does not already have the field, or has the same value
+(then the nested copy is dropped). Conflicting copies stay where they are,
+so validation rejects the submission as before. Nothing is invented and no
+value changes. Each lift is recorded in the diagnosis step (`lifted_fields`)
+and counted in `investigation_runs.field_lifts` (migration 0011). The count
+is also carried into trial records, the CSV and the report's Usage section,
+alongside `argument_coercions`.
+
 ## Consequences
 
-- Validation is unchanged: descriptions only guide the model.
+- Validation and policy are unchanged. Descriptions and enums only guide the
+  model, and the lift is a counted, unambiguous move of an existing value.
 - The descriptions appear wherever the schema is shown (e.g. API docs).

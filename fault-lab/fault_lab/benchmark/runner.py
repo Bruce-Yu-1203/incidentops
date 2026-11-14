@@ -299,6 +299,7 @@ class TrialRunner:
                 "argument_coercions": sum(
                     int(r.get("argument_coercions", 0)) for r in obs.runs.values()
                 ),
+                "field_lifts": sum(int(r.get("field_lifts", 0)) for r in obs.runs.values()),
             }
         )
         return record

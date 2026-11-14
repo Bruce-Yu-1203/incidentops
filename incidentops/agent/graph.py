@@ -49,6 +49,8 @@ class InvestigationState(TypedDict):
     cache_creation_input_tokens: int
     # Nested report objects that arrived as JSON strings and were parsed.
     argument_coercions: int
+    # Top-level report fields found inside diagnosis and moved up (ADR-028 C).
+    field_lifts: int
     deadline_epoch_ms: int
     repair_attempts: int
     report: dict[str, Any] | None
@@ -88,6 +90,7 @@ def initial_state(
         cache_read_input_tokens=0,
         cache_creation_input_tokens=0,
         argument_coercions=0,
+        field_lifts=0,
         deadline_epoch_ms=start_ms + budgets.wall_clock_seconds * 1000,
         repair_attempts=0,
         report=None,
@@ -125,6 +128,32 @@ def coerce_json_string_fields(payload: dict[str, Any]) -> tuple[dict[str, Any], 
             result[name] = parsed
             coerced.append(name)
     return result, coerced
+
+
+# Top-level report fields models put inside diagnosis.
+LIFTABLE_FIELDS = ("proposed_action", "needs_human_review")
+
+
+def lift_misplaced_fields(payload: dict[str, Any]) -> tuple[dict[str, Any], list[str]]:
+    """Move top-level fields that were nested inside ``diagnosis`` back up.
+
+    A field is lifted only when the top level does not have it, or has the same
+    value (then the nested copy is dropped). Conflicting copies are left in
+    place, so validation rejects the submission as before. Returns the fields
+    moved.
+    """
+    diagnosis = payload.get("diagnosis")
+    if not isinstance(diagnosis, dict):
+        return payload, []
+    result, inner, lifted = dict(payload), dict(diagnosis), []
+    for name in LIFTABLE_FIELDS:
+        if name not in inner:
+            continue
+        if name not in result or result[name] == inner[name]:
+            result[name] = inner.pop(name)
+            lifted.append(name)
+    result["diagnosis"] = inner
+    return result, lifted
 
 
 def _json_type(value: Any) -> str:
@@ -308,10 +337,12 @@ def build_graph(
         error: str | None = None
         submitted_keys: list[str] | str | None = None
         coerced: list[str] = []
+        lifted: list[str] = []
         report: DiagnosisReport | None = None
         try:
             payload = dict(call["input"]) if isinstance(call["input"], dict) else {}
             payload, coerced = coerce_json_string_fields(payload)
+            payload, lifted = lift_misplaced_fields(payload)
             payload["incident_id"] = state["incident_id"]
             report = DiagnosisReport.model_validate(payload)
             resolved = evidence.resolve(state["run_id"], report.cited_evidence_ids())
@@ -346,23 +377,27 @@ def build_graph(
                     "error": error,
                     "submitted_keys": submitted_keys,
                     "coerced_fields": coerced,
+                    "lifted_fields": lifted,
                     "root_cause_id": report.diagnosis.root_cause_id if report else None,
                 },
             )
         )
         # .get: checkpoints written before this field existed lack it.
         coercions = state.get("argument_coercions", 0) + len(coerced)
+        lifts = state.get("field_lifts", 0) + len(lifted)
         if error is None and report is not None:
             return {
                 "status": "COMPLETED",
                 "report": report.model_dump(mode="json"),
                 "argument_coercions": coercions,
+                "field_lifts": lifts,
             }
         if state["repair_attempts"] >= budgets.max_repair_attempts:
             return {
                 "status": "FAILED",
                 "error_code": "invalid_diagnosis",
                 "argument_coercions": coercions,
+                "field_lifts": lifts,
             }
         # Every tool_use block must be answered; read calls made in the same turn
         # as the submission are skipped rather than executed.
@@ -378,6 +413,7 @@ def build_graph(
             "messages": [*state["messages"], {"role": "user", "content": feedback}],
             "repair_attempts": state["repair_attempts"] + 1,
             "argument_coercions": coercions,
+            "field_lifts": lifts,
         }
 
     def after_agent(state: InvestigationState) -> str:
