@@ -26,6 +26,11 @@ stateDiagram-v2
   EXECUTING --> ESCALATED: action FAILED or outcome unknown
   VERIFYING --> RESOLVED: verification PASSED
   VERIFYING --> ESCALATED: VERIFICATION_FAILED or UNKNOWN
+  RECEIVED --> GROUPED: joined a related incident's group
+  DIAGNOSED --> GROUPED: replaced as group primary, proposal dropped
+  GROUPED --> RECEIVED: split out (verifier, person, cancelled primary)
+  GROUPED --> RESOLVED: alerts recovered after the primary's fix passed
+  GROUPED --> ESCALATED: follows its primary
   note right of RECEIVED: any non-terminal state may go to FAILED (platform error)
 ```
 
@@ -66,6 +71,7 @@ stateDiagram-v2
 | `outcome_unknown` | The external result could not be determined after reconciliation attempts | **Check the target manually** before doing anything: the action may or may not have been applied. It will never be re-sent automatically |
 | `verification_failed` | The action ran but the service did not recover within the window | Investigate further; the root cause may be different or the producer may outpace the consumer |
 | `unknown` | The verifier lacked fresh data (e.g. Prometheus down) | Restore telemetry, then check recovery manually; the incident was deliberately not resolved |
+| `group_primary_escalated` | A grouped member (ADR-030) followed its group primary into a handover state (escalated, diagnosed only or failed) | Handle the primary first; the member's own alerts are listed on its page and it links to the primary |
 | `model_error`, `harness_<Error>` (state `FAILED`) | The investigation itself failed | Check worker logs and model configuration; the incident needs a fresh investigation |
 
 ## Action reason codes

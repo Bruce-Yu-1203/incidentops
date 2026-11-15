@@ -71,6 +71,15 @@ class Settings(BaseSettings):
     # so a small cap can cut off a tool call (e.g. submit_diagnosis) mid-way;
     # raise it for thinking models.
     model_max_output_tokens: int = Field(default=2048, ge=256, le=64000)
+    # Incident grouping (ADR-030): a new incident joins the group of a related
+    # service's incident opened within this window (0 turns grouping off). A
+    # primary with dependencies waits the settle time before investigating.
+    group_window_seconds: int = Field(default=180, ge=0, le=3600)
+    group_settle_seconds: int = Field(default=60, ge=0, le=600)
+    # How long the verifier waits for a member's alerts to resolve after the
+    # primary's fix passed before splitting it out (Alertmanager sends resolved
+    # notifications one group_interval after the rule clears).
+    group_member_recovery_seconds: int = Field(default=180, ge=0, le=1800)
 
     @field_validator("anthropic_base_url")
     @classmethod

@@ -26,6 +26,7 @@ from incidentops.domain.ids import new_id
 from incidentops.domain.schemas import VerificationCheck, VerificationOutcome
 from incidentops.domain.state_machines import ActionState, IncidentState
 from incidentops.execution.executor import receipt_generation
+from incidentops.grouping import SPLIT_BY_VERIFIER_NOTE, split_member, still_firing
 from incidentops.persistence.models import (
     ActionProposalRow,
     ExternalOperationRow,
@@ -164,7 +165,11 @@ class RecoveryVerifier:
         config: VerifyConfig,
         clock: Callable[[], datetime] = utcnow,
         sleep: Callable[[float], Awaitable[None]] = asyncio.sleep,
+        member_recovery_seconds: int = 180,
+        member_poll_seconds: int = 15,
     ) -> None:
+        self._member_recovery_seconds = member_recovery_seconds
+        self._member_poll_seconds = member_poll_seconds
         self._factory = factory
         self._catalog = catalog
         self._backend = backend
@@ -358,3 +363,62 @@ class RecoveryVerifier:
                     audit=audit,
                     extra_values={"escalation_reason": outcome.value.lower()},
                 )
+
+    # -- group members (ADR-030, guard G4) -------------------------------------------
+
+    async def verify_member(self, incident_id: str, primary_id: str) -> IncidentState | None:
+        """Resolve a GROUPED member whose alerts recovered, or split it out.
+
+        Runs after the primary's verification PASSED. Alertmanager reports a
+        cleared rule one group interval later, so the member gets a bounded
+        wait for its alerts to resolve before it is split out and investigated
+        on its own ("not explained by the group primary's fix").
+        """
+        deadline = self._clock() + timedelta(seconds=self._member_recovery_seconds)
+        while True:
+            with self._factory() as session:
+                member = session.get(IncidentRow, incident_id)
+                if (
+                    member is None
+                    or member.state != IncidentState.GROUPED
+                    or member.group_split_at is not None
+                ):
+                    return None
+                firing = still_firing(session, incident_id)
+            if not firing or self._clock() >= deadline:
+                break
+            await self._sleep(self._member_poll_seconds)
+
+        with self._factory.begin() as session:
+            member = session.get(IncidentRow, incident_id, with_for_update=True)
+            if member is None or member.state != IncidentState.GROUPED:
+                return None
+            if member.group_split_at is not None:
+                return None
+            if still_firing(session, incident_id):
+                split_member(
+                    session,
+                    member,
+                    actor=ACTOR,
+                    reason=f"alerts still firing after group primary {primary_id} recovered",
+                    note=SPLIT_BY_VERIFIER_NOTE,
+                )
+                return IncidentState.RECEIVED
+            transition(
+                session,
+                IncidentRow,
+                incident_id,
+                expected_state=IncidentState.GROUPED,
+                expected_version=member.version,
+                target_state=IncidentState.RESOLVED,
+                audit=AuditSpec(
+                    actor=ACTOR,
+                    event_type="group_member_resolved",
+                    reason=f"alerts resolved after group primary {primary_id} recovered",
+                    correlation_ids={
+                        "primary_incident_id": primary_id,
+                        "group_id": member.group_id or "",
+                    },
+                ),
+            )
+            return IncidentState.RESOLVED

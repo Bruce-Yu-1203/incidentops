@@ -5,6 +5,9 @@ version = :v``, increment ``version`` and, in the *same transaction*, append the
 audit event and any outbox job. A zero-row update is a conflict that callers
 surface as HTTP 409; it is never retried silently.
 
+When an incident reaches a terminal state, the members of the group it is
+primary of follow it in the same transaction (ADR-030, ``incidentops.grouping``).
+
 These helpers only add statements to the caller's session. The caller owns the
 transaction boundary and commits once, so partial writes cannot be observed.
 """
@@ -142,4 +145,10 @@ def transition[S: StrEnum](
             )
         )
     session.flush()
+    if model is IncidentRow and machine.is_terminal(target_state):
+        # Group members follow their primary in the same transaction (ADR-030).
+        from incidentops.domain.state_machines import IncidentState
+        from incidentops.grouping import on_incident_terminal
+
+        on_incident_terminal(session, row_id, IncidentState(target_state.value), audit.actor)
     return int(new_version)

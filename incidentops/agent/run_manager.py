@@ -30,13 +30,19 @@ from incidentops.domain.catalog import ServiceCatalog
 from incidentops.domain.disposition import Disposition, needs_human
 from incidentops.domain.ids import new_id
 from incidentops.domain.schemas import DiagnosisReport
-from incidentops.domain.state_machines import IncidentState, RunState
+from incidentops.domain.state_machines import INCIDENT_MACHINE, IncidentState, RunState
 from incidentops.evidence.redaction import redact, truncate_utf8
 from incidentops.evidence.store import EvidenceSink
+from incidentops.grouping import (
+    follow_terminal_primary,
+    group_context,
+    is_demoted,
+)
 from incidentops.persistence.models import (
     AlertEventRow,
     DiagnosisRow,
     EvidenceRow,
+    IncidentGroupRow,
     IncidentRow,
     InvestigationRunRow,
     OutboxJobRow,
@@ -180,13 +186,17 @@ class InvestigationRunner:
                 audit=_audit("run_started", incident_id=incident_id),
                 extra_values={"started_at": utcnow()},
             )
-            summary = {
+            summary: dict[str, Any] = {
                 "id": incident.id,
                 "service_id": incident.service_id,
                 "environment": incident.environment,
                 "severity": incident.severity,
                 "created_at": incident.created_at.isoformat(),
             }
+            # Related incidents of the same fault, as data (ADR-030).
+            group = group_context(session, incident)
+            if group is not None:
+                summary["incident_group"] = group
             alerts = [
                 {
                     k: row.payload.get(k)
@@ -545,8 +555,41 @@ class InvestigationRunner:
                     diagnosis_id=diagnosis_id,
                 ),
             )
-            incident_state = self._route(session, incident_id, version, report, diagnosis_id)
+            if is_demoted(session, incident):
+                incident_state = self._regroup(session, incident, version, diagnosis_id)
+            else:
+                incident_state = self._route(session, incident_id, version, report, diagnosis_id)
             return RunOutcome(run_id, run_state, incident_state, usage["error_code"])
+
+    def _regroup(
+        self, session: Session, incident: IncidentRow, version: int, diagnosis_id: str
+    ) -> IncidentState:
+        """A primary replaced during its run: keep the diagnosis, drop any proposal."""
+        group = session.get_one(IncidentGroupRow, incident.group_id)
+        transition(
+            session,
+            IncidentRow,
+            incident.id,
+            expected_state=IncidentState.DIAGNOSED,
+            expected_version=version,
+            target_state=IncidentState.GROUPED,
+            audit=_audit(
+                "incident_grouped",
+                "replaced as group primary during its run: diagnosis kept, no proposal",
+                diagnosis_id=diagnosis_id,
+                group_id=group.id,
+                primary_incident_id=group.primary_incident_id,
+            ),
+        )
+        primary = session.get_one(IncidentRow, group.primary_incident_id)
+        primary_state = IncidentState(primary.state)
+        if primary_state in INCIDENT_MACHINE.terminal_states:
+            # The primary finished first: follow it now.
+            member = session.get_one(IncidentRow, incident.id, populate_existing=True)
+            follow_terminal_primary(session, member, primary.id, primary_state, ACTOR)
+            session.refresh(member)
+            return IncidentState(member.state)
+        return IncidentState.GROUPED
 
     def _route(
         self,

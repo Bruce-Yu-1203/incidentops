@@ -16,6 +16,7 @@ from incidentops.actions.targets import ConsumerTargetInspector
 from incidentops.config import Settings, get_settings
 from incidentops.domain.catalog import load_catalog
 from incidentops.execution.executor import VERIFY_ACTION_JOB
+from incidentops.grouping import VERIFY_GROUP_MEMBERS_JOB
 from incidentops.persistence.db import make_engine, make_session_factory
 from incidentops.security.identities import Role
 from incidentops.tools.backends import HttpTelemetryBackend
@@ -28,7 +29,12 @@ def handlers(verifier: RecoveryVerifier) -> dict[str, Handler]:
     async def verify(payload: dict[str, Any], _: int) -> None:
         await verifier.verify(str(payload["action_id"]))
 
-    return {VERIFY_ACTION_JOB: verify}
+    async def verify_member(payload: dict[str, Any], _: int) -> None:
+        await verifier.verify_member(
+            str(payload["incident_id"]), str(payload.get("primary_incident_id", ""))
+        )
+
+    return {VERIFY_ACTION_JOB: verify, VERIFY_GROUP_MEMBERS_JOB: verify_member}
 
 
 async def serve(settings: Settings) -> None:  # pragma: no cover - process entry point
@@ -46,7 +52,12 @@ async def serve(settings: Settings) -> None:  # pragma: no cover - process entry
             settings.endpoint_overrides,
         )
         verifier = RecoveryVerifier(
-            factory, catalog, backend, ConsumerTargetInspector(catalog, backend), config
+            factory,
+            catalog,
+            backend,
+            ConsumerTargetInspector(catalog, backend),
+            config,
+            member_recovery_seconds=settings.group_member_recovery_seconds,
         )
         # Heartbeats keep the lease while a long observation window runs.
         await run_forever(factory, handlers(verifier), owner_id("verifier"), 60)

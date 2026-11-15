@@ -5,8 +5,11 @@ For each normalized alert, in one database transaction:
 1. find the active incident for the dedup key (row-locked), or insert a new
    one guarded by the partial unique index (concurrent deliveries race safely);
 2. append the alert event (repeated deliveries are always retained);
-3. for a newly created incident, append an audit event and enqueue exactly
-   one ``investigate_incident`` outbox job.
+3. for a newly created incident, append an audit event, place it in an
+   incident group when grouping is configured (ADR-030, under a
+   per-environment advisory lock) and enqueue exactly one
+   ``investigate_incident`` outbox job unless it joined a group as a
+   non-primary member. A primary with dependencies waits a settle time.
 
 Resolved alerts never change incident state: only the independent verifier
 may resolve an incident.
@@ -15,8 +18,9 @@ may resolve an incident.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from datetime import timedelta
 
-from sqlalchemy import select, text
+from sqlalchemy import func, select, text
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.orm import Session, sessionmaker
 
@@ -24,10 +28,12 @@ from incidentops.domain.disposition import HANDOVER_STATES
 from incidentops.domain.ids import new_id
 from incidentops.domain.schemas import AlertEvent, AlertStatus
 from incidentops.domain.state_machines import INCIDENT_MACHINE, IncidentState
+from incidentops.grouping import INVESTIGATE_JOB, GroupingConfig, assign_group, lock_environment
 from incidentops.ingestion.alertmanager import dedup_key
 from incidentops.persistence.models import AlertEventRow, AuditEventRow, IncidentRow, OutboxJobRow
+from incidentops.time import utcnow
 
-INVESTIGATE_JOB = "investigate_incident"
+__all__ = ["INVESTIGATE_JOB", "IngestResult", "ingest_events"]
 _ACTIVE_PREDICATE = "state NOT IN ({})".format(
     ", ".join(f"'{s.value}'" for s in sorted(INCIDENT_MACHINE.terminal_states))
 )
@@ -76,6 +82,7 @@ def _create_incident(session: Session, event: AlertEvent, key: str) -> str | Non
             severity=event.severity.value,
             state=IncidentState.RECEIVED.value,
             version=1,
+            symptom_class=event.symptom_class.value,
         )
         .on_conflict_do_nothing(index_elements=["dedup_key"], index_where=text(_ACTIVE_PREDICATE))
         .returning(IncidentRow.id)
@@ -99,14 +106,26 @@ def _record_event(session: Session, incident_id: str, event: AlertEvent) -> None
 
 
 def ingest_events(
-    factory: sessionmaker[Session], events: list[AlertEvent], actor: str
+    factory: sessionmaker[Session],
+    events: list[AlertEvent],
+    actor: str,
+    grouping: GroupingConfig | None = None,
 ) -> IngestResult:
-    """Persist all events of one webhook delivery in a single transaction."""
+    """Persist all events of one webhook delivery in a single transaction.
+
+    Without ``grouping`` every new incident is investigated on its own.
+    """
     result = IngestResult()
     # A stable key order keeps row-lock acquisition consistent across
     # concurrent deliveries and prevents deadlocks.
     ordered = sorted(events, key=dedup_key)
     with factory.begin() as session:
+        if grouping is not None:
+            # Taken before any row lock, in a stable order, so a delivery that
+            # waits here holds nothing another delivery needs.
+            firing = {e.environment.value for e in ordered if e.status is AlertStatus.FIRING}
+            for environment in sorted(firing):
+                lock_environment(session, environment)
         for event in ordered:
             key = dedup_key(event)
             incident = _active_incident(session, key)
@@ -150,14 +169,23 @@ def ingest_events(
                     correlation_ids={"alert_event_id": event.id, "dedup_key": key},
                 )
             )
-            session.add(
-                OutboxJobRow(
+            session.flush()
+            investigate, delay = True, 0
+            if grouping is not None:
+                decision = assign_group(
+                    session, grouping, created_id, event.symptom_class, actor, utcnow()
+                )
+                investigate, delay = decision.investigate, decision.delay_seconds
+            if investigate:
+                job = OutboxJobRow(
                     id=new_id("job"),
                     kind=INVESTIGATE_JOB,
                     aggregate_id=created_id,
                     dedup_key=f"{INVESTIGATE_JOB}:{created_id}",
                     payload={"incident_id": created_id, "incident_version": 1},
                 )
-            )
+                if delay:
+                    job.available_at = func.now() + timedelta(seconds=delay)
+                session.add(job)
             result.created_incident_ids.append(created_id)
     return result

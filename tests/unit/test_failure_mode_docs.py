@@ -17,6 +17,7 @@ EMITTED = {
     "verification_failed",
     "unknown",
     "model_error",
+    "group_primary_escalated",
 }
 
 

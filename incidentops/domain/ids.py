@@ -25,6 +25,7 @@ PREFIXES: Final = frozenset(
         "ses",
         "msg",
         "sum",
+        "grp",
     }
 )
 _ID_PATTERN: Final = re.compile(r"^(?P<prefix>[a-z]+)_[0-9a-f]{32}$")

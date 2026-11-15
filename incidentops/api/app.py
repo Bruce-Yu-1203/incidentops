@@ -37,6 +37,7 @@ from incidentops.config import Profile, Settings, get_settings
 from incidentops.domain.catalog import load_catalog
 from incidentops.domain.disposition import Disposition
 from incidentops.domain.state_machines import INCIDENT_MACHINE, IncidentState
+from incidentops.grouping import GroupingConfig
 from incidentops.handling import recheck as rechecks
 from incidentops.handling import service as handling
 from incidentops.ingestion.alertmanager import PayloadRejectedError, normalize
@@ -156,6 +157,11 @@ def create_app(
         )
     backend: TelemetryBackend = telemetry
     verify_config = load_verify_config()
+    grouping = (
+        GroupingConfig(load_catalog(), resolved.group_window_seconds, resolved.group_settle_seconds)
+        if resolved.group_window_seconds > 0
+        else None
+    )
 
     def sessions(request: Request) -> sessionmaker[Session]:
         factory: sessionmaker[Session] | None = request.app.state.session_factory
@@ -227,7 +233,9 @@ def create_app(
             events = normalize(body, received_at=utcnow())
         except PayloadRejectedError as exc:
             raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, str(exc)) from exc
-        result = ingest_events(factory, events, actor=f"service:{Role.ALERTMANAGER.value}")
+        result = ingest_events(
+            factory, events, actor=f"service:{Role.ALERTMANAGER.value}", grouping=grouping
+        )
         return IngestResponse(
             accepted_alerts=len(events),
             created_incident_ids=result.created_incident_ids,
