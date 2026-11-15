@@ -37,7 +37,7 @@ from incidentops.config import Profile, Settings, get_settings
 from incidentops.domain.catalog import load_catalog
 from incidentops.domain.disposition import Disposition
 from incidentops.domain.state_machines import INCIDENT_MACHINE, IncidentState
-from incidentops.grouping import GroupingConfig
+from incidentops.grouping import GroupingConfig, UngroupOutcome, ungroup
 from incidentops.handling import recheck as rechecks
 from incidentops.handling import service as handling
 from incidentops.ingestion.alertmanager import PayloadRejectedError, normalize
@@ -91,6 +91,11 @@ _HTTP_FOR_OUTCOME = {
 
 class HandoverRequest(BaseModel):
     expected_version: int = Field(ge=1)
+
+
+class UngroupRequest(BaseModel):
+    expected_version: int = Field(ge=1)
+    reason: str | None = Field(default=None, max_length=300)
 
 
 class CloseRequest(BaseModel):
@@ -395,6 +400,28 @@ def create_app(
         with factory.begin() as session:
             result = handling.assign(session, incident_id, user, body.expected_version)
         return _handling_response(result)
+
+    @app.post("/api/v1/incidents/{incident_id}/ungroup", tags=["handling"])
+    def ungroup_incident(
+        incident_id: str, body: UngroupRequest, user: User, factory: Sessions
+    ) -> HandlingResponse:
+        """Split a member out of its incident group to investigate it alone (ADR-030)."""
+        with factory.begin() as session:
+            result = ungroup(
+                session,
+                incident_id,
+                user.username,
+                user.role in auth.OPERATE_ROLES,
+                body.expected_version,
+                body.reason,
+            )
+        if result.outcome is not UngroupOutcome.UNGROUPED:
+            code = {
+                UngroupOutcome.FORBIDDEN: status.HTTP_403_FORBIDDEN,
+                UngroupOutcome.NOT_FOUND: status.HTTP_404_NOT_FOUND,
+            }.get(result.outcome, status.HTTP_409_CONFLICT)
+            raise HTTPException(code, {"outcome": result.outcome.value, "version": result.version})
+        return HandlingResponse(outcome=result.outcome.value, version=result.version)
 
     @app.post("/api/v1/incidents/{incident_id}/close", tags=["handling"])
     def close_incident(

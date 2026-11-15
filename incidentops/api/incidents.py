@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from datetime import datetime
 from typing import Any
 
@@ -19,9 +20,17 @@ from incidentops.persistence.models import (
     AuditEventRow,
     EvidenceRow,
     IncidentChatMessageRow,
+    IncidentGroupRow,
     IncidentRow,
     InvestigationRunRow,
 )
+
+
+class GroupMemberView(BaseModel):
+    id: str
+    service_id: str
+    state: IncidentState
+    split: bool = False
 
 
 class IncidentSummary(BaseModel):
@@ -42,6 +51,13 @@ class IncidentSummary(BaseModel):
     disposed_by: str | None = None
     disposed_at: datetime | None = None
     needs_human: bool = False
+    # Incident grouping (ADR-030). ``members`` are the group's other incidents
+    # besides the primary (split ones flagged); empty outside a group.
+    group_id: str | None = None
+    primary_incident_id: str | None = None
+    group_split_at: datetime | None = None
+    group_note: str | None = None
+    members: list[GroupMemberView] = []
 
 
 class AlertEventView(BaseModel):
@@ -93,7 +109,53 @@ def first_alert_names(session: Session, incident_ids: list[str]) -> dict[str, st
     return names
 
 
-def _summary(row: IncidentRow, title: str | None = None) -> IncidentSummary:
+@dataclass(frozen=True)
+class _GroupFacts:
+    primary_incident_id: str
+    members: list[GroupMemberView]
+
+
+def group_facts(session: Session, group_ids: set[str]) -> dict[str, _GroupFacts]:
+    """Primary and members of each group, in one query per table."""
+    if not group_ids:
+        return {}
+    primaries: dict[str, str] = {
+        group_id: primary_id
+        for group_id, primary_id in session.execute(
+            select(IncidentGroupRow.id, IncidentGroupRow.primary_incident_id).where(
+                IncidentGroupRow.id.in_(sorted(group_ids))
+            )
+        )
+    }
+    members: dict[str, list[GroupMemberView]] = {gid: [] for gid in primaries}
+    rows = session.execute(
+        select(
+            IncidentRow.group_id,
+            IncidentRow.id,
+            IncidentRow.service_id,
+            IncidentRow.state,
+            IncidentRow.group_split_at,
+        )
+        .where(IncidentRow.group_id.in_(sorted(primaries)))
+        .order_by(IncidentRow.created_at)
+    )
+    for group_id, incident_id, service_id, state, split_at in rows:
+        if group_id is None or incident_id == primaries[group_id]:
+            continue
+        members[group_id].append(
+            GroupMemberView(
+                id=incident_id,
+                service_id=service_id,
+                state=IncidentState(state),
+                split=split_at is not None,
+            )
+        )
+    return {gid: _GroupFacts(primaries[gid], members[gid]) for gid in primaries}
+
+
+def _summary(
+    row: IncidentRow, title: str | None = None, group: _GroupFacts | None = None
+) -> IncidentSummary:
     disposition = Disposition(row.disposition) if row.disposition else None
     state = IncidentState(row.state)
     return IncidentSummary(
@@ -114,6 +176,11 @@ def _summary(row: IncidentRow, title: str | None = None) -> IncidentSummary:
         disposed_by=row.disposed_by,
         disposed_at=row.disposed_at,
         needs_human=needs_human(state, disposition),
+        group_id=row.group_id,
+        primary_incident_id=group.primary_incident_id if group else None,
+        group_split_at=row.group_split_at,
+        group_note=row.group_note,
+        members=group.members if group else [],
     )
 
 
@@ -127,7 +194,11 @@ def list_incidents(
         query = query.where(IncidentRow.service_id == service_id)
     rows = list(session.scalars(query))
     titles = first_alert_names(session, [row.id for row in rows])
-    return [_summary(row, titles.get(row.id)) for row in rows]
+    groups = group_facts(session, {row.group_id for row in rows if row.group_id})
+    return [
+        _summary(row, titles.get(row.id), groups.get(row.group_id) if row.group_id else None)
+        for row in rows
+    ]
 
 
 def _alert_view(row: AlertEventRow) -> AlertEventView:
@@ -291,8 +362,13 @@ def get_incident(session: Session, incident_id: str) -> IncidentDetail | None:
         for step in tool_steps
     ]
     timeline.sort(key=lambda entry: entry.at)
+    groups = group_facts(session, {row.group_id} if row.group_id else set())
     return IncidentDetail(
-        **_summary(row, first_alert_names(session, [row.id]).get(row.id)).model_dump(),
+        **_summary(
+            row,
+            first_alert_names(session, [row.id]).get(row.id),
+            groups.get(row.group_id) if row.group_id else None,
+        ).model_dump(),
         escalation_reason=row.escalation_reason,
         alert_events=[_alert_view(a) for a in alerts],
         timeline=timeline,
