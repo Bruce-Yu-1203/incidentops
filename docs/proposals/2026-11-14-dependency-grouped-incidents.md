@@ -1,7 +1,9 @@
 # Proposal: group incidents by service dependency
 
 - **Date:** 2026-11-14
-- **Status:** Proposed, awaiting a decision
+- **Status:** Phases 1 and 2 approved on 2026-11-15 and built (ADR-030); the
+  investigation prompt change, G3, phase 3 group cards and phase 4 (B-F14,
+  B-N03, grading 2.2) are open
 - **Evidence:** `docs/benchmark-results/2026-11-14-B1-deepseek-flash-v2.1-r2/`
 
 ## Problem

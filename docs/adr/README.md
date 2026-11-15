@@ -29,3 +29,4 @@ it with a new ADR that supersedes the old one.
 | [ADR-027](ADR-027-evidence-preconditions-and-abstention.md) | Evidence preconditions for database releases, and no-fault abstention | Accepted |
 | [ADR-028](ADR-028-submit-diagnosis-schema.md) | A self-describing submit_diagnosis schema | Accepted |
 | [ADR-029](ADR-029-current-state-evidence.md) | Root-cause component, restart precondition and current-state telemetry | Accepted |
+| [ADR-030](ADR-030-dependency-grouped-incidents.md) | Dependency-grouped incidents: catalog edges, symptom class, groups and the GROUPED state | Accepted |
