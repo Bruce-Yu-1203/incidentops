@@ -21,6 +21,7 @@ const HANDLING_LABEL: Record<string, string> = {
   EXECUTING: "Running action",
   VERIFYING: "Verifying",
   INSUFFICIENT_EVIDENCE: "Needs more evidence",
+  GROUPED: "Grouped",
 };
 
 /** The status line an incident shows in the inbox and its accent colour. */
@@ -63,6 +64,19 @@ export function groupInbox(incidents: readonly IncidentSummary[]): Inbox {
     (i) => i.state !== "AWAITING_APPROVAL" && !isTerminal("incident", i.state),
   );
   return { needsYou: [...approvals, ...handovers].map(item), handling: handling.map(item) };
+}
+
+/** Unsplit members a group primary stands for ("+N related"); 0 for anything else. */
+export function relatedCount(incident: IncidentSummary): number {
+  if (!incident.primary_incident_id || incident.primary_incident_id !== incident.id) return 0;
+  return (incident.members ?? []).filter((m) => !m.split).length;
+}
+
+/** The primary a grouped (unsplit) member follows, or null (ADR-030). */
+export function groupPrimaryOf(incident: IncidentSummary): string | null {
+  const primary = incident.primary_incident_id;
+  if (!primary || primary === incident.id || incident.group_split_at) return null;
+  return primary;
 }
 
 /** Which incident the inbox opens when none is selected. */

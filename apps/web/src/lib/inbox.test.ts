@@ -1,6 +1,13 @@
 import { describe, expect, it } from "vitest";
 
-import { defaultSelection, groupInbox, inboxStatus, incidentTitle } from "./inbox";
+import {
+  defaultSelection,
+  groupInbox,
+  groupPrimaryOf,
+  inboxStatus,
+  incidentTitle,
+  relatedCount,
+} from "./inbox";
 import type { IncidentSummary } from "./incidents";
 
 const base: IncidentSummary = {
@@ -56,5 +63,39 @@ describe("incidentTitle", () => {
       "Kafka consumer lag high",
     );
     expect(incidentTitle({ title: null, dedup_key: "svc:alert" })).toBe("Svc:alert");
+  });
+});
+
+describe("incident groups (ADR-030)", () => {
+  const member = (id: string, split = false) => ({
+    id,
+    service_id: id,
+    state: "GROUPED" as const,
+    split,
+  });
+
+  it("counts unsplit members on the primary only", () => {
+    const primary = inc("p", {
+      primary_incident_id: "p",
+      members: [member("a"), member("b"), member("c", true)],
+    });
+    expect(relatedCount(primary)).toBe(2);
+    expect(relatedCount(inc("a", { primary_incident_id: "p", members: [member("a")] }))).toBe(0);
+    expect(relatedCount(base)).toBe(0);
+  });
+
+  it("links a grouped member to its primary unless it was split out", () => {
+    expect(groupPrimaryOf(inc("a", { state: "GROUPED", primary_incident_id: "p" }))).toBe("p");
+    expect(
+      groupPrimaryOf(
+        inc("a", { primary_incident_id: "p", group_split_at: "2026-11-15T05:00:00Z" }),
+      ),
+    ).toBeNull();
+    expect(groupPrimaryOf(inc("p", { primary_incident_id: "p" }))).toBeNull();
+  });
+
+  it("keeps grouped members in the handling list with their own label", () => {
+    const inbox = groupInbox([inc("a", { state: "GROUPED", primary_incident_id: "p" })]);
+    expect(inbox.handling.map((i) => i.label)).toEqual(["Grouped"]);
   });
 });

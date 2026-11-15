@@ -2,7 +2,14 @@ import Link from "next/link";
 
 import { apiBaseUrl } from "@/lib/api";
 import { formatAge } from "@/lib/attention";
-import { defaultSelection, groupInbox, type InboxItem, incidentTitle } from "@/lib/inbox";
+import {
+  defaultSelection,
+  groupInbox,
+  groupPrimaryOf,
+  type InboxItem,
+  incidentTitle,
+  relatedCount,
+} from "@/lib/inbox";
 import { fetchIncidents } from "@/lib/incidents";
 import { sessionFetch } from "@/lib/session";
 import { LoadError } from "@/app/load-error";
@@ -17,6 +24,8 @@ function Card({ item, selected, now }: { item: InboxItem; selected: boolean; now
       : incident.owner_username
         ? `Owner: ${incident.owner_username}`
         : incident.service_id;
+  const related = relatedCount(incident);
+  const follows = groupPrimaryOf(incident);
   return (
     <Link
       href={`/incidents/${incident.id}`}
@@ -28,7 +37,11 @@ function Card({ item, selected, now }: { item: InboxItem; selected: boolean; now
         <span className="age">{formatAge(incident.created_at, now)}</span>
       </span>
       <strong>{incidentTitle(incident)}</strong>
-      <span className="sub">{sub}</span>
+      <span className="sub">
+        {sub}
+        {related > 0 ? ` · +${related} related` : ""}
+        {follows ? " · grouped" : ""}
+      </span>
     </Link>
   );
 }

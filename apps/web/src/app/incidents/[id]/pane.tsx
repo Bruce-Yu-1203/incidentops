@@ -12,7 +12,7 @@ import { fetchMe } from "@/lib/auth";
 import { diagnosisRun, formalRuns, shortId } from "@/lib/evidence";
 import { byRole, evidenceNotes, type EvidenceNote } from "@/lib/evidence-notes";
 import { decodeRecheck } from "@/lib/handling";
-import { incidentTitle, inboxStatus } from "@/lib/inbox";
+import { groupPrimaryOf, incidentTitle, inboxStatus, relatedCount } from "@/lib/inbox";
 import { DISPOSITION_LABEL, DISPOSITIONS, fetchIncident, type IncidentDetail } from "@/lib/incidents";
 import { type EvidenceView, fetchRun, type RunDetail } from "@/lib/investigations";
 import { alertClearedAt, lifecycleRows, mergeAlerts } from "@/lib/lifecycle-rows";
@@ -868,6 +868,26 @@ export async function IncidentPane({
         <h1 className="incident-headline">{story.headline}</h1>
         <p className="incident-summary">{story.summary}</p>
         {incident.diagnosis ? <IncidentTabLink incidentId={incident.id} tab="investigation" hash="#full-diagnosis" className="small">Read full diagnosis →</IncidentTabLink> : null}
+        {groupPrimaryOf(incident) ? (
+          <p className="notice notice-info">
+            Grouped with a related incident of the same fault: only its{" "}
+            <Link href={`/incidents/${groupPrimaryOf(incident)}`}>primary incident</Link> is
+            investigated, and this one follows it.
+          </p>
+        ) : null}
+        {relatedCount(incident) > 0 ? (
+          <span className="tiny">
+            +{relatedCount(incident)} related:{" "}
+            {(incident.members ?? [])
+              .filter((m) => !m.split)
+              .map((m, i) => (
+                <span key={m.id}>
+                  {i > 0 ? ", " : ""}
+                  <Link href={`/incidents/${m.id}`}>{m.service_id}</Link>
+                </span>
+              ))}
+          </span>
+        ) : null}
         <span className="tiny faint">
           {incidentTitle(incident)} · <span className="mono">{incident.id}</span> ·{" "}
           <Link href={`/reports?id=${incident.id}`}>Report</Link>

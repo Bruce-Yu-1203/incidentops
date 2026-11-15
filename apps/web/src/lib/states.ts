@@ -29,6 +29,7 @@ const TONES: Record<Machine, Record<string, Tone>> = {
     ESCALATED: "danger",
     FAILED: "danger",
     CANCELLED: "neutral",
+    GROUPED: "neutral",
   },
   run: {
     QUEUED: "progress",

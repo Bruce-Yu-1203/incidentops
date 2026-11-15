@@ -17,6 +17,7 @@ export const INCIDENT_STATES = [
   "ESCALATED",
   "FAILED",
   "CANCELLED",
+  "GROUPED",
 ] as const;
 
 export type IncidentState = (typeof INCIDENT_STATES)[number];
@@ -41,7 +42,16 @@ export type IncidentSummary = {
   disposed_at?: string | null;
   /** Handed over to a person and not yet closed by one (ADR-021). */
   needs_human?: boolean;
+  /** Incident group of one fault across related services (ADR-030). */
+  group_id?: string | null;
+  primary_incident_id?: string | null;
+  group_split_at?: string | null;
+  group_note?: string | null;
+  /** The group's other incidents besides the primary. */
+  members?: GroupMember[];
 };
+
+export type GroupMember = { id: string; service_id: string; state: IncidentState; split: boolean };
 
 export const DISPOSITIONS = [
   "FIXED_MANUALLY",
