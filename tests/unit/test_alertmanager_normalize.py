@@ -8,6 +8,7 @@ from typing import Any
 
 import pytest
 
+from incidentops.domain.schemas import SymptomClass
 from incidentops.ingestion.alertmanager import (
     MAX_ALERTS_PER_PAYLOAD,
     PayloadRejectedError,
@@ -139,3 +140,44 @@ def test_rules_for_same_service_share_dedup_key() -> None:
     body["alerts"][0]["labels"]["alertname"] = "lab_consumer_errors_high"
     (errors,) = normalize(body, received_at=NOW)
     assert dedup_key(latency) == dedup_key(errors)
+
+
+@pytest.mark.parametrize(
+    ("label", "expected"),
+    [
+        ("dependency", SymptomClass.DEPENDENCY),
+        ("intrinsic", SymptomClass.INTRINSIC),
+        (None, SymptomClass.INTRINSIC),
+        ("upstream", SymptomClass.INTRINSIC),
+    ],
+)
+def test_symptom_class_label_defaults_to_intrinsic(label: str | None, expected: object) -> None:
+    raw = payload()
+    if label is not None:
+        raw["alerts"][0]["labels"]["symptom_class"] = label
+    (event,) = normalize(raw, NOW)
+    assert event.symptom_class is expected
+
+
+def test_every_alert_rule_declares_a_known_symptom_class() -> None:
+    from pathlib import Path
+
+    import yaml
+
+    rules = Path(__file__).resolve().parents[2] / "infra" / "prometheus" / "rules"
+    groups = yaml.safe_load((rules / "lab.rules.yml").read_text(encoding="utf-8"))["groups"]
+    classes = {
+        rule["alert"]: rule["labels"].get("symptom_class")
+        for group in groups
+        for rule in group["rules"]
+        if "alert" in rule
+    }
+    assert {name for name, value in classes.items() if value == "dependency"} == {
+        "lab_api_error_ratio_high",
+        "lab_api_latency_p95_high",
+        "lab_kafka_consumer_lag_high",
+        "lab_consumer_processing_slow",
+    }
+    assert {name for name, value in classes.items() if value != "dependency"} == {
+        name for name, value in classes.items() if value == "intrinsic"
+    }

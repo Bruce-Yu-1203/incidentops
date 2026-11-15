@@ -1,6 +1,10 @@
 # Lab alert rules. Labels name the affected service and domain, never the
 # injected root cause (benchmark.md §2). `for` windows are initial values to be
 # tuned against measured lab baselines.
+# symptom_class (ADR-030): "dependency" for symptoms a failing dependency
+# produces (errors, latency, lag, slow processing), "intrinsic" for symptoms
+# that start in the service itself. Only dependency symptoms may join another
+# service's incident group; a missing label counts as intrinsic.
 groups:
   - name: lab-api
     rules:
@@ -31,6 +35,7 @@ groups:
           service_id: lab-api
           environment: fault-lab
           component: http-api
+          symptom_class: intrinsic
         annotations:
           summary: "lab-api /items request rate above 3x its 30-minute median"
           observed_value: "{{ $value | printf \"%.1f\" }} requests/s"
@@ -43,6 +48,7 @@ groups:
           service_id: lab-api
           environment: fault-lab
           component: http-api
+          symptom_class: dependency
         annotations:
           summary: "lab-api /items P95 latency above 500ms"
           observed_value: "{{ $value | humanizeDuration }}"
@@ -55,6 +61,7 @@ groups:
           service_id: lab-api
           environment: fault-lab
           component: http-api
+          symptom_class: dependency
         annotations:
           summary: "lab-api /items 5xx ratio above 5%"
           observed_value: "{{ $value | humanizePercentage }}"
@@ -72,6 +79,7 @@ groups:
           service_id: persist-demo-consumer
           environment: fault-lab
           component: kafka-consumer
+          symptom_class: dependency
         annotations:
           summary: "persist-demo-consumer group lag above 200 messages"
           observed_value: "{{ $value }}"
@@ -89,6 +97,7 @@ groups:
           service_id: lab-kafka
           environment: fault-lab
           component: kafka-broker
+          symptom_class: intrinsic
         annotations:
           summary: "lab-kafka broker is not visible to the lag exporter"
           observed_value: "{{ $value }} brokers"
@@ -110,6 +119,7 @@ groups:
           service_id: persist-demo-consumer
           environment: fault-lab
           component: kafka-consumer
+          symptom_class: dependency
         annotations:
           summary: "persist-demo-consumer processes below 80% of the produce rate"
           observed_value: "{{ $value | printf \"%.1f\" }} messages/s"
@@ -129,6 +139,7 @@ groups:
           service_id: lab-api
           environment: fault-lab
           component: http-api
+          symptom_class: intrinsic
         annotations:
           summary: "lab-api resident memory growing faster than 1 MB/s"
           observed_value: "{{ $value | humanize1024 }}B/s"
@@ -141,6 +152,7 @@ groups:
           service_id: lab-api
           environment: fault-lab
           component: http-api
+          symptom_class: intrinsic
         annotations:
           summary: "lab-api process using more than 0.6 CPU cores"
           observed_value: "{{ $value | printf \"%.2f\" }} cores"
@@ -155,6 +167,7 @@ groups:
           service_id: lab-redis
           environment: fault-lab
           component: cache
+          symptom_class: intrinsic
         annotations:
           summary: "lab-redis is not reachable by its exporter"
           observed_value: "{{ $value }}"
@@ -167,6 +180,7 @@ groups:
           service_id: lab-postgres
           environment: fault-lab
           component: database
+          symptom_class: intrinsic
         annotations:
           summary: "lab-postgres is not reachable by its exporter"
           observed_value: "{{ $value }}"
@@ -181,6 +195,7 @@ groups:
           service_id: lab-postgres
           environment: fault-lab
           component: database
+          symptom_class: intrinsic
         annotations:
           summary: "lab-postgres connections above 90% of max_connections"
           observed_value: "{{ $value | humanizePercentage }}"

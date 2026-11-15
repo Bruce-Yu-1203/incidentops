@@ -61,6 +61,18 @@ class AlertStatus(StrEnum):
     RESOLVED = "resolved"
 
 
+class SymptomClass(StrEnum):
+    """Where an alert's symptom starts (ADR-030).
+
+    ``dependency``: a failing dependency produces it (errors, latency, lag).
+    ``intrinsic``: it starts in the service itself (memory, CPU, traffic surge).
+    Only a dependency symptom may join another service's incident group.
+    """
+
+    INTRINSIC = "intrinsic"
+    DEPENDENCY = "dependency"
+
+
 class AlertEvent(_Contract):
     """One normalized alert delivery (repeated deliveries are all retained)."""
 
@@ -78,6 +90,9 @@ class AlertEvent(_Contract):
     ends_at: AwareDatetime | None = None
     received_at: AwareDatetime
     payload_digest: Annotated[str, StringConstraints(pattern=r"^sha256:[0-9a-f]{64}$")]
+    # A missing or unknown label is intrinsic: such an incident is never
+    # grouped under another service's primary.
+    symptom_class: SymptomClass = SymptomClass.INTRINSIC
 
 
 class Incident(_Contract):

@@ -14,7 +14,13 @@ from typing import Annotated, Any, Literal
 from pydantic import BaseModel, ConfigDict, Field, StringConstraints, ValidationError
 
 from incidentops.domain.ids import new_id
-from incidentops.domain.schemas import AlertEvent, AlertStatus, Environment, Severity
+from incidentops.domain.schemas import (
+    AlertEvent,
+    AlertStatus,
+    Environment,
+    Severity,
+    SymptomClass,
+)
 
 MAX_ALERTS_PER_PAYLOAD = 200
 REQUIRED_LABELS = ("alertname", "service_id", "environment", "severity")
@@ -61,6 +67,14 @@ def dedup_key(event: AlertEvent) -> str:
     return f"{event.environment.value}:{event.service_id}"
 
 
+def symptom_class(labels: dict[str, str]) -> SymptomClass:
+    """The rule's ``symptom_class`` label; missing or unknown values are intrinsic."""
+    try:
+        return SymptomClass(labels.get("symptom_class", ""))
+    except ValueError:
+        return SymptomClass.INTRINSIC
+
+
 def _digest(alert: AlertmanagerAlert) -> str:
     canonical = json.dumps(alert.model_dump(mode="json"), sort_keys=True, separators=(",", ":"))
     return "sha256:" + hashlib.sha256(canonical.encode()).hexdigest()
@@ -100,6 +114,7 @@ def normalize(raw: Any, received_at: datetime) -> list[AlertEvent]:
                     ends_at=ends_at,
                     received_at=received_at,
                     payload_digest=_digest(alert),
+                    symptom_class=symptom_class(alert.labels),
                 )
             )
         except (ValidationError, ValueError) as exc:

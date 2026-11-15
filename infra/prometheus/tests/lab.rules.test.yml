@@ -25,6 +25,7 @@ tests:
               service_id: persist-demo-consumer
               environment: fault-lab
               component: kafka-consumer
+              symptom_class: dependency
             exp_annotations:
               summary: "persist-demo-consumer group lag above 200 messages"
               observed_value: "1800"
@@ -58,6 +59,7 @@ tests:
               service_id: lab-api
               environment: fault-lab
               component: http-api
+              symptom_class: dependency
             exp_annotations:
               summary: "lab-api /items P95 latency above 500ms"
               observed_value: "4.775s"
@@ -90,6 +92,7 @@ tests:
               service_id: lab-api
               environment: fault-lab
               component: http-api
+              symptom_class: dependency
             exp_annotations:
               summary: "lab-api /items 5xx ratio above 5%"
               observed_value: "50%"
@@ -130,6 +133,7 @@ tests:
               service_id: lab-api
               environment: fault-lab
               component: http-api
+              symptom_class: intrinsic
             exp_annotations:
               summary: "lab-api resident memory growing faster than 1 MB/s"
               observed_value: "1.907MiB/s"
@@ -152,6 +156,7 @@ tests:
               service_id: lab-api
               environment: fault-lab
               component: http-api
+              symptom_class: intrinsic
             exp_annotations:
               summary: "lab-api resident memory growing faster than 1 MB/s"
               observed_value: "2.384MiB/s"
@@ -180,6 +185,7 @@ tests:
               service_id: lab-api
               environment: fault-lab
               component: http-api
+              symptom_class: intrinsic
             exp_annotations:
               summary: "lab-api process using more than 0.6 CPU cores"
               observed_value: "0.80 cores"
@@ -198,6 +204,7 @@ tests:
               service_id: lab-redis
               environment: fault-lab
               component: cache
+              symptom_class: intrinsic
             exp_annotations:
               summary: "lab-redis is not reachable by its exporter"
               observed_value: "0"
@@ -219,6 +226,7 @@ tests:
               service_id: lab-kafka
               environment: fault-lab
               component: kafka-broker
+              symptom_class: intrinsic
             exp_annotations:
               summary: "lab-kafka broker is not visible to the lag exporter"
               observed_value: "0 brokers"
@@ -240,6 +248,7 @@ tests:
               service_id: lab-kafka
               environment: fault-lab
               component: kafka-broker
+              symptom_class: intrinsic
             exp_annotations:
               summary: "lab-kafka broker is not visible to the lag exporter"
               observed_value: "0 brokers"
@@ -280,6 +289,7 @@ tests:
               service_id: persist-demo-consumer
               environment: fault-lab
               component: kafka-consumer
+              symptom_class: dependency
             exp_annotations:
               summary: "persist-demo-consumer processes below 80% of the produce rate"
               observed_value: "10.0 messages/s"
@@ -312,6 +322,7 @@ tests:
               service_id: lab-postgres
               environment: fault-lab
               component: database
+              symptom_class: intrinsic
             exp_annotations:
               summary: "lab-postgres is not reachable by its exporter"
               observed_value: "0"
@@ -334,6 +345,7 @@ tests:
               service_id: lab-api
               environment: fault-lab
               component: http-api
+              symptom_class: intrinsic
             exp_annotations:
               summary: "lab-api /items request rate above 3x its 30-minute median"
               observed_value: "60.0 requests/s"
@@ -366,6 +378,7 @@ tests:
               service_id: lab-postgres
               environment: fault-lab
               component: database
+              symptom_class: intrinsic
             exp_annotations:
               summary: "lab-postgres connections above 90% of max_connections"
               observed_value: "96.25%"
