@@ -40,6 +40,9 @@ class IncidentState(StrEnum):
     ESCALATED = "ESCALATED"
     FAILED = "FAILED"
     CANCELLED = "CANCELLED"
+    # A non-primary member of an incident group (ADR-030): it is not
+    # investigated on its own and follows its group's primary.
+    GROUPED = "GROUPED"
 
 
 class RunState(StrEnum):
@@ -126,12 +129,26 @@ _INCIDENT_CANCELLABLE = {
     _I.DIAGNOSED,
     _I.INSUFFICIENT_EVIDENCE,
     _I.AWAITING_APPROVAL,
+    _I.GROUPED,
 }
 _INCIDENT_TABLE: dict[IncidentState, set[IncidentState]] = {
-    _I.RECEIVED: {_I.TRIAGED},
-    _I.TRIAGED: {_I.INVESTIGATING},
+    # -> GROUPED: joins a group as a non-primary member before its own
+    # investigation starts (ADR-030).
+    _I.RECEIVED: {_I.TRIAGED, _I.GROUPED},
+    _I.TRIAGED: {_I.INVESTIGATING, _I.GROUPED},
     _I.INVESTIGATING: {_I.DIAGNOSED},
-    _I.DIAGNOSED: {_I.DIAGNOSED_ONLY, _I.INSUFFICIENT_EVIDENCE, _I.AWAITING_APPROVAL},
+    # DIAGNOSED -> GROUPED: a primary replaced by a more upstream incident while
+    # its run was going; its diagnosis is kept as context, its proposal dropped.
+    _I.DIAGNOSED: {
+        _I.DIAGNOSED_ONLY,
+        _I.INSUFFICIENT_EVIDENCE,
+        _I.AWAITING_APPROVAL,
+        _I.GROUPED,
+    },
+    # A member is split out (RECEIVED, investigated on its own), resolved by
+    # the verifier once the primary's fix holds and its alerts recovered, or
+    # follows the primary into ESCALATED.
+    _I.GROUPED: {_I.RECEIVED, _I.RESOLVED, _I.ESCALATED},
     _I.INSUFFICIENT_EVIDENCE: {_I.ESCALATED},
     _I.AWAITING_APPROVAL: {_I.EXECUTING, _I.ESCALATED},
     _I.EXECUTING: {_I.VERIFYING, _I.ESCALATED},

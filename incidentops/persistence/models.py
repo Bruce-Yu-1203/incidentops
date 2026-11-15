@@ -96,11 +96,24 @@ class IncidentRow(Base):
     disposition_note: Mapped[str | None] = mapped_column(String(2000))
     disposed_by: Mapped[str | None] = mapped_column(String(64))
     disposed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    # Incident grouping (ADR-030). Every incident ingested with grouping on
+    # belongs to a group; a split member keeps group_id for history and has
+    # group_split_at set. symptom_class is that of the opening alert.
+    group_id: Mapped[str | None] = mapped_column(
+        ForeignKey("incident_groups.id", use_alter=True), index=True
+    )
+    group_split_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    group_note: Mapped[str | None] = mapped_column(String(500))
+    symptom_class: Mapped[str | None] = mapped_column(String(16))
     created_at: Mapped[datetime] = _now()
     updated_at: Mapped[datetime] = _now()
 
     __table_args__ = (
         _state_check(INCIDENT_MACHINE),
+        CheckConstraint(
+            "symptom_class IS NULL OR symptom_class IN ('intrinsic', 'dependency')",
+            name="symptom_class_valid",
+        ),
         CheckConstraint(_DISPOSITION_CHECK, name="disposition_valid"),
         # FR-002: at most one *active* incident per dedup key.
         Index(
@@ -111,6 +124,26 @@ class IncidentRow(Base):
         ),
         Index("ix_incidents_service_state", "service_id", "state"),
     )
+
+
+class IncidentGroupRow(Base):
+    """Incidents of one fault across related services (ADR-030).
+
+    Only the primary (the most upstream member) is investigated; the other
+    members are GROUPED and follow it. ``window_ends_at`` is the latest time a
+    new related incident may still join (the newest member's opening time
+    plus the grouping window).
+    """
+
+    __tablename__ = "incident_groups"
+
+    id: Mapped[str] = mapped_column(ID, primary_key=True)
+    environment: Mapped[str] = mapped_column(String(32), nullable=False)
+    primary_incident_id: Mapped[str] = mapped_column(ForeignKey("incidents.id"), nullable=False)
+    opened_at: Mapped[datetime] = _now()
+    window_ends_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+    __table_args__ = (Index("ix_incident_groups_environment", "environment", "window_ends_at"),)
 
 
 class AlertEventRow(Base):

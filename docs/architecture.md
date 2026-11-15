@@ -167,7 +167,9 @@ RECEIVED → TRIAGED → INVESTIGATING → DIAGNOSED
                                                             └→ ESCALATED  └→ ESCALATED
 ```
 
-Additional terminal states: `FAILED` (platform/internal failure) and `CANCELLED` (authorized cancellation). Incident transitions are performed **only by Incident Workflow** after checking domain invariants; the agent returns findings rather than setting lifecycle status.
+Additional terminal states: `FAILED` (platform/internal failure) and `CANCELLED` (authorized cancellation).
+
+`GROUPED` (non-terminal, ADR-030) marks a non-primary member of an incident group: incidents of one fault across related services. It is entered from `RECEIVED`/`TRIAGED` (joined before its own investigation started) or `DIAGNOSED` (a primary replaced by a more upstream incident while its run was going; its proposal is dropped). It leaves to `RECEIVED` (split out and investigated on its own), `RESOLVED` (the verifier found its alerts recovered after the primary's fix passed), `ESCALATED` (it follows its primary), `FAILED` or `CANCELLED`. Incident transitions are performed **only by Incident Workflow** after checking domain invariants; the agent returns findings rather than setting lifecycle status.
 
 ### 5.2 Investigation run
 

@@ -5,7 +5,8 @@ apply it with explicit GRANT statements, and an integration test compares the
 live catalog with it. No role except the migration owner may UPDATE or DELETE
 audit events, and the agent role cannot change actions, approvals, executions
 or verifications, or read user accounts. It may read actions and verifications
-for the chat agent's incident snapshot (ADR-023).
+for the chat agent's incident snapshot (ADR-023). Incident groups (ADR-030)
+are written by the API role only; the other roles read them.
 """
 
 from __future__ import annotations
@@ -42,6 +43,8 @@ PRIVILEGES: Final[dict[str, dict[str, frozenset[str]]]] = {
         "sessions": frozenset({S, I, U}),
         "incident_chat_messages": frozenset({S, I}),
         "incident_chat_summaries": frozenset({S}),
+        # Ingestion forms groups; a person may split a member out (ADR-030).
+        "incident_groups": frozenset({S, I, U}),
     },
     # Investigation worker: its own run, steps, evidence and diagnosis, plus the
     # incident lifecycle up to DIAGNOSED. No action/approval/execution writes.
@@ -60,6 +63,8 @@ PRIVILEGES: Final[dict[str, dict[str, frozenset[str]]]] = {
         # Answers to the incident chat; questions are written by the API.
         "incident_chat_messages": frozenset({S, I}),
         "incident_chat_summaries": frozenset({S, I}),
+        # The primary's context lists its group members (ADR-030).
+        "incident_groups": frozenset({S}),
     },
     # Executor: action execution state, external operations, follow-up jobs.
     EXECUTOR_ROLE: {
@@ -70,6 +75,8 @@ PRIVILEGES: Final[dict[str, dict[str, frozenset[str]]]] = {
         "audit_events": frozenset({I}),
         "outbox_jobs": frozenset({S, I, U}),
         "policy_versions": frozenset({S}),
+        # An escalated primary takes its group members along (ADR-030).
+        "incident_groups": frozenset({S}),
     },
     # Verifier: reads execution results, writes verifications and resolution.
     VERIFIER_ROLE: {
@@ -78,7 +85,11 @@ PRIVILEGES: Final[dict[str, dict[str, frozenset[str]]]] = {
         "external_operations": frozenset({S}),
         "verifications": frozenset({S, I}),
         "audit_events": frozenset({I}),
-        "outbox_jobs": frozenset({S, U}),
+        # After a primary's fix passed, the verifier checks the members' alerts
+        # and resolves them or splits them out with an investigation job.
+        "outbox_jobs": frozenset({S, I, U}),
+        "incident_groups": frozenset({S}),
+        "alert_events": frozenset({S}),
     },
 }
 

@@ -41,6 +41,12 @@ EXPECTED_INCIDENT_EDGES = {
     (I.EXECUTING, I.ESCALATED),
     (I.VERIFYING, I.RESOLVED),
     (I.VERIFYING, I.ESCALATED),
+    (I.RECEIVED, I.GROUPED),
+    (I.TRIAGED, I.GROUPED),
+    (I.DIAGNOSED, I.GROUPED),
+    (I.GROUPED, I.RECEIVED),
+    (I.GROUPED, I.RESOLVED),
+    (I.GROUPED, I.ESCALATED),
     *(
         (s, I.FAILED)
         for s in (
@@ -52,6 +58,7 @@ EXPECTED_INCIDENT_EDGES = {
             I.AWAITING_APPROVAL,
             I.EXECUTING,
             I.VERIFYING,
+            I.GROUPED,
         )
     ),
     *(
@@ -63,6 +70,7 @@ EXPECTED_INCIDENT_EDGES = {
             I.DIAGNOSED,
             I.INSUFFICIENT_EVIDENCE,
             I.AWAITING_APPROVAL,
+            I.GROUPED,
         )
     ),
 }
@@ -180,9 +188,23 @@ def test_incident_terminal_states() -> None:
 
 
 def test_incident_cannot_resolve_without_verification() -> None:
-    # RESOLVED is reachable only from VERIFYING (independent verifier).
+    # RESOLVED is reachable only from VERIFYING and from GROUPED (a member the
+    # verifier resolves after its primary's fix passed), both verifier-driven.
     sources = {s for s, t in EXPECTED_INCIDENT_EDGES if t is I.RESOLVED}
-    assert sources == {I.VERIFYING}
+    assert sources == {I.VERIFYING, I.GROUPED}
+
+
+def test_grouped_is_active_for_dedup() -> None:
+    # Later alerts of a grouped service keep appending to the same incident.
+    assert not INCIDENT_MACHINE.is_terminal(I.GROUPED)
+
+
+def test_investigating_incident_cannot_be_grouped_directly() -> None:
+    # A running investigation finishes first; only its result is regrouped.
+    with pytest.raises(IllegalTransitionError):
+        INCIDENT_MACHINE.ensure_transition(I.INVESTIGATING, I.GROUPED)
+    with pytest.raises(IllegalTransitionError):
+        INCIDENT_MACHINE.ensure_transition(I.AWAITING_APPROVAL, I.GROUPED)
 
 
 def test_incident_happy_path_kafka_slice() -> None:
