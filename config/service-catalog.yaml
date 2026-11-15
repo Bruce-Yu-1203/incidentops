@@ -1,7 +1,11 @@
 # Versioned registry of every target IncidentOps may observe or act on.
 # Network destinations live here (server-side), never in model arguments.
+# depends_on lists what a service calls or uses ("A depends on B": B is
+# upstream of A). co_located_with marks services sharing a runtime. Both only
+# group incidents of one fault (ADR-030); tests/contract checks depends_on
+# against the connection settings in fault-lab/compose.yaml.
 schema_version: 1
-catalog_version: c4
+catalog_version: c5
 services:
   - service_id: persist-demo-consumer
     kind: kafka_consumer
@@ -12,6 +16,7 @@ services:
       topic: demo.events.v1
       consumer_group: persist-demo-consumer
     allowed_actions: [resume_test_consumer]
+    depends_on: [lab-kafka, lab-postgres]
   - service_id: demo-producer
     kind: kafka_producer
     environment: fault-lab
@@ -19,6 +24,7 @@ services:
     kafka:
       topic: demo.events.v1
     allowed_actions: []
+    depends_on: [lab-kafka]
   - service_id: lab-api
     kind: http_api
     environment: fault-lab
@@ -26,6 +32,7 @@ services:
     # Deployments and rollbacks go through the lab deployment controller.
     management_url: http://fault-controller:8090
     allowed_actions: [rollback_demo_api]
+    depends_on: [lab-postgres, lab-redis, lab-api-config]
   - service_id: lab-postgres
     kind: postgres
     environment: fault-lab
@@ -44,12 +51,14 @@ services:
     description: Registered background load generator that runs inside lab-api.
     management_url: http://fault-controller:8090
     allowed_actions: [stop_lab_cpu_load]
+    co_located_with: [lab-api]
   - service_id: lab-loadgen
     kind: load_generator
     environment: fault-lab
     description: Registered client workload that sends item requests to lab-api.
     management_url: http://fault-controller:8090
     allowed_actions: [reset_lab_load_profile]
+    depends_on: [lab-api]
   - service_id: lab-api-config
     kind: config_store
     environment: fault-lab

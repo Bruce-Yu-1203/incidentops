@@ -126,3 +126,57 @@ def test_lab_roles_are_bootstrapped_on_every_start() -> None:
     assert "CREATE ROLE lab_app" in init
     # Idempotent: every CREATE ROLE is guarded.
     assert init.count("CREATE ROLE") == init.count("IF NOT EXISTS (SELECT FROM pg_roles")
+
+
+# Connection settings that name a lab dependency, and the compose services that
+# stand for catalog entries. The Kafka proxy forwards every client to lab-kafka.
+CONNECTION_VARIABLES = (
+    "LAB_DATABASE_DSN",
+    "LAB_REDIS_URL",
+    "LAB_KAFKA_BOOTSTRAP",
+    "LAB_LOAD_TARGET",
+)
+COMPOSE_TO_CATALOG = {
+    "lab-api": "lab-api",
+    "lab-consumer": "persist-demo-consumer",
+    "demo-producer": "demo-producer",
+    "lab-loadgen": "lab-loadgen",
+    "lab-postgres": "lab-postgres",
+    "lab-redis": "lab-redis",
+    "lab-kafka": "lab-kafka",
+    "lab-kafka-proxy": "lab-kafka",
+}
+# Dependencies with no network connection: lab-api's runtime configuration
+# lives inside the lab-api process.
+NON_NETWORK_DEPENDENCIES = {"lab-api": {"lab-api-config"}}
+
+
+def _connection_hosts(env: dict[str, Any]) -> set[str]:
+    hosts: set[str] = set()
+    for name in CONNECTION_VARIABLES:
+        value = env.get(name)
+        if not value:
+            continue
+        # "scheme://user:pw@host:port/db" or a bare "host:port" bootstrap list.
+        for target in str(value).split(","):
+            location = target.split("://", 1)[-1].split("/", 1)[0]
+            hosts.add(location.rsplit("@", 1)[-1].split(":", 1)[0])
+    return hosts
+
+
+def test_catalog_dependencies_match_compose_connections() -> None:
+    from incidentops.domain.catalog import load_catalog
+
+    catalog = load_catalog()
+    services = _services(LAB)
+    checked = 0
+    for compose_name, service in services.items():
+        service_id = COMPOSE_TO_CATALOG.get(compose_name)
+        if service_id is None:
+            continue
+        connected = {COMPOSE_TO_CATALOG[h] for h in _connection_hosts(_env(service))}
+        declared = set(catalog.get(service_id).depends_on)
+        expected = declared - NON_NETWORK_DEPENDENCIES.get(service_id, set())
+        assert connected == expected, f"{compose_name}: {connected} != {declared}"
+        checked += 1
+    assert checked == len(set(COMPOSE_TO_CATALOG))

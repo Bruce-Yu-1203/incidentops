@@ -109,3 +109,89 @@ def test_every_compose_management_url_has_a_host_override() -> None:
         and service.service_id not in overrides
     ]
     assert missing == []
+
+
+# -- dependency relations (ADR-030) ---------------------------------------------
+
+
+def _entry(service_id: str, **extra: Any) -> dict[str, Any]:
+    return {
+        "service_id": service_id,
+        "kind": "http_api",
+        "environment": "fault-lab",
+        "description": service_id,
+        **extra,
+    }
+
+
+def _catalog(*entries: dict[str, Any]) -> dict[str, Any]:
+    return {"schema_version": 1, "catalog_version": "c1", "services": list(entries)}
+
+
+def test_repository_catalog_dependency_edges() -> None:
+    catalog = load_catalog()
+    assert catalog.catalog_version == "c5"
+    assert catalog.get("lab-api").depends_on == ("lab-postgres", "lab-redis", "lab-api-config")
+    assert catalog.get("persist-demo-consumer").depends_on == ("lab-kafka", "lab-postgres")
+    assert catalog.get("demo-producer").depends_on == ("lab-kafka",)
+    assert catalog.get("lab-loadgen").depends_on == ("lab-api",)
+    assert catalog.get("lab-cpu-load").co_located_with == ("lab-api",)
+    for upstream in ("lab-postgres", "lab-redis", "lab-kafka", "lab-api-config"):
+        assert catalog.get(upstream).depends_on == ()
+
+
+def test_related_is_direct_and_undirected() -> None:
+    catalog = load_catalog()
+    assert catalog.related("lab-api", "lab-postgres")
+    assert catalog.related("lab-postgres", "lab-api")
+    assert catalog.related("lab-loadgen", "lab-api")
+    assert catalog.related("lab-cpu-load", "lab-api")
+    assert catalog.related("lab-api", "lab-cpu-load")
+    # Only direct edges count: sharing a dependency is not a relation.
+    assert not catalog.related("lab-api", "persist-demo-consumer")
+    assert not catalog.related("lab-loadgen", "lab-postgres")
+    assert not catalog.related("lab-api", "lab-api")
+    assert not catalog.related("lab-api", "unregistered")
+
+
+def test_upstream_rank_and_most_upstream() -> None:
+    catalog = load_catalog()
+    assert catalog.upstream_rank("lab-postgres") == 0
+    assert catalog.upstream_rank("lab-api") == 1
+    assert catalog.upstream_rank("lab-loadgen") == 2
+    assert catalog.upstream_rank("lab-cpu-load") == 0
+    assert catalog.most_upstream(["lab-api", "lab-postgres"]) == "lab-postgres"
+    assert catalog.most_upstream(["persist-demo-consumer", "lab-kafka"]) == "lab-kafka"
+    # Ties keep the first (the current primary).
+    assert catalog.most_upstream(["lab-redis", "lab-postgres"]) == "lab-redis"
+    with pytest.raises(ValueError, match="at least one"):
+        catalog.most_upstream([])
+
+
+def test_dependency_on_unknown_service_rejected() -> None:
+    with pytest.raises(ValidationError, match="unknown related service"):
+        ServiceCatalog.model_validate(_catalog(_entry("a", depends_on=["ghost"])))
+
+
+def test_co_location_with_unknown_service_rejected() -> None:
+    with pytest.raises(ValidationError, match="unknown related service"):
+        ServiceCatalog.model_validate(_catalog(_entry("a", co_located_with=["ghost"])))
+
+
+def test_self_reference_rejected() -> None:
+    with pytest.raises(ValidationError, match="itself"):
+        ServiceCatalog.model_validate(_catalog(_entry("a", depends_on=["a"])))
+
+
+def test_dependency_across_environments_rejected() -> None:
+    raw = _catalog(_entry("a", depends_on=["b"]), _entry("b", environment="staging"))
+    with pytest.raises(ValidationError, match="another environment"):
+        ServiceCatalog.model_validate(raw)
+
+
+def test_dependency_cycle_rejected() -> None:
+    raw = _catalog(
+        _entry("a", depends_on=["b"]), _entry("b", depends_on=["c"]), _entry("c", depends_on=["a"])
+    )
+    with pytest.raises(ValidationError, match="dependency cycle"):
+        ServiceCatalog.model_validate(raw)
