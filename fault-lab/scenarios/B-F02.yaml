@@ -48,6 +48,10 @@ expected:
   required_evidence:
   - any_of: [redis_up, redis_health]
     why: Redis itself is down, not only API errors
+# Benchmark 2.2: the incident group this fault should form (ADR-030).
+expected_group:
+  primary: lab-redis
+  may_include: [lab-api]
 cleanup:
   controller_operation: reset_lab
   require_healthy_baseline: true

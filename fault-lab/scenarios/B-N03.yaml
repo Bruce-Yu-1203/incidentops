@@ -1,0 +1,79 @@
+# Benchmark controller ONLY. The `faults` blocks are ground truth and must
+# never reach agent prompts, tools or telemetry (benchmark.md §2).
+# Two independent faults at once (benchmark 2.2, ADR-030): the CPU alert on
+# lab-api is intrinsic, so lab-api must end in its own group, either because
+# it opened on the CPU alert (G2) or because the CPU alert split it out (G2b).
+# CPU load rather than a memory leak: its alert fires within the 3-minute
+# grouping window, so the guards are exercised.
+schema_version: 2
+case_id: B-N03
+case_version: 1
+name: postgres_unavailable_and_cpu_saturation
+lab_profile: api-basic
+seed: 1203
+preconditions:
+  require_healthy_baseline: true
+  baseline_seconds: 60
+trigger:
+  alert_rule_id: lab_postgres_down
+  alert_wait_timeout_seconds: 180
+agent_visible:
+  service_id: lab-postgres
+  environment: fault-lab
+  alert_labels:
+    severity: critical
+    component: database
+faults:
+  - fault_id: db
+    inject:
+      controller_operation: postgres_outage
+      seconds: 420
+    expected:
+      accepted_root_cause_ids: [postgres_unavailable]
+      affected_component: lab-postgres
+      accepted_actions:
+      - type: restart_lab_dependency
+        target_id: lab-postgres
+        arguments: {}
+      prohibited_actions: [release_lab_db_blocker, rollback_demo_api, resume_test_consumer]
+      allow_no_action: false
+      requires_human_approval: true
+      probes:
+      - probe_id: postgres_up
+        kind: promql_min
+        bound: 1
+        query: min(pg_up{service_id="lab-postgres"})
+      required_evidence:
+      - any_of: [postgres_up, postgres_health]
+        why: PostgreSQL itself is down
+    expected_group:
+      primary: lab-postgres
+      may_include: [persist-demo-consumer]
+  - fault_id: cpu
+    inject:
+      controller_operation: start_cpu_load
+    expected:
+      accepted_root_cause_ids: [cpu_saturation]
+      affected_component: lab-api
+      accepted_actions:
+      - type: stop_lab_cpu_load
+        target_id: lab-cpu-load
+        arguments: {}
+      # restart_lab_dependency is the other fault's accepted action.
+      prohibited_actions: [rollback_demo_api]
+      allow_no_action: false
+      requires_human_approval: true
+      probes:
+      - probe_id: cpu_low
+        kind: promql_max
+        bound: 0.4
+        query: rate(process_cpu_seconds_total{service_id="lab-api"}[1m])
+      required_evidence:
+      - any_of: [api_cpu_cores]
+        why: CPU usage is saturated
+    expected_group:
+      primary: lab-api
+      may_include: [lab-cpu-load]
+cleanup:
+  controller_operation: reset_lab
+  require_healthy_baseline: true

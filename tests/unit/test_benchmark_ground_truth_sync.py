@@ -27,13 +27,15 @@ def test_grader_taxonomy_covers_every_agent_root_cause() -> None:
 
 @pytest.mark.parametrize("manifest", all_scenarios(), ids=lambda m: m.case_id)
 def test_scenario_ground_truth_uses_known_labels(manifest: ScenarioManifest) -> None:
-    assert set(manifest.expected.accepted_root_cause_ids) <= set(ROOT_CAUSES)
     known = set(TEMPLATES) | TOOL_EVIDENCE_TEMPLATES
-    for requirement in manifest.expected.required_evidence:
-        assert set(requirement.any_of) <= known, requirement
+    for fault in manifest.fault_list():
+        assert set(fault.expected.accepted_root_cause_ids) <= set(ROOT_CAUSES)
+        for requirement in fault.expected.required_evidence:
+            assert set(requirement.any_of) <= known, requirement
 
 
 @pytest.mark.parametrize("manifest", all_scenarios(), ids=lambda m: m.case_id)
 def test_action_cases_declare_evidence_predicates(manifest: ScenarioManifest) -> None:
-    if manifest.expected.accepted_root_cause_ids != ["insufficient_evidence"]:
-        assert manifest.expected.required_evidence
+    for fault in manifest.fault_list():
+        if fault.expected.accepted_root_cause_ids != ["insufficient_evidence"]:
+            assert fault.expected.required_evidence

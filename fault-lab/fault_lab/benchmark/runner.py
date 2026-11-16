@@ -15,7 +15,14 @@ from datetime import UTC, datetime
 from typing import Any
 
 from fault_lab.benchmark.clients import IncidentOpsApi, LabFaults, Prometheus
-from fault_lab.benchmark.grading import TERMINAL, Observation, TrialResult, grade
+from fault_lab.benchmark.grading import (
+    TERMINAL,
+    Observation,
+    TrialResult,
+    grade,
+    grade_2_1,
+    is_diagnosing,
+)
 from fault_lab.scenarios import Probe, ScenarioManifest, VerifySpec
 
 LAB_SERVICES = {
@@ -115,8 +122,14 @@ class TrialRunner:
         return min(values) >= probe.bound
 
     def _probes(self, manifest: ScenarioManifest) -> dict[str, bool | None]:
-        verify = manifest.expected.verify
-        return {p.probe_id: self.probe(p, verify) for p in manifest.expected.probes}
+        """Every fault's probes, each judged with its own fault's window."""
+        results: dict[str, bool | None] = {}
+        multi = len(manifest.fault_list()) > 1
+        for fault in manifest.fault_list():
+            for p in fault.expected.probes:
+                key = f"{fault.fault_id}.{p.probe_id}" if multi else p.probe_id
+                results[key] = self.probe(p, fault.expected.verify)
+        return results
 
     def _active_lab_incidents(self) -> list[dict[str, Any]]:
         return [
@@ -182,13 +195,19 @@ class TrialRunner:
 
         inject_at = datetime.now(UTC)
         obs.inject_at = inject_at.isoformat()
-        operation = str(manifest.inject["controller_operation"])
-        self._log(f"[{trial_id}] inject {operation}")
-        try:
-            self._lab.inject(operation, dict(manifest.inject), f"bench-{uuid.uuid4().hex[:12]}")
-        except Exception as exc:
-            obs.invalid_reason = f"injection_failed:{type(exc).__name__}"
-            return self._record(manifest, trial_id, obs, started_at, inject_at)
+        # Schema 2 injects several faults back to back; one reset cleans all.
+        for fault in manifest.fault_list():
+            operation = str(fault.inject["controller_operation"])
+            self._log(f"[{trial_id}] inject {fault.fault_id}: {operation}")
+            try:
+                self._lab.inject(operation, dict(fault.inject), f"bench-{uuid.uuid4().hex[:12]}")
+            except Exception as exc:
+                obs.invalid_reason = f"injection_failed:{fault.fault_id}:{type(exc).__name__}"
+                try:
+                    self._lab.reset()
+                except Exception:
+                    obs.invalid_reason += ";cleanup_failed"
+                return self._record(manifest, trial_id, obs, started_at, inject_at)
 
         try:
             self._drive(manifest, obs, inject_at, trial_id)
@@ -240,7 +259,7 @@ class TrialRunner:
             lambda: (lambda p: p if all(v is True for v in p.values()) else None)(
                 self._probes(manifest)
             ),
-            manifest.expected.verify.recovery_timeout_seconds
+            max(f.expected.verify.recovery_timeout_seconds for f in manifest.fault_list())
             if self._t.probe_s is None
             else self._t.probe_s,
         ) or self._probes(manifest)
@@ -262,6 +281,14 @@ class TrialRunner:
         inject_at: datetime | None,
     ) -> dict[str, Any]:
         result: TrialResult = grade(manifest, obs)
+        faults = len(manifest.fault_list())
+        # The run that diagnosed a fault: a group primary's or a split incident's.
+        primary_runs = {
+            run["id"] for i in obs.incidents if is_diagnosing(i) for run in i.get("runs", [])
+        }
+        primary_finished = [
+            _parse(r.get("finished_at")) for rid, r in obs.runs.items() if rid in primary_runs
+        ]
         created = [_parse(i.get("created_at")) for i in obs.incidents]
         first_created = min((c for c in created if c), default=None)
         finished_runs = [_parse(r.get("finished_at")) for r in obs.runs.values()]
@@ -270,6 +297,22 @@ class TrialRunner:
             _parse(i.get("updated_at")) for i in obs.incidents if i.get("state") == "RESOLVED"
         ]
         record = result.to_json()
+        if faults == 1:
+            # Grading 2.2 changes what is counted: single-fault trials also carry
+            # their 2.1 verdict so the first 2.2 run can be compared (ADR-032).
+            legacy = grade_2_1(manifest, obs)
+            record["status_2_1"] = legacy.status.value
+            record["diagnosis_correct_2_1"] = legacy.diagnosis_correct
+        tokens = sum(
+            int(r.get(k, 0))
+            for r in obs.runs.values()
+            for k in (
+                "input_tokens",
+                "output_tokens",
+                "cache_read_input_tokens",
+                "cache_creation_input_tokens",
+            )
+        )
         record.update(
             {
                 "trial_id": trial_id,
@@ -283,6 +326,10 @@ class TrialRunner:
                 "model_id": ",".join(sorted({str(r.get("model_id")) for r in obs.runs.values()})),
                 "time_to_detect_s": _seconds(inject_at, first_created),
                 "time_to_diagnosis_s": _seconds(first_created, first_diagnosis),
+                "time_to_primary_diagnosis_s": _seconds(
+                    first_created, min((f for f in primary_finished if f), default=None)
+                ),
+                "tokens_per_fault": round(tokens / faults),
                 "time_to_resolution_s": _seconds(
                     inject_at, min((r for r in resolved if r), default=None)
                 ),

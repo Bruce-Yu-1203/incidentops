@@ -345,6 +345,62 @@ def test_runner_drives_a_full_trial_and_cleans_up() -> None:
     assert record["field_lifts"] == 2
 
 
+class HealthyLabProm(FakeProm):
+    """Healthy readings for both kinds of bound: pg_up is 1, everything else 0."""
+
+    def range_values(self, query: str, window_seconds: int, step: int = 5) -> list[float]:
+        return [1.0 if "pg_up" in query else 0.0] * 10
+
+
+def test_runner_injects_every_fault_of_a_schema_2_case() -> None:
+    lab = FakeLab()
+    timeouts = Timeouts(
+        quiet_s=1, baseline_s=1, detect_s=0, investigate_s=0, finish_s=0, probe_s=0, poll_s=0
+    )
+    runner = TrialRunner(
+        cast(Any, lab),
+        cast(Any, HealthyLabProm()),
+        cast(Any, FakeApi()),
+        "http://am",
+        timeouts,
+        sleep=lambda _: None,
+        log=lambda _: None,
+    )
+    record = runner.run(load_scenario("B-F14"), "B-F14-t1")
+    assert lab.injected == ["postgres_outage", "deploy_release"]
+    assert lab.resets == 2
+    # Probes are keyed per fault so that equal probe ids cannot collide.
+    assert set(record["probes"]) == {
+        "db.postgres_up",
+        "release.pinned_release",
+        "release.api_errors_low",
+    }
+
+
+def test_failed_second_injection_resets_the_lab_and_is_invalid() -> None:
+    class FailingLab(FakeLab):
+        def inject(self, operation: str, params: dict[str, Any], action_id: str) -> None:
+            if self.injected:
+                raise RuntimeError("controller refused")
+            super().inject(operation, params, action_id)
+
+    lab = FailingLab()
+    timeouts = Timeouts(quiet_s=1, baseline_s=1, poll_s=0)
+    runner = TrialRunner(
+        cast(Any, lab),
+        cast(Any, HealthyLabProm()),
+        cast(Any, FakeApi()),
+        "http://am",
+        timeouts,
+        sleep=lambda _: None,
+        log=lambda _: None,
+    )
+    record = runner.run(load_scenario("B-N03"), "B-N03-t1")
+    assert record["status"] == "INVALID"
+    assert record["invalid_reason"] == "injection_failed:cpu:RuntimeError"
+    assert lab.resets == 2
+
+
 def test_runner_marks_unhealthy_baseline_invalid() -> None:
     class SickProm(FakeProm):
         def range_values(self, query: str, window_seconds: int, step: int = 5) -> list[float]:
@@ -384,8 +440,9 @@ KNOWN_INJECTIONS = {
 
 @pytest.mark.parametrize("manifest", all_scenarios(), ids=lambda m: m.case_id)
 def test_every_case_has_probes_and_a_known_injection(manifest: ScenarioManifest) -> None:
-    assert manifest.expected.probes
-    assert manifest.inject["controller_operation"] in KNOWN_INJECTIONS
+    for fault in manifest.fault_list():
+        assert fault.expected.probes
+        assert fault.inject["controller_operation"] in KNOWN_INJECTIONS
 
 
 @pytest.mark.parametrize(

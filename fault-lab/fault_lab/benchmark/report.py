@@ -226,6 +226,18 @@ CSV_FIELDS = [
     "conflicting_diagnoses",
     "wrong_mutations_executed",
     "prohibited_actions_proposed",
+    "grading_version",
+    "status_2_1",
+    "missed_merges",
+    "wrong_merges",
+    "wrong_merges_split",
+    "member_investigations",
+    "investigations_per_fault",
+    "grouping_precision",
+    "grouping_recall",
+    "context_diagnoses",
+    "time_to_primary_diagnosis_s",
+    "tokens_per_fault",
     "tool_attempts",
     "argument_coercions",
     "field_lifts",
@@ -261,6 +273,64 @@ USAGE_FIELDS = (
 )
 
 
+def _mean(values: list[float]) -> str:
+    return f"{statistics.mean(values):.2f}" if values else "n/a"
+
+
+def _grouping_lines(trials: list[dict[str, Any]]) -> list[str]:
+    """Grading 2.2 grouping metrics per case, and 2.1 vs 2.2 PASS counts (ADR-032)."""
+    graded = [t for t in trials if t.get("grading_version") == "2.2"]
+    if not graded:
+        return ["No trials graded with benchmark 2.2."]
+    lines = [
+        "| Scenario | PASS 2.2 | PASS 2.1 | Investigations / fault | Missed merges | "
+        "Wrong merges (split / unsplit) | Member investigations | Grouping P / R | "
+        "Median time to primary diagnosis | Split paths |",
+        "|" + "---|" * 10,
+    ]
+    by_case: dict[str, list[dict[str, Any]]] = defaultdict(list)
+    for trial in graded:
+        by_case[trial["case_id"]].append(trial)
+    for case_id in sorted(by_case):
+        rows = [r for r in by_case[case_id] if r["status"] != "INVALID"]
+        legacy = [r for r in rows if r.get("status_2_1")]
+        split = sum(int(r.get("wrong_merges_split") or 0) for r in rows)
+        wrong = sum(int(r.get("wrong_merges") or 0) for r in rows)
+        precision = [
+            float(r["grouping_precision"]) for r in rows if r.get("grouping_precision") is not None
+        ]
+        recall = [float(r["grouping_recall"]) for r in rows if r.get("grouping_recall") is not None]
+        ttpd = [
+            float(r["time_to_primary_diagnosis_s"])
+            for r in rows
+            if r.get("time_to_primary_diagnosis_s") is not None
+        ]
+        paths = sorted(
+            {f"{f['fault_id']}:{f['split_path']}" for r in rows for f in r.get("faults", [])}
+        )
+        lines.append(
+            "| "
+            + " | ".join(
+                [
+                    case_id,
+                    f"{sum(r['status'] == 'PASS' for r in rows)}/{len(rows)}",
+                    f"{sum(r['status_2_1'] == 'PASS' for r in legacy)}/{len(legacy)}"
+                    if legacy
+                    else "n/a (several faults)",
+                    _mean([float(r.get("investigations_per_fault") or 0) for r in rows]),
+                    str(sum(int(r.get("missed_merges") or 0) for r in rows)),
+                    f"{split} / {wrong - split}",
+                    str(sum(int(r.get("member_investigations") or 0) for r in rows)),
+                    f"{_mean(precision)} / {_mean(recall)}",
+                    f"{statistics.median(ttpd):.0f}s" if ttpd else "n/a",
+                    ", ".join(paths) or "n/a",
+                ]
+            )
+            + " |"
+        )
+    return lines
+
+
 def _usage_lines(trials: list[dict[str, Any]]) -> list[str]:
     """Measured usage totals; records from before cache fields count them as 0."""
     if not trials:
@@ -278,6 +348,14 @@ def _usage_lines(trials: list[dict[str, Any]]) -> list[str]:
     return lines
 
 
+def _csv_value(value: Any) -> Any:
+    if isinstance(value, list):
+        if all(isinstance(v, str) for v in value):
+            return ";".join(value)
+        return json.dumps(value, sort_keys=True)
+    return value
+
+
 def write_report(trials: list[dict[str, Any]], metadata: dict[str, Any], out_dir: Path) -> Path:
     out_dir.mkdir(parents=True, exist_ok=True)
     with (out_dir / "trials.jsonl").open("w", encoding="utf-8") as handle:
@@ -287,9 +365,7 @@ def write_report(trials: list[dict[str, Any]], metadata: dict[str, Any], out_dir
         writer = csv.DictWriter(handle, fieldnames=CSV_FIELDS, extrasaction="ignore")
         writer.writeheader()
         for trial in trials:
-            writer.writerow(
-                {k: (";".join(v) if isinstance(v, list) else v) for k, v in trial.items()}
-            )
+            writer.writerow({k: _csv_value(v) for k, v in trial.items()})
     (out_dir / "run-metadata.json").write_text(
         json.dumps(metadata, indent=2, sort_keys=True), encoding="utf-8"
     )
@@ -318,6 +394,16 @@ def write_report(trials: list[dict[str, Any]], metadata: dict[str, Any], out_dir
         "| " + " | ".join(SECONDARY_HEADERS) + " |",
         "|" + "---|" * len(SECONDARY_HEADERS),
         *("| " + " | ".join(s.secondary_row()) + " |" for s in summaries),
+        "",
+        "## Incident groups (grading 2.2)",
+        "",
+        "A fault is judged by the incident that diagnoses it: its group primary or an",
+        "incident split out of a group (ADR-030, ADR-032). A wrong merge that is never",
+        "split out fails the trial; a missed merge (one fault in several groups) is",
+        "reported only. PASS 2.1 re-grades single-fault trials the old way; 2.2 results",
+        "are not 1:1 comparable with runs graded 2.1.",
+        "",
+        *_grouping_lines(trials),
         "",
         "## Usage",
         "",

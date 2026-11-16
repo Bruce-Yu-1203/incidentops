@@ -49,6 +49,10 @@ expected:
   required_evidence:
   - any_of: [postgres_up, postgres_health]
     why: PostgreSQL itself is down
+# Benchmark 2.2: the incident group this fault should form (ADR-030).
+expected_group:
+  primary: lab-postgres
+  may_include: [lab-api, persist-demo-consumer]
 cleanup:
   controller_operation: reset_lab
   require_healthy_baseline: true
