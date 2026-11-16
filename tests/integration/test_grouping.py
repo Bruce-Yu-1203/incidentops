@@ -21,6 +21,7 @@ from incidentops.domain.catalog import ServiceCatalog, load_catalog
 from incidentops.domain.schemas import AlertEvent
 from incidentops.domain.state_machines import IncidentState
 from incidentops.grouping import (
+    INTRINSIC_ON_MEMBER_NOTE,
     INVESTIGATE_JOB,
     SPLIT_BY_VERIFIER_NOTE,
     VERIFY_GROUP_MEMBERS_JOB,
@@ -60,6 +61,7 @@ RULES = {
     "lab_api_error_ratio_high": ("lab-api", "dependency"),
     "lab_api_latency_p95_high": ("lab-api", "dependency"),
     "lab_api_memory_growth": ("lab-api", "intrinsic"),
+    "lab_api_cpu_high": ("lab-api", "intrinsic"),
     "lab_kafka_consumer_lag_high": ("persist-demo-consumer", "dependency"),
 }
 
@@ -553,3 +555,44 @@ async def test_member_joining_does_not_invalidate_an_approval(
     )
     assert response.status_code == 200, response.text
     assert response.json()["outcome"] == "approved"
+
+
+# -- G2b ---------------------------------------------------------------------------
+
+
+def test_intrinsic_alert_on_a_member_splits_it_out(session_factory: sessionmaker[Session]) -> None:
+    (postgres,) = ingest(session_factory, "lab_postgres_down")
+    (api,) = ingest(session_factory, "lab_api_error_ratio_high")
+    assert incident(session_factory, api).state == IncidentState.GROUPED
+
+    result = ingest_events(session_factory, [event("lab_api_cpu_high")], ACTOR, grouping=CONFIG)
+    assert result.updated_incident_ids == [api]
+    row = incident(session_factory, api)
+    assert row.state == IncidentState.RECEIVED
+    assert row.group_split_at is not None
+    (job,) = jobs(session_factory, api)
+    assert job.payload["note"] == INTRINSIC_ON_MEMBER_NOTE
+    with session_factory() as session:
+        reason = session.scalars(
+            select(AuditEventRow.reason).where(
+                AuditEventRow.resource_id == api,
+                AuditEventRow.event_type == "incident_group_split",
+            )
+        ).one()
+    assert (reason or "").startswith("intrinsic_symptom_on_member")
+    assert incident(session_factory, postgres).state == IncidentState.RECEIVED  # unchanged
+
+
+def test_dependency_or_resolved_alerts_keep_a_member_grouped(
+    session_factory: sessionmaker[Session],
+) -> None:
+    ingest(session_factory, "lab_postgres_down")
+    (api,) = ingest(session_factory, "lab_api_error_ratio_high")
+    ingest_events(
+        session_factory,
+        [event("lab_api_latency_p95_high"), event("lab_api_cpu_high", "resolved")],
+        ACTOR,
+        grouping=CONFIG,
+    )
+    assert incident(session_factory, api).state == IncidentState.GROUPED
+    assert jobs(session_factory, api) == []

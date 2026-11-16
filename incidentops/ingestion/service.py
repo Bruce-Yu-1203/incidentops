@@ -10,6 +10,7 @@ For each normalized alert, in one database transaction:
    per-environment advisory lock) and enqueue exactly one
    ``investigate_incident`` outbox job unless it joined a group as a
    non-primary member. A primary with dependencies waits a settle time.
+   An intrinsic alert on an existing GROUPED member splits it out (G2b).
 
 Resolved alerts never change incident state: only the independent verifier
 may resolve an incident.
@@ -26,9 +27,17 @@ from sqlalchemy.orm import Session, sessionmaker
 
 from incidentops.domain.disposition import HANDOVER_STATES
 from incidentops.domain.ids import new_id
-from incidentops.domain.schemas import AlertEvent, AlertStatus
+from incidentops.domain.schemas import AlertEvent, AlertStatus, SymptomClass
 from incidentops.domain.state_machines import INCIDENT_MACHINE, IncidentState
-from incidentops.grouping import INVESTIGATE_JOB, GroupingConfig, assign_group, lock_environment
+from incidentops.grouping import (
+    INTRINSIC_ON_MEMBER,
+    INTRINSIC_ON_MEMBER_NOTE,
+    INVESTIGATE_JOB,
+    GroupingConfig,
+    assign_group,
+    lock_environment,
+    split_member,
+)
 from incidentops.ingestion.alertmanager import dedup_key
 from incidentops.persistence.models import AlertEventRow, AuditEventRow, IncidentRow, OutboxJobRow
 from incidentops.time import utcnow
@@ -90,6 +99,15 @@ def _create_incident(session: Session, event: AlertEvent, key: str) -> str | Non
     return session.execute(statement).scalar_one_or_none()
 
 
+def _intrinsic_on_member(incident: IncidentRow, event: AlertEvent) -> bool:
+    return (
+        incident.state == IncidentState.GROUPED.value
+        and incident.group_split_at is None
+        and event.status is AlertStatus.FIRING
+        and event.symptom_class is SymptomClass.INTRINSIC
+    )
+
+
 def _record_event(session: Session, incident_id: str, event: AlertEvent) -> None:
     session.add(
         AlertEventRow(
@@ -132,6 +150,17 @@ def ingest_events(
             if incident is not None:
                 _record_event(session, incident.id, event)
                 result.updated_incident_ids.append(incident.id)
+                if _intrinsic_on_member(incident, event):
+                    # G2b: the group was formed on the opening alert's symptom
+                    # class; a later intrinsic symptom is this service's own
+                    # problem, so the member is investigated on its own.
+                    split_member(
+                        session,
+                        incident,
+                        actor=actor,
+                        reason=f"{INTRINSIC_ON_MEMBER}: {event.alert_name}",
+                        note=INTRINSIC_ON_MEMBER_NOTE,
+                    )
                 continue
             if event.status is AlertStatus.RESOLVED:
                 # A resolved notification alone must not open an incident. It

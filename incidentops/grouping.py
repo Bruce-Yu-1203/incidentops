@@ -14,6 +14,7 @@ lock so concurrent deliveries cannot form two groups for one fault:
   incident in that group opened within the grouping window.
 * G2 symptom class: an incident opened by an ``intrinsic`` alert never becomes
   a non-primary member. It starts its own group unless it becomes the primary.
+  G2b: a later intrinsic alert on a GROUPED member splits it out at once.
 * Primary: the most upstream member. A more upstream newcomer takes over if
   the current primary was opened by a dependency symptom and has not finished
   its investigation. A primary whose run had not started becomes GROUPED and
@@ -58,6 +59,9 @@ VERIFY_GROUP_MEMBERS_JOB: Final = "verify_group_members"
 DEFAULT_WINDOW_SECONDS: Final = 180
 DEFAULT_SETTLE_SECONDS: Final = 60
 SPLIT_BY_VERIFIER_NOTE: Final = "not explained by the group primary's fix"
+# G2b: an intrinsic alert arrived on a member that joined on a dependency symptom.
+INTRINSIC_ON_MEMBER: Final = "intrinsic_symptom_on_member"
+INTRINSIC_ON_MEMBER_NOTE: Final = "an intrinsic symptom started on this service while grouped"
 # A current primary in one of these states may still hand over to a more
 # upstream newcomer; after DIAGNOSED its proposal may already be in flight.
 _REPLACEABLE_PRIMARY: Final = frozenset(

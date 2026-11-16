@@ -43,6 +43,15 @@ others. Normalization stores it on `AlertEvent`, and the opening alert's class
 on the incident. A missing or unknown value is `intrinsic`, so an unlabelled
 alert is never grouped under another service.
 
+**G2b (added 2026-11-16):** an incident is one per service and takes its class
+from the opening alert, so a member that joined on a dependency symptom could
+hide a second fault: a later intrinsic alert would only append to it. Now a
+**firing intrinsic alert on a GROUPED, unsplit member splits it out at once**,
+in the ingestion transaction: `GROUPED` → `RECEIVED` with an investigation job,
+audit `incident_group_split` with reason `intrinsic_symptom_on_member: <alert>`
+and note "an intrinsic symptom started on this service while grouped". The
+group and its primary are unchanged.
+
 ### 3. Groups and the `GROUPED` state
 
 Migration `0012` adds `incident_groups(id, environment, primary_incident_id,
