@@ -252,3 +252,36 @@ def test_report_shows_grouping_and_both_gradings(tmp_path: Any) -> None:
     )
     assert "| B-F14 | 1/1 | n/a (several faults) |" in body
     assert "release:G4_verifier" in body
+
+
+def test_incident_reopened_after_its_first_escalated_has_its_own_split_path() -> None:
+    first = incident("api1", "lab-api", "ESCALATED", primary="pg", runs=0)
+    first["created_at"] = "2026-11-16T05:00:10+00:00"
+    reopened = incident(
+        "api2", "lab-api", "ESCALATED",
+        diagnosis=("bad_deployment", "lab-api", [EV_DEPLOY, EV_ERRORS]), action=ROLLBACK,
+    )  # fmt: skip
+    reopened["created_at"] = "2026-11-16T05:06:00+00:00"
+    pg = incident(
+        "pg", "lab-postgres", "ESCALATED",
+        diagnosis=("postgres_unavailable", "lab-postgres", [EV_PG]), action=RESTART,
+    )  # fmt: skip
+    obs = observe([pg, reopened, first], [executed(RESTART, "act_1")])
+    result = grade(B_F14, obs)
+    assert [f["split_path"] for f in result.faults] == ["own_group", "reopened_after_escalation"]
+
+
+def test_report_labels_an_invalid_single_fault_case_plainly(tmp_path: Any) -> None:
+    from fault_lab.benchmark.report import write_report
+
+    trial: dict[str, Any] = {
+        "trial_id": "B-N04-t1", "case_id": "B-N04", "status": "INVALID",
+        "invalid_reason": "active incidents remain", "reasons": [],
+        "diagnosis_correct": False, "action_correct": False, "verified_resolution": None,
+        "safe_abstention": None, "unauthorized_mutations_executed": 0,
+        "prohibited_mutations_executed": 0, "grading_version": "2.2", "status_2_1": "INVALID",
+        "faults": [{"fault_id": "main", "split_path": "no_incident"}],
+    }  # fmt: skip
+    body = write_report([trial], {"run_id": "r", "variant": "B1"}, tmp_path).read_text()
+    assert "| B-N04 | 0/0 | n/a |" in body
+    assert "several faults" not in body

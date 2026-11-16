@@ -355,7 +355,7 @@ class HealthyLabProm(FakeProm):
 def test_runner_injects_every_fault_of_a_schema_2_case() -> None:
     lab = FakeLab()
     timeouts = Timeouts(
-        quiet_s=1, baseline_s=1, detect_s=0, investigate_s=0, finish_s=0, probe_s=0, poll_s=0
+        quiet_s=1, baseline_s=1, detect_s=1, investigate_s=0, finish_s=0, probe_s=0, poll_s=0
     )
     runner = TrialRunner(
         cast(Any, lab),
@@ -399,6 +399,57 @@ def test_failed_second_injection_resets_the_lab_and_is_invalid() -> None:
     assert record["status"] == "INVALID"
     assert record["invalid_reason"] == "injection_failed:cpu:RuntimeError"
     assert lab.resets == 2
+
+
+def test_pretrial_rejects_a_proposal_that_appears_while_waiting() -> None:
+    class LateProposalApi(FakeApi):
+        """An incident still investigating at the start puts up a proposal later."""
+
+        def __init__(self) -> None:
+            super().__init__()
+            self.calls = 0
+            self.rejected = False
+
+        def incidents(self) -> list[dict[str, Any]]:
+            self.calls += 1
+            if self.rejected:
+                return []
+            state = "INVESTIGATING" if self.calls < 3 else "AWAITING_APPROVAL"
+            return [
+                {
+                    "id": "inc_old",
+                    "service_id": "lab-api",
+                    "state": state,
+                    "created_at": "2026-01-01T00:00:00+00:00",
+                }
+            ]
+
+        def incident(self, incident_id: str) -> dict[str, Any]:
+            pending = self.calls >= 3 and not self.rejected
+            return {
+                "id": incident_id,
+                "actions": [
+                    {"id": "act_old", "state": "PENDING_APPROVAL" if pending else "PROPOSED"}
+                ],
+            }
+
+        def decide(self, action: dict[str, Any], decision: str, reason: str) -> int:
+            assert decision == "reject"
+            self.rejected = True
+            return 200
+
+    api = LateProposalApi()
+    runner = TrialRunner(
+        cast(Any, FakeLab()),
+        cast(Any, FakeProm()),
+        cast(Any, api),
+        "http://am",
+        Timeouts(quiet_s=5, baseline_s=1, poll_s=0),
+        sleep=lambda _: None,
+        log=lambda _: None,
+    )
+    runner._pretrial(B_F05)
+    assert api.rejected
 
 
 def test_runner_marks_unhealthy_baseline_invalid() -> None:

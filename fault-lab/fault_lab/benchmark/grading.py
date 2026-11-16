@@ -379,10 +379,17 @@ def _pairs_metrics(
 
 def _split_path(incidents: list[dict[str, Any]], fault: Fault) -> str:
     """How the fault's primary service got its own diagnosis."""
-    own = [i for i in incidents if i.get("service_id") == fault.group().primary]
+    own = sorted(
+        (i for i in incidents if i.get("service_id") == fault.group().primary),
+        key=lambda i: str(i.get("created_at") or ""),
+    )
     if not own:
         return "no_incident"
+    # Judge the service's first incident; a later one opened only because the
+    # first had already ended (the alert kept firing), which is its own path.
     incident = own[0]
+    if len(own) > 1 and _follows_group(incident):
+        return "reopened_after_escalation"
     if _split(incident):
         note = str(incident.get("group_note") or "")
         if note.startswith("split out by a person"):

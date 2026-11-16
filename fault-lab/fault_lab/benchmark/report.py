@@ -294,6 +294,7 @@ def _grouping_lines(trials: list[dict[str, Any]]) -> list[str]:
     for case_id in sorted(by_case):
         rows = [r for r in by_case[case_id] if r["status"] != "INVALID"]
         legacy = [r for r in rows if r.get("status_2_1")]
+        several = any(len(r.get("faults", [])) > 1 for r in by_case[case_id])
         split = sum(int(r.get("wrong_merges_split") or 0) for r in rows)
         wrong = sum(int(r.get("wrong_merges") or 0) for r in rows)
         precision = [
@@ -316,7 +317,7 @@ def _grouping_lines(trials: list[dict[str, Any]]) -> list[str]:
                     f"{sum(r['status'] == 'PASS' for r in rows)}/{len(rows)}",
                     f"{sum(r['status_2_1'] == 'PASS' for r in legacy)}/{len(legacy)}"
                     if legacy
-                    else "n/a (several faults)",
+                    else ("n/a (several faults)" if several else "n/a"),
                     _mean([float(r.get("investigations_per_fault") or 0) for r in rows]),
                     str(sum(int(r.get("missed_merges") or 0) for r in rows)),
                     f"{split} / {wrong - split}",

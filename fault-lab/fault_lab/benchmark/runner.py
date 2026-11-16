@@ -142,15 +142,22 @@ class TrialRunner:
 
     def _pretrial(self, manifest: ScenarioManifest) -> None:
         self._lab.reset()
-        # Leftover proposals from earlier trials are rejected so that the next
-        # alert opens a fresh incident (one active incident per service key).
-        for incident in self._active_lab_incidents():
-            detail = self._api.incident(incident["id"])
-            for summary in detail.get("actions", []):
-                if summary["state"] == "PENDING_APPROVAL":
-                    action = self._api.action(summary["id"])
-                    self._api.decide(action, "reject", "benchmark pretrial cleanup")
-        if self._wait(lambda: not self._active_lab_incidents(), self._t.quiet_s) is False:
+
+        def settled() -> bool:
+            # Leftover proposals from earlier trials are rejected so that the
+            # next alert opens a fresh incident (one active incident per
+            # service key). Checked on every poll: an incident still being
+            # investigated can put up a proposal while we wait.
+            active = self._active_lab_incidents()
+            for incident in active:
+                detail = self._api.incident(incident["id"])
+                for summary in detail.get("actions", []):
+                    if summary["state"] == "PENDING_APPROVAL":
+                        action = self._api.action(summary["id"])
+                        self._api.decide(action, "reject", "benchmark pretrial cleanup")
+            return not active
+
+        if self._wait(settled, self._t.quiet_s) is False:
             raise TrialAbortedError("active incidents remain from a previous trial")
         quiet = self._wait(
             lambda: not self._prom.firing_lab_alerts(self._alertmanager), self._t.quiet_s
