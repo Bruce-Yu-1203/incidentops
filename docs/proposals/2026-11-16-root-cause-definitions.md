@@ -1,7 +1,8 @@
 # Draft: root-cause definitions for the investigation prompt (P8)
 
 - **Date:** 2026-11-16
-- **Status:** Draft for Amy's review. Not in the prompt; `investigation-v13` does not use it.
+- **Status:** Approved by Amy on 2026-11-16 and merged as `investigation-v14` (ADR-033).
+  The prompt text is the source now; this block is the reviewed draft.
 - **Belongs to:** `2026-11-16-prompt-after-v12.md`
 
 ## Purpose and rules for this text
@@ -17,7 +18,7 @@ knowledge and must not:
 - copy a threshold, probe or query from a scenario manifest;
 - be derived from a scenario's expected evidence (`required_evidence`).
 
-`tests/unit/test_root_cause_definitions_draft.py` checks the block below for
+`tests/unit/test_root_cause_definitions.py` checks the prompt's block for
 case ids and for strings that occur only in scenario manifests, so the same
 check holds when the text moves into the prompt.
 

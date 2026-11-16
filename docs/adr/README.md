@@ -32,4 +32,4 @@ it with a new ADR that supersedes the old one.
 | [ADR-030](ADR-030-dependency-grouped-incidents.md) | Dependency-grouped incidents: catalog edges, symptom class, groups and the GROUPED state | Accepted |
 | [ADR-031](ADR-031-prompt-v12-group-context.md) | Prompt investigation-v12: dependency and group context, and unexplained members (G3) | Accepted |
 | [ADR-032](ADR-032-benchmark-grading-2-2.md) | Benchmark grading 2.2 by group primary, and multi-fault scenarios | Accepted |
-| [ADR-033](ADR-033-prompt-v13-labels-time-output.md) | Prompt investigation-v13: evidence labels, time anchor and short output | Accepted |
+| [ADR-033](ADR-033-prompt-v13-labels-time-output.md) | Prompt investigation-v13/v14: evidence labels, time anchor, short output and root-cause definitions | Accepted |

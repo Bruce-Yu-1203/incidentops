@@ -1,4 +1,4 @@
-# ADR-033: Prompt investigation-v13: evidence labels, time anchor, short output
+# ADR-033: Prompt investigation-v13/v14: evidence labels, time anchor, short output, root-cause definitions
 
 - **Status:** Accepted (Amy approved P6, P7 and P9 on 2026-11-16)
 - **Relates to:** ADR-028 (submit schema), ADR-029 (current-state evidence),
@@ -36,8 +36,14 @@ problem. v12 was never run; v13 builds on it so each version stays honest.
    Prompt only: the schema limits are unchanged, so a long answer is not
    rejected.
 4. `PROMPT_VERSION = "investigation-v13"`. The rules the tool schema already
-   carries are kept until Amy decides (proposal item 4). Root-cause definitions
-   (P8) are a draft for review, not part of v13.
+   carries are kept until Amy decides (proposal item 4).
+5. **Root-cause definitions (P8), `investigation-v14`.** Approved after review
+   on 2026-11-16: a `<root_causes>` block gives each `root_cause_id` its
+   mechanism, the current reading that confirms it and its closest look-alike,
+   in generic incident-response terms. `tests/unit/test_root_cause_definitions.py`
+   fails if the block names a benchmark case or contains a string that only a
+   scenario manifest holds (injection parameters, probes, expected evidence).
+   Draft and review notes: `docs/proposals/2026-11-16-root-cause-definitions.md`.
 
 ## Consequences
 

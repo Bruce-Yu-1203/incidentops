@@ -1,9 +1,7 @@
-"""The root-cause definitions draft (P8) carries no benchmark ground truth.
+"""The prompt's root-cause definitions (P8, ADR-033) carry no benchmark ground truth.
 
-The text is meant for the investigation prompt, so it must not name a case or
-contain any string that only a scenario manifest holds (injection details,
-probes, expected evidence). When it moves into the prompt, point this test at
-the prompt constant instead.
+They must not name a case or contain any string that only a scenario manifest
+holds (injection details, probes, expected evidence).
 """
 
 from __future__ import annotations
@@ -14,18 +12,16 @@ from typing import Any
 
 import yaml
 
-from incidentops.agent.prompt import ROOT_CAUSE_TAXONOMY
+from incidentops.agent.prompt import ROOT_CAUSE_TAXONOMY, SYSTEM_PROMPT
 
 ROOT = Path(__file__).resolve().parents[2]
-DRAFT = ROOT / "docs" / "proposals" / "2026-11-16-root-cause-definitions.md"
 SCENARIOS = ROOT / "fault-lab" / "scenarios"
 
 
 def _definitions() -> str:
-    text = DRAFT.read_text(encoding="utf-8")
-    return text.split("<!-- root-cause-definitions:start -->")[1].split(
-        "<!-- root-cause-definitions:end -->"
-    )[0]
+    block = SYSTEM_PROMPT.split("<root_causes>")[1].split("</root_causes>")[0]
+    # Join wrapped continuation lines so each definition is one line again.
+    return re.sub(r"\n  (?=\S)", " ", block)
 
 
 def _strings(node: Any) -> set[str]:

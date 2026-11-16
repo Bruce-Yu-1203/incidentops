@@ -16,7 +16,7 @@ from incidentops.evidence.redaction import redact, truncate_utf8
 from incidentops.policy.engine import PolicyConfig, load_policy
 from incidentops.tools.json_schema import inline_refs
 
-PROMPT_VERSION: Final = "investigation-v13"
+PROMPT_VERSION: Final = "investigation-v14"
 # Tool results show each evidence record as a short per-run label (ADR-033).
 EVIDENCE_LABEL_PATTERN: Final = r"^E[1-9][0-9]{0,3}$"
 # P7: a reading that ended this long before the alert started is history.
@@ -72,6 +72,58 @@ from your tool calls, and hand a diagnosis to deterministic policy and a human.
   needs_human_review=true; any other combination is denied by policy.
 - Allowed root_cause_id values: {", ".join(ROOT_CAUSE_TAXONOMY)}.
 </rules>
+
+<root_causes>
+Each root cause: its mechanism; the current reading that confirms it; its closest
+look-alike.
+- consumer_paused: the consumer stopped fetching on purpose or by control, so lag grows
+  while the broker and producers are healthy; confirmed by the consumer's own status
+  reporting it paused or stopped now; look-alike consumer_slow, where it still
+  processes.
+- consumer_slow: the consumer still processes but more slowly than messages arrive, so
+  lag grows steadily; confirmed by a non-zero processing rate below the produce rate
+  now; look-alike consumer_paused (rate zero) or a slow dependency of the consumer.
+- kafka_broker_unavailable: clients cannot reach the broker, so producers fail to send
+  and consumers stop receiving; confirmed by the broker being unreachable or producers
+  reporting send errors now; look-alike consumer_paused, where the broker and producers
+  are fine.
+- postgres_lock_contention: sessions wait on a lock another session holds, so queries
+  stall while the database is up; confirmed by sessions currently waiting on a lock with
+  a holder present; look-alike connection_pool_exhausted, where sessions cannot connect
+  at all.
+- postgres_unavailable: the database refuses or drops connections; confirmed by the
+  database being down or unreachable in the latest reading; look-alike
+  connection_pool_exhausted, where the server is up but has no free slots.
+- redis_unavailable: the cache is unreachable or rejects clients, so cache-backed
+  requests fail; confirmed by the cache being down or refusing clients now; look-alike
+  application_error, where the cache is healthy.
+- application_error: a code path in the running release fails without a recent change;
+  confirmed by current errors or stack traces in the service with dependencies, releases
+  and configuration unchanged and healthy; look-alike bad_deployment.
+- bad_deployment: a new release introduced the failure; confirmed by a release shortly
+  before the onset and errors that started with it; look-alike config_error (a runtime
+  setting changed, not the release) or application_error (no change).
+- application_memory_leak: the process holds on to memory it no longer needs, so
+  resident memory rises without leveling off under steady load; confirmed by memory
+  still rising in the latest samples, usually after a change; look-alike a one-off
+  memory step or a traffic surge that raises memory with load.
+- cpu_saturation: the process is CPU-bound, so latency rises at normal traffic;
+  confirmed by high CPU now without a matching rise in request rate; look-alike
+  traffic_surge, where CPU follows more requests.
+- traffic_surge: request volume rises far above its usual level and overloads the
+  service; confirmed by the current request rate well above its recent baseline, coming
+  from its clients; look-alike cpu_saturation, where traffic is normal.
+- connection_pool_exhausted: idle or held sessions occupy the database's connection
+  slots, so new clients are refused while the server is up; confirmed by connections at
+  or near the server limit now; look-alike postgres_unavailable or
+  postgres_lock_contention.
+- config_error: a runtime configuration change without a release causes the failure;
+  confirmed by a configuration change shortly before the onset with the release
+  unchanged; look-alike bad_deployment.
+- insufficient_evidence: no mechanism is shown by a current reading, or the symptom has
+  already recovered; use it when the checks above find nothing current; it is a correct
+  answer, not a failure.
+</root_causes>
 
 <time_anchor>
 The first message gives `investigation_started_at`, the incident's `created_at` and, per
