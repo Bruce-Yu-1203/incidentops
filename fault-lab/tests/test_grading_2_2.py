@@ -285,3 +285,13 @@ def test_report_labels_an_invalid_single_fault_case_plainly(tmp_path: Any) -> No
     body = write_report([trial], {"run_id": "r", "variant": "B1"}, tmp_path).read_text()
     assert "| B-N04 | 0/0 | n/a |" in body
     assert "several faults" not in body
+
+
+def test_split_by_an_escalated_primary_has_its_own_path() -> None:
+    api = incident(
+        "api", "lab-api", "RESOLVED", primary="pg",
+        split_note="still alerting when the group primary was handed to a person",
+        diagnosis=("bad_deployment", "lab-api", [EV_DEPLOY, EV_ERRORS]), action=ROLLBACK,
+    )  # fmt: skip
+    result = grade(B_F14, _f14(api, [executed(RESTART, "act_1"), executed(ROLLBACK, "act_2")]))
+    assert [f["split_path"] for f in result.faults] == ["own_group", "G4b_primary_escalated"]

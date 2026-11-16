@@ -30,6 +30,7 @@ SPLIT_PATHS = {
     "an intrinsic symptom started on this service while grouped": "G2b_intrinsic_alert",
     "the group primary's diagnosis does not explain this incident": "G3_unexplained",
     "the group primary was cancelled": "primary_cancelled",
+    "still alerting when the group primary was handed to a person": "G4b_primary_escalated",
 }
 
 
