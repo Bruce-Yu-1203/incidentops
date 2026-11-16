@@ -581,3 +581,79 @@ async def test_conflicting_submission_is_still_rejected() -> None:
     assert final["field_lifts"] == 0
     errors = [s.metadata["error"] for s in trajectory.steps if s.kind.value == "diagnosis"]
     assert all("diagnosis.needs_human_review" in e for e in errors)
+
+
+# -- v13: evidence labels, time anchor, output style (ADR-033) -----------------------
+
+
+def test_resolve_evidence_labels_maps_labels_and_keeps_real_ids() -> None:
+    from incidentops.agent.graph import resolve_evidence_labels
+
+    real = ["ev_" + "a" * 32, "ev_" + "b" * 32]
+    payload: dict[str, Any] = {
+        "diagnosis": {
+            "supporting_evidence_ids": ["E1", real[1]],
+            "contradicting_evidence_ids": ["E2"],
+            "evidence_notes": {"E1": "lag grows", real[1]: "paused"},
+        },
+        "proposed_action": {"evidence_ids": ["E2"]},
+    }
+    out = resolve_evidence_labels(payload, real)
+    assert out["diagnosis"]["supporting_evidence_ids"] == real
+    assert out["diagnosis"]["contradicting_evidence_ids"] == [real[1]]
+    assert set(out["diagnosis"]["evidence_notes"]) == set(real)
+    assert out["proposed_action"]["evidence_ids"] == [real[1]]
+    assert payload["diagnosis"]["supporting_evidence_ids"][0] == "E1"  # input untouched
+
+
+def test_unknown_evidence_label_is_rejected_like_an_unknown_id() -> None:
+    from incidentops.agent.graph import resolve_evidence_labels
+    from incidentops.evidence.store import UnresolvedEvidenceError
+
+    with pytest.raises(UnresolvedEvidenceError, match="E3"):
+        resolve_evidence_labels({"diagnosis": {"supporting_evidence_ids": ["E3"]}}, ["ev_x"])
+
+
+async def test_tool_results_show_labels_and_the_report_stores_real_ids() -> None:
+    model = ScriptedModelAdapter([lag_and_status(), submit])
+    final, _ = await run(model)
+    results = [
+        json.loads(block["content"])
+        for message in model.calls[-1]
+        for block in message.get("content", [])
+        if isinstance(block, dict) and block.get("type") == "tool_result"
+    ]
+    assert [r["evidence_id"] for r in results] == ["E1", "E2"]
+    cited = final["report"]["diagnosis"]["supporting_evidence_ids"]
+    assert cited == final["evidence_ids"]
+    assert all(c.startswith("ev_") for c in cited)
+
+
+def test_submit_schema_asks_for_evidence_labels() -> None:
+    from incidentops.agent.prompt import EVIDENCE_LABEL_PATTERN, submit_diagnosis_tool
+
+    tool = submit_diagnosis_tool()
+    diagnosis = tool["input_schema"]["properties"]["diagnosis"]["properties"]
+    assert diagnosis["supporting_evidence_ids"]["items"]["pattern"] == EVIDENCE_LABEL_PATTERN
+    assert list(diagnosis["evidence_notes"]["patternProperties"]) == [EVIDENCE_LABEL_PATTERN]
+    action = next(
+        s
+        for s in tool["input_schema"]["properties"]["proposed_action"]["anyOf"]
+        if s.get("type") == "object"
+    )
+    assert action["properties"]["evidence_ids"]["items"]["pattern"] == EVIDENCE_LABEL_PATTERN
+    assert '"supporting_evidence_ids": ["E1"]' in tool["description"]
+    assert "ev_<32 hex>" not in tool["description"]
+
+
+def test_prompt_v13_time_anchor_and_output_style() -> None:
+    anchor = SYSTEM_PROMPT.split("<time_anchor>")[1].split("</time_anchor>")[0]
+    assert "more than 5 minutes before the\nalert started is history" in anchor
+    assert "`investigation_started_at`" in anchor
+    style = SYSTEM_PROMPT.split("<output_style>")[1].split("</output_style>")[0]
+    assert "summary: at most 3 sentences" in style
+    assert "3-6 evidence labels" in style
+    assert "No line breaks, double quotes or backslashes" in style
+    assert "never paste PromQL or log text" in style
+    assert "do not restate earlier tool results" in style
+    assert "evidence labels (E1, E2, ...)" in SYSTEM_PROMPT

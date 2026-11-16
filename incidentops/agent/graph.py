@@ -12,6 +12,7 @@ external system, so replaying a node after a checkpoint resume is safe.
 from __future__ import annotations
 
 import json
+import re
 import time
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -24,7 +25,7 @@ from pydantic import ValidationError
 from incidentops import telemetry
 from incidentops.agent.confidence import ConfidenceRuleError, check_confidence
 from incidentops.agent.model import SUBMIT_DIAGNOSIS, ModelAdapter, ModelError, ModelTurn
-from incidentops.agent.prompt import SYSTEM_PROMPT, submit_diagnosis_tool
+from incidentops.agent.prompt import EVIDENCE_LABEL_PATTERN, SYSTEM_PROMPT, submit_diagnosis_tool
 from incidentops.domain.schemas import DiagnosisReport
 from incidentops.evidence.store import EvidenceSink, UnresolvedEvidenceError
 from incidentops.time import utcnow
@@ -128,6 +129,52 @@ def coerce_json_string_fields(payload: dict[str, Any]) -> tuple[dict[str, Any], 
             result[name] = parsed
             coerced.append(name)
     return result, coerced
+
+
+_LABEL = re.compile(EVIDENCE_LABEL_PATTERN)
+
+
+def evidence_label(index: int) -> str:
+    """The short label of the run's ``index``-th evidence record (0-based)."""
+    return f"E{index + 1}"
+
+
+def resolve_evidence_labels(payload: dict[str, Any], evidence_ids: list[str]) -> dict[str, Any]:
+    """Replace evidence labels (E1, E2, ...) with the run's real evidence IDs.
+
+    Real IDs pass through unchanged. A label the run never issued raises the
+    same ``UnresolvedEvidenceError`` an unknown evidence ID gets.
+    """
+    unknown: set[str] = set()
+
+    def real(value: Any) -> Any:
+        if isinstance(value, str) and _LABEL.match(value):
+            index = int(value[1:]) - 1
+            if index < len(evidence_ids):
+                return evidence_ids[index]
+            unknown.add(value)
+        return value
+
+    def ids(value: Any) -> Any:
+        return [real(v) for v in value] if isinstance(value, list) else value
+
+    result = dict(payload)
+    diagnosis = result.get("diagnosis")
+    if isinstance(diagnosis, dict):
+        diagnosis = dict(diagnosis)
+        for name in ("supporting_evidence_ids", "contradicting_evidence_ids"):
+            if name in diagnosis:
+                diagnosis[name] = ids(diagnosis[name])
+        notes = diagnosis.get("evidence_notes")
+        if isinstance(notes, dict):
+            diagnosis["evidence_notes"] = {real(k): v for k, v in notes.items()}
+        result["diagnosis"] = diagnosis
+    action = result.get("proposed_action")
+    if isinstance(action, dict) and "evidence_ids" in action:
+        result["proposed_action"] = {**action, "evidence_ids": ids(action["evidence_ids"])}
+    if unknown:
+        raise UnresolvedEvidenceError(unknown)
+    return result
 
 
 # Top-level report fields models put inside diagnosis.
@@ -316,11 +363,13 @@ def build_graph(
             if block.get("type") != "tool_use" or block["name"] == SUBMIT_DIAGNOSIS:
                 continue
             result = await gateway.invoke(ctx, block["id"], block["name"], block["input"])
+            body = result.for_model()
             if result.evidence_id:
                 evidence_ids.append(result.evidence_id)
-            results.append(
-                _tool_result(block["id"], result.for_model(), is_error=result.evidence_id is None)
-            )
+                # The model sees a short per-run label and cites it; the real
+                # ID never has to be copied (ADR-033).
+                body["evidence_id"] = evidence_label(len(evidence_ids) - 1)
+            results.append(_tool_result(block["id"], body, is_error=result.evidence_id is None))
         return {
             "messages": [*state["messages"], {"role": "user", "content": results}],
             "evidence_ids": evidence_ids,
@@ -343,6 +392,7 @@ def build_graph(
             payload = dict(call["input"]) if isinstance(call["input"], dict) else {}
             payload, coerced = coerce_json_string_fields(payload)
             payload, lifted = lift_misplaced_fields(payload)
+            payload = resolve_evidence_labels(payload, list(state["evidence_ids"]))
             payload["incident_id"] = state["incident_id"]
             report = DiagnosisReport.model_validate(payload)
             resolved = evidence.resolve(state["run_id"], report.cited_evidence_ids())

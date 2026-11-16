@@ -1,7 +1,8 @@
 # Proposal: what else to change in the investigation prompt after v12
 
 - **Date:** 2026-11-16
-- **Status:** Proposed, awaiting a decision
+- **Status:** Items 1-3 approved 2026-11-16 and built as investigation-v13 (ADR-033);
+  root-cause definitions drafted for review; item 4 open
 - **Evidence:** `docs/benchmark-results/2026-11-14-B1-deepseek-flash-v2.1-r2/`
   (61/70 PASS with `investigation-v10`; v11 and v12 not measured yet)
 

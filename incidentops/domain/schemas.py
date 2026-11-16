@@ -173,7 +173,8 @@ class ActionProposalDraft(_Contract):
     )
     reason: ShortText = Field(description="One or two sentences on why this action fixes it.")
     evidence_ids: list[RecordId] = Field(
-        min_length=1, description="Evidence IDs showing the condition this action fixes."
+        min_length=1,
+        description="Evidence labels (E1, E2, ...) showing the condition this action fixes.",
     )
 
 
@@ -197,10 +198,11 @@ class Diagnosis(_Contract):
     )
     summary: ShortText = Field(description="Plain-language explanation of the cause.")
     supporting_evidence_ids: list[RecordId] = Field(
-        description="Evidence IDs returned by your tool calls that support the diagnosis."
+        description="Evidence labels (E1, E2, ...) from your tool results that support the "
+        "diagnosis."
     )
     contradicting_evidence_ids: list[RecordId] = Field(
-        default_factory=list, description="Evidence IDs that argue against it, if any."
+        default_factory=list, description="Evidence labels that argue against it, if any."
     )
     unresolved_questions: list[ShortText] = Field(
         default_factory=list, description="Open questions for the human reviewer."
@@ -209,8 +211,8 @@ class Diagnosis(_Contract):
     # Optional: the UI falls back to the stored evidence summary.
     evidence_notes: dict[RecordId, EvidenceNote] = Field(
         default_factory=dict,
-        description="Map from each cited evidence ID to one short sentence on what it shows; "
-        "only IDs cited in this report.",
+        description="Map from each cited evidence label to one short sentence on what it "
+        "shows; only labels cited in this report.",
     )
 
 

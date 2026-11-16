@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from collections.abc import Callable
 from typing import Any
 
@@ -118,7 +119,7 @@ async def test_full_investigation_persists_diagnosis_evidence_and_trajectory(
         assert (run.state, run.model_id, run.prompt_version) == (
             "COMPLETED",
             "scripted-test-model",
-            "investigation-v12",
+            "investigation-v13",
         )
         assert (run.step_count, run.tool_call_count) == (2, 2)
         diagnosis = session.scalars(select(DiagnosisRow)).one()
@@ -311,3 +312,19 @@ async def test_investigation_api_links_incident_run_steps_and_evidence(
     cited = set(detail["diagnosis"]["diagnosis"]["supporting_evidence_ids"])
     assert cited == {e["id"] for e in detail["evidence"]}
     assert client.get("/api/v1/investigations/run_missing").status_code == 404
+
+
+async def test_first_message_anchors_the_investigation_in_time(
+    session_factory: sessionmaker[Session],
+) -> None:
+    _ingest(session_factory)
+    model = ScriptedModelAdapter([lag_and_status(), submit])
+    await process_one(session_factory, _runner(session_factory, model), OWNER, 60)
+    text = model.calls[0][0]["content"][0]["text"]
+    data = json.loads(text.split("<untrusted_alert_data>\n", 1)[1].split("\n</untrusted", 1)[0])
+    incident = data["incident"]
+    assert incident["investigation_started_at"] >= incident["created_at"]
+    (alert,) = incident["alerts_at_investigation_start"]
+    assert alert["still_firing"] is True
+    assert alert["alert_name"] == "lab_kafka_consumer_lag_high"
+    assert alert["starts_at"]

@@ -194,6 +194,7 @@ class InvestigationRunner:
                 "severity": incident.severity,
                 "created_at": incident.created_at.isoformat(),
             }
+            summary.update(time_anchor(session, incident_id))
             # Related incidents of the same fault, as data (ADR-030).
             group = group_context(session, incident)
             if group is not None:
@@ -381,6 +382,7 @@ class InvestigationRunner:
                 "environment": incident.environment,
                 "severity": incident.severity,
                 "created_at": incident.created_at.isoformat(),
+                **time_anchor(session, incident_id),
             }
             alerts = [
                 {
@@ -651,6 +653,32 @@ class InvestigationRunner:
             audit=_audit("diagnosed_without_action", diagnosis_id=diagnosis_id),
         )
         return IncidentState.DIAGNOSED_ONLY
+
+
+def time_anchor(session: Session, incident_id: str) -> dict[str, Any]:
+    """When the investigation started and which alerts were still firing (ADR-033).
+
+    Lets the model tell current readings from history left by an earlier,
+    already resolved problem.
+    """
+    latest: dict[str, dict[str, Any]] = {}
+    for row in session.scalars(
+        select(AlertEventRow)
+        .where(AlertEventRow.incident_id == incident_id)
+        .order_by(AlertEventRow.received_at)
+    ):
+        latest[row.fingerprint] = row.payload
+    return {
+        "investigation_started_at": utcnow().isoformat(),
+        "alerts_at_investigation_start": [
+            {
+                "alert_name": payload.get("alert_name"),
+                "starts_at": payload.get("starts_at"),
+                "still_firing": payload.get("status") == "firing",
+            }
+            for payload in latest.values()
+        ],
+    }
 
 
 def with_prior_context(message: dict[str, Any], prior: dict[str, Any]) -> dict[str, Any]:
