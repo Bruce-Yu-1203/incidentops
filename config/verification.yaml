@@ -28,6 +28,9 @@ specs:
       - {kind: metric_max, check_id: api_latency_recovered, template_id: api_latency_p95,
          service_id: lab-api, bound: 0.5}
 
+  # Checks on another service (e.g. api_errors_recovered on lab-api) are
+  # skipped while that service is an unsplit member of the incident's group:
+  # the member's own alerts are checked after the fix instead (ADR-030, B').
   restart_lab_dependency:lab-redis:
     observation_window_seconds: 60
     sample_min_count: 5

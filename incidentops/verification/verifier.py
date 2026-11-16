@@ -26,7 +26,12 @@ from incidentops.domain.ids import new_id
 from incidentops.domain.schemas import VerificationCheck, VerificationOutcome
 from incidentops.domain.state_machines import ActionState, IncidentState
 from incidentops.execution.executor import receipt_generation
-from incidentops.grouping import SPLIT_BY_VERIFIER_NOTE, split_member, still_firing
+from incidentops.grouping import (
+    SPLIT_BY_VERIFIER_NOTE,
+    group_of_primary,
+    split_member,
+    still_firing,
+)
 from incidentops.persistence.models import (
     ActionProposalRow,
     ExternalOperationRow,
@@ -101,12 +106,21 @@ class CheckSet:
     checks: list[VerificationCheck]
 
     @property
+    def judged(self) -> list[VerificationCheck]:
+        return [c for c in self.checks if not c.skipped]
+
+    @property
     def passed(self) -> bool:
-        return all(c.passed is True for c in self.checks)
+        judged = self.judged
+        return bool(judged) and all(c.passed is True for c in judged)
 
     @property
     def unknown(self) -> bool:
-        return any(c.passed is None for c in self.checks)
+        return any(c.passed is None for c in self.judged)
+
+    @property
+    def skipped(self) -> list[str]:
+        return [c.check_id for c in self.checks if c.skipped]
 
 
 def evaluate_metric(check: MetricCheck, points: list[float], spec: VerifySpec) -> VerificationCheck:
@@ -178,10 +192,34 @@ class RecoveryVerifier:
         self._clock = clock
         self._sleep = sleep
 
-    async def _generic_checks(self, expected_revision: str | None, spec: VerifySpec) -> CheckSet:
+    async def _generic_checks(
+        self,
+        expected_revision: str | None,
+        spec: VerifySpec,
+        target_id: str = "",
+        delegated: frozenset[str] = frozenset(),
+    ) -> CheckSet:
         results: list[VerificationCheck] = []
         now = self._clock()
         for check in spec.checks:
+            if (
+                isinstance(check, MetricCheck)
+                and check.service_id != target_id
+                and check.service_id in delegated
+            ):
+                # B' (ADR-030): another service that is an unsplit member of this
+                # incident's group is judged by its own alerts after this fix
+                # (G4), so a second fault there cannot fail this fix.
+                results.append(
+                    VerificationCheck(
+                        check_id=check.check_id,
+                        passed=None,
+                        observed=f"skipped: {check.service_id} is a group member; "
+                        "its own alerts are checked after this fix",
+                        skipped=True,
+                    )
+                )
+                continue
             if isinstance(check, RevisionCheck):
                 state = await self._inspector.inspect(check.target_id)
                 wanted = check.equals or expected_revision
@@ -220,10 +258,14 @@ class RecoveryVerifier:
         return CheckSet(results)
 
     async def _checks(
-        self, target_id: str, expected_generation: str | None, spec: VerifySpec
+        self,
+        target_id: str,
+        expected_generation: str | None,
+        spec: VerifySpec,
+        delegated: frozenset[str] = frozenset(),
     ) -> CheckSet:
         if spec.checks:
-            return await self._generic_checks(expected_generation, spec)
+            return await self._generic_checks(expected_generation, spec, target_id, delegated)
         service = self._catalog.get(target_id)
         checks: list[VerificationCheck] = []
 
@@ -282,6 +324,23 @@ class RecoveryVerifier:
             )
         return CheckSet(checks)
 
+    def _member_services(self, incident_id: str) -> frozenset[str]:
+        """Services of the unsplit GROUPED members of the group this incident leads."""
+        with self._factory() as session:
+            group = group_of_primary(session, incident_id)
+            if group is None:
+                return frozenset()
+            return frozenset(
+                session.scalars(
+                    select(IncidentRow.service_id).where(
+                        IncidentRow.group_id == group.id,
+                        IncidentRow.id != incident_id,
+                        IncidentRow.group_split_at.is_(None),
+                        IncidentRow.state == IncidentState.GROUPED.value,
+                    )
+                )
+            )
+
     async def verify(self, action_id: str) -> VerificationOutcome | None:
         with self._factory() as session:
             action = session.get_one(ActionProposalRow, action_id)
@@ -300,7 +359,9 @@ class RecoveryVerifier:
             [VerificationCheck(check_id="spec", passed=None, observed="no verification spec")]
         )
         while spec is not None:
-            checks = await self._checks(action.target_id, expected_generation, spec)
+            checks = await self._checks(
+                action.target_id, expected_generation, spec, self._member_services(incident.id)
+            )
             if checks.passed or self._clock() >= deadline:
                 break
             await self._sleep(spec.poll_interval_seconds)
@@ -338,6 +399,9 @@ class RecoveryVerifier:
             audit = AuditSpec(
                 actor=ACTOR,
                 event_type="verification_completed",
+                reason=f"delegated to group member checks: {', '.join(checks.skipped)}"
+                if checks.skipped
+                else None,
                 decision=outcome.value,
                 action_hash=action.action_hash,
                 correlation_ids={"action_id": action_id, "verification_id": verification_id},

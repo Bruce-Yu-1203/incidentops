@@ -64,3 +64,15 @@ def test_every_catalog_action_target_has_a_verification_spec() -> None:
         if config.spec_for(action, service.service_id) is None
     ]
     assert missing == []
+
+
+def test_skipped_checks_never_count_as_passed() -> None:
+    from incidentops.domain.schemas import VerificationCheck
+    from incidentops.verification.verifier import CheckSet
+
+    skipped = VerificationCheck(check_id="api", passed=None, observed="skipped", skipped=True)
+    ok = VerificationCheck(check_id="up", passed=True, observed="ok")
+    assert CheckSet([ok, skipped]).passed
+    assert not CheckSet([ok, skipped]).unknown
+    assert not CheckSet([skipped]).passed
+    assert CheckSet([ok, skipped]).skipped == ["api"]

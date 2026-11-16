@@ -220,3 +220,114 @@ def test_repository_verification_specs_reference_known_templates() -> None:
             if isinstance(check, MetricCheck):
                 assert check.template_id in TEMPLATES
                 TEMPLATES[check.template_id].render(catalog.get(check.service_id))
+
+
+# -- B' (ADR-030): checks on a grouped member are left to the member's own check -----
+
+
+def _errors_spec() -> VerifySpec:
+    from incidentops.verification.verifier import MetricCheck, RevisionCheck
+
+    return VerifySpec(
+        observation_window_seconds=60,
+        sample_min_count=5,
+        recovery_timeout_seconds=30,
+        poll_interval_seconds=10,
+        checks=(
+            RevisionCheck(
+                kind="target_revision", check_id="revision", target_id="persist-demo-consumer"
+            ),
+            MetricCheck(
+                kind="metric_max",
+                check_id="api_errors_recovered",
+                template_id="api_error_ratio",
+                service_id="lab-api",
+                bound=0.02,
+            ),
+        ),
+    )
+
+
+def _add_member(factory: sessionmaker[Session], primary: IncidentRow, state: str) -> str:
+    from incidentops.domain.ids import new_id
+
+    member_id = new_id("inc")
+    with factory.begin() as session:
+        session.add(
+            IncidentRow(
+                id=member_id,
+                dedup_key="fault-lab:lab-api",
+                service_id="lab-api",
+                environment="fault-lab",
+                severity="critical",
+                state=state,
+                version=1,
+                group_id=primary.group_id,
+                symptom_class="dependency",
+            )
+        )
+    return member_id
+
+
+def _errors_verifier(factory: sessionmaker[Session]) -> RecoveryVerifier:
+    clock = FakeClock()
+    return RecoveryVerifier(
+        factory,
+        load_catalog(),
+        LagBackend([0.5] * 10),  # lab-api keeps failing
+        FakeInspector("gen-3", paused=False),
+        VerifyConfig(schema_version=1, specs={"resume_test_consumer": _errors_spec()}),
+        clock=clock,
+        sleep=clock.sleep,
+    )
+
+
+async def test_check_on_a_grouped_member_is_delegated_to_the_member(
+    session_factory: sessionmaker[Session],
+) -> None:
+    from incidentops.grouping import VERIFY_GROUP_MEMBERS_JOB
+    from incidentops.persistence.models import AuditEventRow, OutboxJobRow
+
+    action_id = await _verifying_action(session_factory)
+    primary = _incident(session_factory, action_id)
+    assert primary.group_id is not None
+    member = _add_member(session_factory, primary, "GROUPED")
+
+    outcome = await _errors_verifier(session_factory).verify(action_id)
+
+    assert outcome is VerificationOutcome.PASSED
+    assert _incident(session_factory, action_id).state == "RESOLVED"
+    with session_factory() as session:
+        record = session.scalars(select(VerificationRow)).one()
+        checks = {c["check_id"]: c for c in record.checks}
+        audit = session.scalars(
+            select(AuditEventRow).where(AuditEventRow.event_type == "verification_completed")
+        ).one()
+        member_job = session.scalars(
+            select(OutboxJobRow).where(OutboxJobRow.kind == VERIFY_GROUP_MEMBERS_JOB)
+        ).one()
+    assert checks["api_errors_recovered"]["skipped"] is True
+    assert checks["revision"]["passed"] is True
+    assert audit.reason == "delegated to group member checks: api_errors_recovered"
+    # The member is judged by its own alerts next (G4).
+    assert member_job.payload["incident_id"] == member
+
+
+@pytest.mark.parametrize("member_state", [None, "RECEIVED"], ids=["no_member", "split_member"])
+async def test_check_on_another_service_still_counts_without_a_grouped_member(
+    session_factory: sessionmaker[Session], member_state: str | None
+) -> None:
+    action_id = await _verifying_action(session_factory)
+    if member_state is not None:
+        # A member split out of the group is no longer vouched for by it.
+        member = _add_member(session_factory, _incident(session_factory, action_id), member_state)
+        with session_factory.begin() as session:
+            row = session.get_one(IncidentRow, member)
+            row.group_split_at = datetime.now().astimezone()
+
+    outcome = await _errors_verifier(session_factory).verify(action_id)
+
+    assert outcome is VerificationOutcome.VERIFICATION_FAILED
+    with session_factory() as session:
+        record = session.scalars(select(VerificationRow)).one()
+    assert not any(c.get("skipped") for c in record.checks)

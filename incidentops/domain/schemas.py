@@ -322,6 +322,9 @@ class VerificationCheck(_Contract):
     passed: bool | None
     observed: ShortText
     sample_count: Annotated[int, Field(ge=0)] = 0
+    # Not judged here: the service is a group member whose own alerts the
+    # verifier checks after this fix (ADR-030, B'). Never counts as passed.
+    skipped: bool = False
 
 
 class Verification(_Contract):

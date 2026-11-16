@@ -145,6 +145,18 @@ its own diagnosis of the same root cause; that is a missed merge (reported),
 not a failure. Migration `0013` lets the executor read alert events, because
 it escalates primaries when an action fails.
 
+**B' (2026-11-16, Amy):** the primary's verification no longer judges its
+members. A metric check on another service (for example
+`api_errors_recovered` on lab-api in a PostgreSQL restart) is skipped while
+that service is an unsplit `GROUPED` member of the primary's group; the check
+is stored with `skipped: true` and the `verification_completed` audit names
+it ("delegated to group member checks: ..."). A skipped check never counts
+as passed, and a verification with only skipped checks does not pass. The
+member is then judged by its own alerts (G4). Without a group, or when the
+service is not a member (no incident, split out, or its own group), the check
+runs as before. In the B-F14 rerun before this change the PostgreSQL fix was
+correct but escalated, because the bad release kept lab-api's errors high.
+
 The verifier job waits up to `INCIDENTOPS_GROUP_MEMBER_RECOVERY_SECONDS`
 (default 180, polling every 15 s) for each of the member's alert fingerprints to
 have a latest delivery of `resolved` (Alertmanager reports a cleared rule one
