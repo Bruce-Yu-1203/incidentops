@@ -91,9 +91,17 @@ new incident N on service S:
 3. **Otherwise:** an `intrinsic` N opens its own group (G2); a `dependency` N
    joins as a member: `RECEIVED` → `GROUPED`, no investigation job.
 4. **Settle:** a primary whose service has `depends_on` gets its investigation
-   job `available_at = now + INCIDENTOPS_GROUP_SETTLE_SECONDS` (default 60), also
+   job `available_at = now + INCIDENTOPS_GROUP_SETTLE_SECONDS` (default 0, see below), also
    when it takes over a group; the most upstream services are investigated
    immediately.
+
+   **Default changed to 0 s on 2026-11-16 (Amy):** in r2 and in the
+   grouping smoke the upstream alert always arrived first (11-35 s ahead),
+   so the wait never helped, while every fault without an upstream alert
+   (bad release, configuration, memory, CPU, traffic, locks) lost 60 s
+   (B-N04: 74 s to diagnosis). A late upstream incident still takes over:
+   the downstream run already going finishes as context without a proposal,
+   which costs at most one extra investigation.
 
 `window_ends_at` records the newest member's opening time plus the window.
 `INCIDENTOPS_GROUP_WINDOW_SECONDS=0` turns grouping off (each incident alone,

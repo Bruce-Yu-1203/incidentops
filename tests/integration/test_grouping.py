@@ -690,3 +690,14 @@ def test_still_alerting_members_of_a_handed_over_primary_are_split_out(
             )
         ).one()
     assert (reason or "").startswith("primary_escalated_member_still_firing")
+
+
+def test_default_config_investigates_a_downstream_primary_at_once(
+    session_factory: sessionmaker[Session],
+) -> None:
+    (api,) = ingest(
+        session_factory, "lab_api_error_ratio_high", config=GroupingConfig(load_catalog())
+    )
+    (job,) = jobs(session_factory, api)
+    with session_factory() as session:
+        assert job.available_at <= session.scalar(select(func.now()))

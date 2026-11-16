@@ -36,3 +36,10 @@ def test_settings_ignore_dotenv_files(tmp_path: Path, monkeypatch: pytest.Monkey
     (tmp_path / ".env").write_text("INCIDENTOPS_EXECUTOR_LAB_TOKEN=leaked-token-0123456789\n")
     monkeypatch.chdir(tmp_path)
     assert Settings().executor_lab_token is None
+
+
+def test_grouping_defaults() -> None:
+    settings = Settings(_env_file=None)
+    assert settings.group_window_seconds == 180
+    # Upstream alerts normally arrive first; no settle wait (ADR-030, 2026-11-16).
+    assert settings.group_settle_seconds == 0

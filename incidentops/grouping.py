@@ -20,8 +20,9 @@ lock so concurrent deliveries cannot form two groups for one fault:
   its investigation. A primary whose run had not started becomes GROUPED and
   its pending job is cancelled; a primary whose run is going finishes it, and
   the run's proposal is dropped (the run stays as context).
-* Settle: a primary whose service has dependencies waits a settle time before
-  its investigation, so a more upstream incident can still join first.
+* Settle: a primary whose service has dependencies may wait a settle time
+  before its investigation, so a more upstream incident can still join first.
+  Off by default (0 s): upstream alerts normally arrive first.
 
 Members follow the primary when it reaches a terminal state (see
 ``on_incident_terminal``): RESOLVED hands the members to the verifier, which
@@ -57,7 +58,7 @@ from incidentops.persistence.models import (
 INVESTIGATE_JOB: Final = "investigate_incident"
 VERIFY_GROUP_MEMBERS_JOB: Final = "verify_group_members"
 DEFAULT_WINDOW_SECONDS: Final = 180
-DEFAULT_SETTLE_SECONDS: Final = 60
+DEFAULT_SETTLE_SECONDS: Final = 0
 SPLIT_BY_VERIFIER_NOTE: Final = "not explained by the group primary's fix"
 # G2b: an intrinsic alert arrived on a member that joined on a dependency symptom.
 INTRINSIC_ON_MEMBER: Final = "intrinsic_symptom_on_member"

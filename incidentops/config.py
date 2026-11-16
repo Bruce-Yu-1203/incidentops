@@ -73,9 +73,11 @@ class Settings(BaseSettings):
     model_max_output_tokens: int = Field(default=2048, ge=256, le=64000)
     # Incident grouping (ADR-030): a new incident joins the group of a related
     # service's incident opened within this window (0 turns grouping off). A
-    # primary with dependencies waits the settle time before investigating.
+    # primary with dependencies may wait a settle time before investigating;
+    # 0 (default since 2026-11-16): upstream alerts normally arrive first, and
+    # a late upstream incident still takes over as primary.
     group_window_seconds: int = Field(default=180, ge=0, le=3600)
-    group_settle_seconds: int = Field(default=60, ge=0, le=600)
+    group_settle_seconds: int = Field(default=0, ge=0, le=600)
     # How long the verifier waits for a member's alerts to resolve after the
     # primary's fix passed before splitting it out (Alertmanager sends resolved
     # notifications one group_interval after the rule clears).
