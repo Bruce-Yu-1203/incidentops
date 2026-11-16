@@ -433,7 +433,53 @@ def test_prompt_expects_abstention_when_no_fault_is_confirmed() -> None:
 
 
 def test_prompt_says_one_fault_gets_one_affected_component() -> None:
-    assert "every incident caused by one fault gets\n  the same affected_component" in SYSTEM_PROMPT
+    group = SYSTEM_PROMPT.split("<incident_group>")[1].split("</incident_group>")[0]
+    assert "Every incident caused by one fault gets the same affected_component." in group
+
+
+def test_prompt_v12_explains_dependencies_and_groups() -> None:
+    for tag in ("service_dependencies", "incident_group"):
+        assert f"<{tag}>" in SYSTEM_PROMPT
+        assert f"</{tag}>" in SYSTEM_PROMPT
+    deps = SYSTEM_PROMPT.split("<service_dependencies>")[1].split("</service_dependencies>")[0]
+    assert '"A depends on B" means B is upstream of A' in deps
+    assert "`co_located_with`" in deps
+    group = SYSTEM_PROMPT.split("<incident_group>")[1].split("</incident_group>")[0]
+    assert "`unexplained_incident_ids`" in group
+    assert "`split_from_group: true`" in group
+    method = SYSTEM_PROMPT.split("<investigation_method>")[1].split("</investigation_method>")[0]
+    assert "`depends_on`" in method
+
+
+def test_catalog_context_lists_dependency_edges() -> None:
+    message = initial_message({"id": "inc_x"}, [], load_catalog())
+    text = message["content"][0]["text"]
+    services = json.loads(text.split("Registered services:\n", 1)[1].split("\n", 1)[0])
+    by_id = {s["service_id"]: s for s in services}
+    assert by_id["lab-api"]["depends_on"] == ["lab-postgres", "lab-redis", "lab-api-config"]
+    assert by_id["lab-cpu-load"]["co_located_with"] == ["lab-api"]
+    assert by_id["lab-postgres"]["depends_on"] == []
+
+
+def test_submit_schema_offers_unexplained_incident_ids() -> None:
+    from incidentops.agent.prompt import submit_diagnosis_tool
+
+    field = submit_diagnosis_tool()["input_schema"]["properties"]["unexplained_incident_ids"]
+    assert field["items"]["pattern"] == r"^inc_[0-9a-f]{32}$"
+    assert field["maxItems"] == 10
+    assert "unexplained_incident_ids" not in submit_diagnosis_tool()["input_schema"].get(
+        "required", []
+    )
+
+
+def test_unexplained_ids_nested_in_diagnosis_are_lifted() -> None:
+    from incidentops.agent.graph import lift_misplaced_fields
+
+    payload, lifted = lift_misplaced_fields(
+        {"diagnosis": {"root_cause_id": "x", "unexplained_incident_ids": ["inc_1"]}}
+    )
+    assert lifted == ["unexplained_incident_ids"]
+    assert payload["unexplained_incident_ids"] == ["inc_1"]
 
 
 def test_prompt_names_no_benchmark_case_or_scenario() -> None:

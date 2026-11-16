@@ -86,7 +86,8 @@ def test_every_submit_diagnosis_field_is_described() -> None:
 
 def test_tool_description_gives_the_top_level_shape() -> None:
     description = submit_diagnosis_tool()["description"]
-    assert "exactly three top-level fields" in description
+    assert "three top-level fields" in description
+    assert "optional top-level unexplained_incident_ids" in description
     shape = description.split("Shape (IDs and values are placeholders): ")[1]
     top = json.loads(shape)
     assert set(top) == {"diagnosis", "proposed_action", "needs_human_review"}

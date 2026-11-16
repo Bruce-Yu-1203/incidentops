@@ -232,6 +232,14 @@ class DiagnosisReport(_Contract):
         description="Top-level field next to diagnosis (not inside it); true when "
         "proposed_action is null.",
     )
+    # G3 (ADR-031): members of this incident's group that the diagnosis does not
+    # explain. Free-form here; the harness keeps only current group members.
+    unexplained_incident_ids: list[Annotated[str, StringConstraints(max_length=64)]] = Field(
+        default_factory=list,
+        description="IDs from incident_group.related_incidents whose alerts your root cause "
+        "does not explain. Each is split out and investigated on its own. Omit or leave "
+        "empty when your diagnosis explains all of them.",
+    )
 
     def model_post_init(self, _context: object) -> None:
         if self.proposed_action is None and not self.needs_human_review:

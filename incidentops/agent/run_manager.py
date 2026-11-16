@@ -25,7 +25,7 @@ from sqlalchemy.orm import Session, sessionmaker
 
 from incidentops.agent.graph import Budgets, build_graph, initial_state
 from incidentops.agent.model import ModelAdapter
-from incidentops.agent.prompt import PROMPT_VERSION, initial_message
+from incidentops.agent.prompt import MAX_UNEXPLAINED, PROMPT_VERSION, initial_message
 from incidentops.domain.catalog import ServiceCatalog
 from incidentops.domain.disposition import Disposition, needs_human
 from incidentops.domain.ids import new_id
@@ -37,6 +37,7 @@ from incidentops.grouping import (
     follow_terminal_primary,
     group_context,
     is_demoted,
+    split_unexplained,
 )
 from incidentops.persistence.models import (
     AlertEventRow,
@@ -558,6 +559,12 @@ class InvestigationRunner:
             if is_demoted(session, incident):
                 incident_state = self._regroup(session, incident, version, diagnosis_id)
             else:
+                if report.unexplained_incident_ids:
+                    # G3: members the primary cannot explain get their own run.
+                    # Before routing: a terminal primary takes its members along.
+                    split_unexplained(
+                        session, incident, report.unexplained_incident_ids, ACTOR, MAX_UNEXPLAINED
+                    )
                 incident_state = self._route(session, incident_id, version, report, diagnosis_id)
             return RunOutcome(run_id, run_state, incident_state, usage["error_code"])
 

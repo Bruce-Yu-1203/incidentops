@@ -1,7 +1,7 @@
 # Draft: investigation prompt v12 (full text)
 
 - **Date:** 2026-11-15
-- **Status:** Draft for review; not in the code. `investigation-v11` stays active.
+- **Status:** Approved 2026-11-16 and built (ADR-031); `investigation-v12` is active.
 - **Belongs to:** `2026-11-15-grouping-scenarios-grading-prompt.md`, section 4
 
 This is the complete text v12 would send, with the changes against v11 marked

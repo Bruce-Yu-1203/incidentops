@@ -181,7 +181,8 @@ monitoring role, so idle `lab_app` sessions can exhaust ordinary slots
 
 ## Prompt, tools and confidence (ADR-025)
 
-The investigation prompt (`investigation-v11`) has `<rules>`,
+The investigation prompt (`investigation-v12`, ADR-031) has `<rules>`,
+`<service_dependencies>` and `<incident_group>` (ADR-030 groups),
 `<investigation_method>` (required evidence coverage and a stop condition, no
 fixed order), `<when_no_fault_is_confirmed>` (when to answer
 `insufficient_evidence`, ADR-027) and `<confidence_rubric>` sections. Every read tool description

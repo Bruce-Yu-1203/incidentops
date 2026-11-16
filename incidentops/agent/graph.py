@@ -131,7 +131,7 @@ def coerce_json_string_fields(payload: dict[str, Any]) -> tuple[dict[str, Any], 
 
 
 # Top-level report fields models put inside diagnosis.
-LIFTABLE_FIELDS = ("proposed_action", "needs_human_review")
+LIFTABLE_FIELDS = ("proposed_action", "needs_human_review", "unexplained_incident_ids")
 
 
 def lift_misplaced_fields(payload: dict[str, Any]) -> tuple[dict[str, Any], list[str]]:

@@ -30,3 +30,4 @@ it with a new ADR that supersedes the old one.
 | [ADR-028](ADR-028-submit-diagnosis-schema.md) | A self-describing submit_diagnosis schema | Accepted |
 | [ADR-029](ADR-029-current-state-evidence.md) | Root-cause component, restart precondition and current-state telemetry | Accepted |
 | [ADR-030](ADR-030-dependency-grouped-incidents.md) | Dependency-grouped incidents: catalog edges, symptom class, groups and the GROUPED state | Accepted |
+| [ADR-031](ADR-031-prompt-v12-group-context.md) | Prompt investigation-v12: dependency and group context, and unexplained members (G3) | Accepted |

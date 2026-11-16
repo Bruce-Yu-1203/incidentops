@@ -373,6 +373,49 @@ def split_member(
     )
 
 
+UNEXPLAINED_BY_PRIMARY: Final = "unexplained_by_primary"
+UNEXPLAINED_NOTE: Final = "the group primary's diagnosis does not explain this incident"
+
+
+def split_unexplained(
+    session: Session,
+    primary: IncidentRow,
+    requested: list[str],
+    actor: str,
+    limit: int = 10,
+) -> tuple[list[str], int]:
+    """G3: split out the members a primary's diagnosis says it does not explain.
+
+    Only current, unsplit GROUPED members of the group this incident is the
+    primary of are split; every other ID is dropped and counted, never an error.
+    Returns the split incident IDs and the number of dropped IDs.
+    """
+    wanted = list(dict.fromkeys(requested))
+    group = group_of_primary(session, primary.id)
+    members = {m.id: m for m in grouped_members(session, group.id, primary.id)} if group else {}
+    split: list[str] = []
+    for incident_id in wanted[:limit]:
+        member = members.get(incident_id)
+        if member is None:
+            continue
+        split_member(
+            session,
+            member,
+            actor=actor,
+            reason=f"{UNEXPLAINED_BY_PRIMARY}: listed by the diagnosis of {primary.id}",
+            note=UNEXPLAINED_NOTE,
+        )
+        split.append(incident_id)
+    dropped = len(wanted) - len(split)
+    if wanted:
+        _audit(
+            session, actor, "unexplained_members_reviewed", primary.id,
+            f"{len(split)} split, {dropped} dropped (not current group members)",
+            group_id=group.id if group else "",
+        )  # fmt: skip
+    return split, dropped
+
+
 def follow_terminal_primary(
     session: Session,
     member: IncidentRow,
@@ -491,6 +534,7 @@ def group_context(session: Session, incident: IncidentRow) -> dict[str, Any] | N
             if p.get("status") == "firing" and p.get("starts_at")
         )
         entry: dict[str, Any] = {
+            "incident_id": member.id,
             "service_id": member.service_id,
             "state": member.state,
             "alert_names": names,

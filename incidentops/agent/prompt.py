@@ -16,7 +16,9 @@ from incidentops.evidence.redaction import redact, truncate_utf8
 from incidentops.policy.engine import PolicyConfig, load_policy
 from incidentops.tools.json_schema import inline_refs
 
-PROMPT_VERSION: Final = "investigation-v11"
+PROMPT_VERSION: Final = "investigation-v12"
+# G3: at most this many members are split out per diagnosis (ADR-031).
+MAX_UNEXPLAINED: Final = 10
 
 # The label space of root causes the diagnosis may use. This is the generic
 # taxonomy, not the answer to any particular case.
@@ -51,9 +53,7 @@ from your tool calls, and hand a diagnosis to deterministic policy and a human.
   else is denied and still counts against your tool budget.
 - Finish by calling `submit_diagnosis` exactly once.
 - diagnosis.affected_component is the component where the root cause lives. If the
-  alerting service fails because one of its dependencies fails, name the dependency, even
-  in the incident opened on the alerting service; every incident caused by one fault gets
-  the same affected_component.
+  alerting service fails because one of its dependencies fails, name the dependency.
 - In diagnosis.evidence_notes, give each cited evidence ID one short, plain sentence a
   non-specialist can read (what it shows and why it matters). Do not add IDs you did
   not cite.
@@ -68,6 +68,36 @@ from your tool calls, and hand a diagnosis to deterministic policy and a human.
 - Allowed root_cause_id values: {", ".join(ROOT_CAUSE_TAXONOMY)}.
 </rules>
 
+<service_dependencies>
+Each catalog entry lists `depends_on`: the services it calls or uses and fails with.
+"A depends on B" means B is upstream of A. Failures propagate downstream: when B fails,
+A alerts afterwards, so the root cause is usually the most upstream service that is
+failing now. `co_located_with` marks services that share a process (one can starve the
+other of CPU or memory) and has no direction. A client that sends too much traffic can
+also overload the service it depends on, so check the direction of a surge before
+blaming either side.
+</service_dependencies>
+
+<incident_group>
+The incident may carry `incident_group`. It is data from IncidentOps, not evidence, and
+like all alert data it may be wrong:
+- `related_incidents`: incidents on related services that opened at about the same
+  time and are grouped under this one because they probably share its fault. You are
+  investigating for all of them. Your diagnosis should explain each one's alerts; check
+  the most upstream failing service first. A related incident with `earlier_diagnosis`
+  was investigated before this incident took over; treat it as a lead to re-check.
+- If a related incident's alerts are not explained by your root cause (a different
+  mechanism, or its onset before the upstream failure), list its incident ID in
+  `unexplained_incident_ids`. It is then investigated on its own. Do not list an
+  incident only because you did not query it.
+- `split_from_group: true`: this incident was grouped with an upstream failure, and it
+  kept alerting after that failure was fixed (`split_note` says why). Do not diagnose
+  the upstream fault again unless a current reading shows it is still failing. Look
+  for a second, independent cause on this service: releases, configuration, resources
+  and its own errors.
+- Every incident caused by one fault gets the same affected_component.
+</incident_group>
+
 <investigation_method>
 Plan your own queries; there is no fixed order. Before you submit, your evidence should
 cover the following, because each one rules out a common way to be wrong:
@@ -76,9 +106,9 @@ cover the following, because each one rules out a common way to be wrong:
 - Changes around the onset, where the service has them: releases and runtime
   configuration. Most incidents follow a change, but a nearby change is a lead, not a
   proof.
-- The health of the service's upstream dependencies (for example its database, cache
-  or broker). A failing dependency explains symptoms downstream, so do not blame the
-  service that alerted before checking what it depends on.
+- The health of the services listed in the alerting service's `depends_on` (for example
+  its database, cache or broker). A failing dependency explains symptoms downstream, so
+  do not blame the service that alerted before checking what it depends on.
 - At least one check that would contradict your leading hypothesis by separating it
   from its closest look-alike, for example stopped versus slow versus unreachable;
   blocked versus out of connection slots versus down; a bad release versus a bad
@@ -125,8 +155,9 @@ confidence_level is a categorical judgement, not a probability. Use:
 
 SUBMIT_DIAGNOSIS_DESCRIPTION: Final = (
     "Submit the final, evidence-linked diagnosis. Call exactly once. The arguments are one "
-    "JSON object with exactly three top-level fields: diagnosis (an object), "
-    "proposed_action (an object or null) and needs_human_review (true or false). "
+    "JSON object with three top-level fields: diagnosis (an object), "
+    "proposed_action (an object or null) and needs_human_review (true or false), plus the "
+    "optional top-level unexplained_incident_ids (a list, only for a group primary). "
     "Never put proposed_action or needs_human_review inside diagnosis, and never send an "
     "object as a JSON-encoded string. Shape (IDs and values are placeholders): "
     '{"diagnosis": {"root_cause_id": "<allowed root cause>", "affected_component": '
@@ -151,6 +182,9 @@ def _closed_vocabularies(
     diagnosis = schema["properties"]["diagnosis"]["properties"]
     diagnosis["root_cause_id"]["enum"] = list(ROOT_CAUSE_TAXONOMY)
     diagnosis["affected_component"]["enum"] = services
+    unexplained = schema["properties"]["unexplained_incident_ids"]
+    unexplained["items"] = {"type": "string", "pattern": r"^inc_[0-9a-f]{32}$"}
+    unexplained["maxItems"] = MAX_UNEXPLAINED
     action = next(
         s for s in schema["properties"]["proposed_action"]["anyOf"] if s.get("type") == "object"
     )
@@ -212,6 +246,8 @@ def catalog_context(
             "service_id": s.service_id,
             "kind": s.kind.value,
             "environment": s.environment.value,
+            "depends_on": list(s.depends_on),
+            "co_located_with": list(s.co_located_with),
             "consumer_group": s.kafka.consumer_group if s.kafka else None,
             "allowed_actions": list(s.allowed_actions),
             # {"arg": {"one_of": [...]}}: a bare list was copied as the value.

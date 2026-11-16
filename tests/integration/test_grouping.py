@@ -24,6 +24,7 @@ from incidentops.grouping import (
     INTRINSIC_ON_MEMBER_NOTE,
     INVESTIGATE_JOB,
     SPLIT_BY_VERIFIER_NOTE,
+    UNEXPLAINED_NOTE,
     VERIFY_GROUP_MEMBERS_JOB,
     GroupingConfig,
 )
@@ -596,3 +597,47 @@ def test_dependency_or_resolved_alerts_keep_a_member_grouped(
     )
     assert incident(session_factory, api).state == IncidentState.GROUPED
     assert jobs(session_factory, api) == []
+
+
+# -- G3 ------------------------------------------------------------------------------
+
+
+async def test_primary_splits_out_the_members_it_cannot_explain(
+    session_factory: sessionmaker[Session],
+) -> None:
+    (consumer,) = ingest(session_factory, "lab_kafka_consumer_lag_high", config=NO_SETTLE)
+    with session_factory.begin() as session:
+        session.execute(
+            update(IncidentRow).where(IncidentRow.id == consumer).values(symptom_class="intrinsic")
+        )
+    custom = GroupingConfig(_catalog_with("demo-producer", ["lab-kafka", "persist-demo-consumer"]))
+    producer_event = event(
+        "lab_producer_send_errors", service_id="demo-producer", symptom_class="dependency"
+    )
+    (member,) = ingest_events(
+        session_factory, [producer_event], ACTOR, grouping=custom
+    ).created_incident_ids
+    bogus = "inc_" + "0" * 32
+
+    def submit_with_unexplained(messages: list[dict[str, Any]]) -> ModelTurn:
+        turn = submit(messages)
+        turn.tool_calls[0].arguments["unexplained_incident_ids"] = [member, bogus, member]
+        return turn
+
+    model = ScriptedModelAdapter([lag_and_status(), submit_with_unexplained])
+    await process_one(session_factory, _runner(session_factory, model), OWNER, 60)
+
+    first_message = model.calls[0][0]["content"][0]["text"]
+    assert f'"incident_id": "{member}"' in first_message
+    row = incident(session_factory, member)
+    assert row.state == IncidentState.RECEIVED
+    assert row.group_note == UNEXPLAINED_NOTE
+    assert len(jobs(session_factory, member)) == 1
+    assert incident(session_factory, consumer).state == IncidentState.DIAGNOSED
+    with session_factory() as session:
+        review = session.scalars(
+            select(AuditEventRow.reason).where(
+                AuditEventRow.event_type == "unexplained_members_reviewed"
+            )
+        ).one()
+    assert review == "1 split, 1 dropped (not current group members)"
