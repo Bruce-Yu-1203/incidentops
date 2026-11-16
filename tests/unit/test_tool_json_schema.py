@@ -150,5 +150,7 @@ def test_affected_component_names_the_root_cause_dependency() -> None:
     description = schema["properties"]["diagnosis"]["properties"]["affected_component"][
         "description"
     ]
-    assert "where the root cause lives" in description
+    assert "where the failure shows" in description
     assert "name that dependency, not the service that surfaces the errors" in description
+    # v15 (ADR-034): a change or input names the service that runs with it.
+    assert "When the cause is a change or an input to a service" in description

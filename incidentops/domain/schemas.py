@@ -184,11 +184,13 @@ class Diagnosis(_Contract):
         "signal is confirmed."
     )
     affected_component: ResourceId = Field(
-        description="The registered component where the root cause lives (where the mechanism "
-        "is). When the alerting service fails because a dependency of it fails (for example "
-        "its database, cache or broker), name that dependency, not the service that surfaces "
-        "the errors. Not the object an action would change either (e.g. a service rather "
-        "than its configuration)."
+        description="The registered service where the failure shows (where the mechanism "
+        "is). When the alerting service fails because a dependency of it is broken (for "
+        "example its database, cache or broker), name that dependency, not the service that "
+        "surfaces the errors. When the cause is a change or an input to a service (its "
+        "configuration, its clients' traffic, load running in its process), name that "
+        "service; the cause goes in root_cause_id, the summary and proposed_action.target_id. "
+        "Not the object an action would change (e.g. a service rather than its configuration)."
     )
     confidence_level: ConfidenceLevel = Field(
         description="high: direct mechanism evidence on the component, consistent onset and a "

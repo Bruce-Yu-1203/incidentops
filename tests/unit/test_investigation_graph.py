@@ -657,3 +657,34 @@ def test_prompt_v13_time_anchor_and_output_style() -> None:
     assert "never paste PromQL or log text" in style
     assert "do not restate earlier tool results" in style
     assert "evidence labels (E1, E2, ...)" in SYSTEM_PROMPT
+
+
+# -- v15: affected_component for changes and inputs, stricter application_error ----
+
+
+def _definition(root_cause: str) -> str:
+    block = SYSTEM_PROMPT.split("<root_causes>")[1].split("</root_causes>")[0]
+    lines = re.sub(r"\n  (?=\S)", " ", block).splitlines()
+    return next(line for line in lines if line.startswith(f"- {root_cause}:"))
+
+
+def test_prompt_v15_affected_component_rule_covers_changes_and_inputs() -> None:
+    rules = SYSTEM_PROMPT.split("<rules>")[1].split("</rules>")[0]
+    flat = " ".join(rules.split())
+    assert "If a dependency itself is broken" in flat
+    assert "name the service that runs with it" in flat
+    assert "put the cause in root_cause_id, the summary and proposed_action.target_id" in flat
+    assert "affected_component is the service that runs with the changed configuration" in (
+        _definition("config_error")
+    )
+    assert "not the clients sending the traffic" in _definition("traffic_surge")
+    assert "even when the load comes from something running in it" in (
+        _definition("cpu_saturation")
+    )
+
+
+def test_prompt_v15_application_error_needs_current_errors_beyond_normal_variation() -> None:
+    line = _definition("application_error")
+    assert "still present in the latest samples" in line
+    assert "clearly above the service's normal variation" in line
+    assert "otherwise use insufficient_evidence" in line

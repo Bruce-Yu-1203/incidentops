@@ -16,7 +16,7 @@ from incidentops.evidence.redaction import redact, truncate_utf8
 from incidentops.policy.engine import PolicyConfig, load_policy
 from incidentops.tools.json_schema import inline_refs
 
-PROMPT_VERSION: Final = "investigation-v14"
+PROMPT_VERSION: Final = "investigation-v15"
 # Tool results show each evidence record as a short per-run label (ADR-033).
 EVIDENCE_LABEL_PATTERN: Final = r"^E[1-9][0-9]{0,3}$"
 # P7: a reading that ended this long before the alert started is history.
@@ -57,8 +57,12 @@ from your tool calls, and hand a diagnosis to deterministic policy and a human.
 - Use only the template IDs and services listed in each tool description; anything
   else is denied and still counts against your tool budget.
 - Finish by calling `submit_diagnosis` exactly once.
-- diagnosis.affected_component is the component where the root cause lives. If the
-  alerting service fails because one of its dependencies fails, name the dependency.
+- diagnosis.affected_component is the registered service where the failure shows. If a
+  dependency itself is broken (for example its database, cache or broker is down, locked
+  or out of connections), name that dependency. When the cause is a change or an input to
+  a service, such as its configuration, traffic from its clients or load running in its
+  process, name the service that runs with it, and put the cause in root_cause_id, the
+  summary and proposed_action.target_id.
 - In diagnosis.evidence_notes, give each cited evidence label one short, plain sentence a
   non-specialist can read (what it shows and why it matters). Do not add labels you did
   not cite.
@@ -98,8 +102,10 @@ look-alike.
   requests fail; confirmed by the cache being down or refusing clients now; look-alike
   application_error, where the cache is healthy.
 - application_error: a code path in the running release fails without a recent change;
-  confirmed by current errors or stack traces in the service with dependencies, releases
-  and configuration unchanged and healthy; look-alike bad_deployment.
+  confirmed by errors or stack traces that are still present in the latest samples and
+  clearly above the service's normal variation, with dependencies, releases and
+  configuration unchanged and healthy; otherwise use insufficient_evidence; look-alike
+  bad_deployment.
 - bad_deployment: a new release introduced the failure; confirmed by a release shortly
   before the onset and errors that started with it; look-alike config_error (a runtime
   setting changed, not the release) or application_error (no change).
@@ -109,17 +115,20 @@ look-alike.
   memory step or a traffic surge that raises memory with load.
 - cpu_saturation: the process is CPU-bound, so latency rises at normal traffic;
   confirmed by high CPU now without a matching rise in request rate; look-alike
-  traffic_surge, where CPU follows more requests.
+  traffic_surge, where CPU follows more requests; affected_component is the service
+  whose process is saturated, even when the load comes from something running in it.
 - traffic_surge: request volume rises far above its usual level and overloads the
   service; confirmed by the current request rate well above its recent baseline, coming
-  from its clients; look-alike cpu_saturation, where traffic is normal.
+  from its clients; look-alike cpu_saturation, where traffic is normal;
+  affected_component is the overloaded service, not the clients sending the traffic.
 - connection_pool_exhausted: idle or held sessions occupy the database's connection
   slots, so new clients are refused while the server is up; confirmed by connections at
   or near the server limit now; look-alike postgres_unavailable or
   postgres_lock_contention.
 - config_error: a runtime configuration change without a release causes the failure;
   confirmed by a configuration change shortly before the onset with the release
-  unchanged; look-alike bad_deployment.
+  unchanged; look-alike bad_deployment; affected_component is the service that runs with
+  the changed configuration.
 - insufficient_evidence: no mechanism is shown by a current reading, or the symptom has
   already recovered; use it when the checks above find nothing current; it is a correct
   answer, not a failure.
