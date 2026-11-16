@@ -33,3 +33,4 @@ it with a new ADR that supersedes the old one.
 | [ADR-031](ADR-031-prompt-v12-group-context.md) | Prompt investigation-v12: dependency and group context, and unexplained members (G3) | Accepted |
 | [ADR-032](ADR-032-benchmark-grading-2-2.md) | Benchmark grading 2.2 by group primary, and multi-fault scenarios | Accepted |
 | [ADR-033](ADR-033-prompt-v13-labels-time-output.md) | Prompt investigation-v13/v14: evidence labels, time anchor, short output and root-cause definitions | Accepted |
+| [ADR-034](ADR-034-prompt-v15-affected-component.md) | Prompt investigation-v15: affected_component for changes and inputs, stricter application_error | Accepted |
