@@ -121,8 +121,21 @@ path (agent, executor, verifier, API) is covered:
 | Primary ends | GROUPED members |
 |---|---|
 | `RESOLVED` | one `verify_group_members` job each, for the verifier (G4) |
-| `ESCALATED`, `DIAGNOSED_ONLY`, `FAILED` | `ESCALATED`, `escalation_reason = group_primary_escalated` |
+| `ESCALATED`, `DIAGNOSED_ONLY`, `FAILED` | alerts resolved: `ESCALATED`, `escalation_reason = group_primary_escalated`; alerts still firing: split out (fix A, below) |
 | `CANCELLED` | split out and investigated on their own |
+
+**Fix A (2026-11-16, found by the B-F14 smoke):** a handed-over primary has no
+verified fix, so it cannot vouch for its members. In B-F14 the PostgreSQL
+restart's verification also checks lab-api's error ratio, which a second,
+independent fault (a bad release) kept high; the primary was escalated, lab-api
+followed it, and G4 never ran. Now a member whose latest delivery of any alert
+is still firing is split out instead (`GROUPED` → `RECEIVED`, investigation
+job, reason `primary_escalated_member_still_firing`, note "still alerting when
+the group primary was handed to a person"); members whose alerts resolved
+still follow into `ESCALATED`. A member of the same fault may therefore get
+its own diagnosis of the same root cause; that is a missed merge (reported),
+not a failure. Migration `0013` lets the executor read alert events, because
+it escalates primaries when an action fails.
 
 The verifier job waits up to `INCIDENTOPS_GROUP_MEMBER_RECOVERY_SECONDS`
 (default 180, polling every 15 s) for each of the member's alert fingerprints to

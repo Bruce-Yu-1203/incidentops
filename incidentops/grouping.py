@@ -374,6 +374,9 @@ def split_member(
 
 
 UNEXPLAINED_BY_PRIMARY: Final = "unexplained_by_primary"
+# Fix A (ADR-030): a member still alerting when its primary is handed over.
+PRIMARY_ESCALATED_STILL_FIRING: Final = "primary_escalated_member_still_firing"
+PRIMARY_ESCALATED_NOTE: Final = "still alerting when the group primary was handed to a person"
 UNEXPLAINED_NOTE: Final = "the group primary's diagnosis does not explain this incident"
 
 
@@ -439,6 +442,19 @@ def follow_terminal_primary(
         )
         return
     if primary_state in _ESCALATING:
+        if still_firing(session, member.id):
+            # The primary was handed over without a verified fix, so it cannot
+            # vouch for this member: a member still alerting may have a fault
+            # of its own (two faults at once) and gets its own investigation.
+            split_member(
+                session,
+                member,
+                actor=actor,
+                reason=f"{PRIMARY_ESCALATED_STILL_FIRING}: group primary {primary_id} "
+                f"ended {primary_state.value}",
+                note=PRIMARY_ESCALATED_NOTE,
+            )
+            return
         transition(
             session,
             IncidentRow,

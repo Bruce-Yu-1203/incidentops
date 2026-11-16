@@ -23,6 +23,7 @@ from incidentops.domain.state_machines import IncidentState
 from incidentops.grouping import (
     INTRINSIC_ON_MEMBER_NOTE,
     INVESTIGATE_JOB,
+    PRIMARY_ESCALATED_NOTE,
     SPLIT_BY_VERIFIER_NOTE,
     UNEXPLAINED_NOTE,
     VERIFY_GROUP_MEMBERS_JOB,
@@ -497,6 +498,10 @@ def test_members_follow_a_handed_over_primary_to_escalated(
 ) -> None:
     (postgres,) = ingest(session_factory, "lab_postgres_down")
     (api,) = ingest(session_factory, "lab_api_error_ratio_high")
+    # The member recovered first: it follows the primary.
+    ingest_events(
+        session_factory, [event("lab_api_error_ratio_high", "resolved")], ACTOR, grouping=CONFIG
+    )
     drive(session_factory, postgres, *path)
     row = incident(session_factory, api)
     assert row.state == IncidentState.ESCALATED
@@ -641,3 +646,47 @@ async def test_primary_splits_out_the_members_it_cannot_explain(
             )
         ).one()
     assert review == "1 split, 1 dropped (not current group members)"
+
+
+# -- fix A: a handed-over primary does not vouch for members still alerting -------------
+
+
+@pytest.mark.parametrize(
+    "path",
+    [
+        (IncidentState.FAILED,),
+        (*TO_VERIFYING, IncidentState.ESCALATED),
+    ],
+    ids=["failed", "verification_failed"],
+)
+def test_still_alerting_members_of_a_handed_over_primary_are_split_out(
+    session_factory: sessionmaker[Session], path: tuple[IncidentState, ...]
+) -> None:
+    (postgres,) = ingest(session_factory, "lab_postgres_down")
+    (api,) = ingest(session_factory, "lab_api_error_ratio_high")
+    (consumer,) = ingest(session_factory, "lab_kafka_consumer_lag_high")
+    ingest_events(
+        session_factory,
+        [event("lab_kafka_consumer_lag_high", "resolved")],
+        ACTOR,
+        grouping=CONFIG,
+    )
+    drive(session_factory, postgres, *path)
+
+    still = incident(session_factory, api)
+    assert still.state == IncidentState.RECEIVED
+    assert still.group_split_at is not None
+    assert still.group_note == PRIMARY_ESCALATED_NOTE
+    (job,) = jobs(session_factory, api)
+    assert job.payload["note"] == PRIMARY_ESCALATED_NOTE
+    recovered = incident(session_factory, consumer)
+    assert recovered.state == IncidentState.ESCALATED
+    assert recovered.escalation_reason == "group_primary_escalated"
+    with session_factory() as session:
+        reason = session.scalars(
+            select(AuditEventRow.reason).where(
+                AuditEventRow.resource_id == api,
+                AuditEventRow.event_type == "incident_group_split",
+            )
+        ).one()
+    assert (reason or "").startswith("primary_escalated_member_still_firing")

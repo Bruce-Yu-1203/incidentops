@@ -75,8 +75,10 @@ PRIVILEGES: Final[dict[str, dict[str, frozenset[str]]]] = {
         "audit_events": frozenset({I}),
         "outbox_jobs": frozenset({S, I, U}),
         "policy_versions": frozenset({S}),
-        # An escalated primary takes its group members along (ADR-030).
+        # An escalated primary takes its group members along (ADR-030); members
+        # still alerting are split out instead, which reads their alerts.
         "incident_groups": frozenset({S}),
+        "alert_events": frozenset({S}),
     },
     # Verifier: reads execution results, writes verifications and resolution.
     VERIFIER_ROLE: {
