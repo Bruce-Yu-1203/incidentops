@@ -1,7 +1,9 @@
 # Proposal: grouping scenarios, grading 2.2 and prompt changes
 
 - **Date:** 2026-11-15
-- **Status:** Proposed, awaiting a decision
+- **Status:** Approved 2026-11-16 ("as recommended") and built: G2b (ADR-030),
+  prompt v12 with G3 (ADR-031), schema 2, B-F14/B-N03/B-N04 and grading 2.2
+  (ADR-032). B-N03 uses CPU load instead of a memory leak. Smoke run not yet made
 - **Builds on:** ADR-030 (phases 1 and 2 of
   `2026-11-14-dependency-grouped-incidents.md`, built 2026-11-15)
 

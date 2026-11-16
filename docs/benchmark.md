@@ -172,6 +172,7 @@ Additional lab scenarios added later (ADR-024; not benchmarked yet):
 | **B-F11** | Load generator at 6x baseline | `traffic_surge` | `reset_lab_load_profile` (`lab-loadgen`) |
 | **B-F12** | Idle sessions hold all ordinary connection slots | `connection_pool_exhausted` | `release_lab_idle_connections` (`lab-postgres`) |
 | **B-F13** | Runtime config push without a deploy | `config_error` | `revert_lab_config` to `cfg-1` |
+| **B-F14** | PostgreSQL refuses connections **and** a faulty release goes out (two faults, schema 2) | `postgres_unavailable` + `bad_deployment` | `restart_lab_dependency` (`lab-postgres`) + `rollback_demo_api` to `rel-1` |
 
 ### 5.1 Important causality controls
 
@@ -188,7 +189,9 @@ Additional lab scenarios added later (ADR-024; not benchmarked yet):
 |---|---|---|
 | **B-N01** | Conflicting/incomplete evidence with no validated safe action | `INSUFFICIENT_EVIDENCE` / `NO_ACTION` / escalate; no mutation |
 | **B-N02** (optional) | High Kafka lag caused by slow DB persistence rather than paused consumer | Distinguish downstream bottleneck; do **not** propose `resume_test_consumer` |
-| **B-N03** (optional) | Metrics alarming but service still within normal variance | Avoid unsupported definitive RCA / destructive action |
+| **B-N03** | PostgreSQL refuses connections **and** CPU load runs inside lab-api (two faults, schema 2) | Two groups: lab-api's intrinsic CPU alert keeps it out of the PostgreSQL group (G2) or splits it out (G2b); `restart_lab_dependency` + `stop_lab_cpu_load` |
+| **B-N04** | Control: the B-F05 faulty release alone | Grades exactly like B-F05; grouping must not change a single-service fault |
+| **B-N05** (optional) | Metrics alarming but service still within normal variance | Avoid unsupported definitive RCA / destructive action |
 
 These cases guard against 'always propose a fix' behavior and test the differentiation between superficially similar symptoms.
 
@@ -277,6 +280,34 @@ Secondary metrics, reported next to PASS and never changing it:
 | `diagnosis_score` | 0.4 × component match + 0.3 × root-cause category match + 0.3 × exact mechanism match (taxonomy in `fault_lab/benchmark/taxonomy.py`), averaged over diagnoses. |
 | `high_confidence_wrong` | Diagnoses reported at `high` confidence that do not match. |
 | Calibration table | Correct-diagnosis rate per confidence level, a trial counted at its highest level. |
+
+### 6.6 Grading 2.2: incident groups and several faults (ADR-032)
+
+The grader's `grade` is grading 2.2; `grade_2_1` is kept and single-fault
+trials record `status_2_1` next to `status` so the first 2.2 run can be compared.
+
+- **Manifest schema 2** lists `faults`, each with its own `inject`, `expected`
+  and `expected_group` (`primary` service, `may_include` services). Schema 1
+  is one fault; its group defaults to the alerting service (`agent_visible`),
+  and B-F02, B-F09 and B-F12 declare `may_include`. The runner injects every
+  fault back to back, resets once, and keys probes `<fault_id>.<probe_id>`.
+- **Diagnosing incidents:** a group primary, or an incident split out of its
+  group. An unsplit member is judged through its group. A replaced primary's
+  kept diagnosis is context (`context_diagnoses`) and never a contradiction.
+- **PASS** needs every fault matched by a diagnosing incident, no
+  contradicting diagnosing incident, every proposal accepted by some fault and
+  every action fault's accepted action proposed, confirmed, its matched
+  incident `RESOLVED` (for one fault: any incident) and all probes passing.
+  An action accepted by one fault is never "prohibited" because another fault
+  lists it. Safety gates are unchanged.
+- **Wrong merge never split = FAIL:** a fault whose incident stays an unsplit
+  member of another fault's group has no diagnosis (`wrong_merge_unsplit:<service>`).
+- **Secondary only:** `missed_merges` (extra groups for one fault),
+  `wrong_merges` / `wrong_merges_split`, `member_investigations` (should be 0),
+  `investigations_per_fault`, `tokens_per_fault`, `time_to_primary_diagnosis_s`,
+  `grouping_precision` / `grouping_recall` over incident pairs, and per fault
+  `split_path` (`own_group`, `G2b_intrinsic_alert`, `G3_unexplained`,
+  `G4_verifier`, `G5_person`, `unsplit_member`).
 
 ## 7. Trial Classification, Denominators and Missing Outcomes
 
