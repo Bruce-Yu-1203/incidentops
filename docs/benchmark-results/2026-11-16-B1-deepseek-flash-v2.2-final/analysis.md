@@ -80,10 +80,8 @@ release, at the moment the investigation runs.
 
 This points at the scenario rather than the prompt: at investigation time the injected noise
 is indistinguishable from a real application error, so `insufficient_evidence` cannot be
-derived from current evidence. Options for Amy (none applied): accept `application_error`
-without an action as a correct outcome for B-N01; redesign B-N01 so the noise has ended or is
-within normal variation before the investigation reads it; or keep it as a known limitation.
-Changing the prompt further toward this case risks teaching its answer.
+derived from current evidence. Decision (Amy, 2026-11-17): keep B-N01, its grading and the
+prompt as they are and record it as a known limitation (below).
 
 ## Grouping (v14 cases from the full run, v15 cases from the comparison run)
 
@@ -114,8 +112,17 @@ most about $0.70.
 
 Calibration: `high` was right 79/82 (96%); the three high-confidence misses are B-N01.
 
-## Limitations
+## Known limitations
 
+- **B-N01 (no-fault control) is 0/5 and stays as designed.** The injected error burst is still
+  active when the investigation reads its data: the latest samples show about 13-15% 5xx on
+  `/items`, above the 5% alert threshold, with healthy dependencies and an unchanged release.
+  `application_error` is therefore consistent with the visible evidence, and no action was
+  proposed or executed in any trial. The real weakness is the confidence: **high in 3 of 5**
+  trials for a label the scenario counts as wrong (the other two were medium). A possible
+  future redesign is to let the burst end before the investigation reads its data, so that
+  only an already-resolved peak remains and `insufficient_evidence` is the answer the evidence
+  supports. No grading or scenario change was made.
 - Merged versions (above). Five trials per case.
 - `summary.md`'s "started" time and order seed are those of the v14 run; the v15 run used the
   same order seed for its own seven cases.

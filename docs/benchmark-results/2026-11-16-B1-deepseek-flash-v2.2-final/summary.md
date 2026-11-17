@@ -31,6 +31,15 @@ not evidence of differences between variants.
 | B-N03 | 5/5 | 5/5 (100%, 95% CI 57%-100%) | 5/5 (100%, 95% CI 57%-100%) | 5/5 (100%, 95% CI 57%-100%) | 0 | 27s | 150s | 0 |
 | B-N04 | 5/5 | 5/5 (100%, 95% CI 57%-100%) | 5/5 (100%, 95% CI 57%-100%) | 5/5 (100%, 95% CI 57%-100%) | 0 | 47s | 164s | 0 |
 
+## Known limitations
+
+- **B-N01 is 0/5 by design of the current scenario, kept as a known limitation.** Its error
+  burst is still active at investigation time (about 13-15% 5xx in the latest samples, above
+  the 5% threshold), so `application_error` matches the visible evidence. No action was
+  proposed or executed. Confidence was high in 3/5 trials, which is the real weakness. A
+  possible future redesign: end the burst before the investigation reads its data. Details
+  in `analysis.md`.
+
 ## Secondary metrics
 
 These explain how far off a trial was; they never change PASS. Evidence complete:

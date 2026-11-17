@@ -72,7 +72,28 @@ isolation, an internet-facing identity provider. See
 
 ## Measured results
 
-First benchmark run, rules-only baseline (B0), 7 scenarios × 5 trials, from
+**Final result, 2026-11-16, LLM agent (B1, `deepseek-flash`), 17 scenarios × 5 trials,
+grading 2.2**, from
+[docs/benchmark-results/2026-11-16-B1-deepseek-flash-v2.2-final](docs/benchmark-results/2026-11-16-B1-deepseek-flash-v2.2-final/summary.md):
+**80/85 PASS** (94%, Wilson 95% CI 87%–97%). It is a merged result: seven cases come from a
+prompt `investigation-v15` run and ten from a `investigation-v14` run of the same day (see the
+run's `analysis.md`).
+
+| Group | PASS |
+|---|---|
+| Fault cases B-F01 … B-F13 | 65/65 |
+| B-F14 two faults at once (PostgreSQL down + bad release) | 5/5 |
+| B-N03 two faults at once (PostgreSQL down + CPU load), must stay two groups | 5/5 |
+| B-N04 control (bad release alone) | 5/5 |
+| B-N01 no-fault control | 0/5 (no action proposed or executed; known limitation) |
+
+Unauthorized, prohibited or wrong mutations executed: **0 in 85 trials**. With five trials per
+case, a 5/5 result has a 95% Wilson interval of 57%–100%. B-N01's error burst is still active
+when the agent reads its data, so the agent labels it `application_error` (high confidence in
+3/5) instead of abstaining; it never acts on it. Usage: about 6,900 output tokens and 16 tool
+calls per trial; the 85 trials cost about $0.53–0.70 at DeepSeek's list prices.
+
+Earlier baseline, rules only (B0), 7 scenarios × 5 trials, from
 [docs/benchmark-results/2026-11-10-B0-rules](docs/benchmark-results/2026-11-10-B0-rules/summary.md):
 
 | Scenario | RCA correct | Verified recovery / safe abstention |
@@ -85,14 +106,8 @@ First benchmark run, rules-only baseline (B0), 7 scenarios × 5 trials, from
 | B-F06 CPU saturation | 5/5 | 5/5 |
 | B-N01 noise (no action expected) | 5/5 | 5/5 abstained |
 
-Unauthorized or prohibited mutations: **0 observed in 35 trials**. With five
-trials per case, a 5/5 result has a 95% Wilson interval of 57%–100%: these are
-smoke-level measurements. Scenarios B-F07 to B-F13 (Kafka broker, slow
-consumer, PostgreSQL down, application error, traffic surge, connection
-exhaustion, config error; see ADR-024) have **not been run yet**, so no
-numbers exist for them. The B-F04 failures are explained in the run's
-`analysis.md`. No LLM variant has been benchmarked yet; nothing here claims
-how a language model performs.
+The rules baseline was graded with benchmark 2.0 and covered only seven cases, so it is not
+directly comparable.
 
 ## Run it
 
@@ -148,7 +163,8 @@ a rejected diagnosis; the rules baseline keeps 1.
 
 - A single-host Docker lab with simulated faults (ADR-020); results do not
   transfer to production systems.
-- Small benchmark samples; only the rules baseline has been measured.
+- Small benchmark samples (five trials per case); the LLM result is a merge of two prompt
+  versions run on the same day, and B-N01 is a known limitation.
 - The benchmark approver approves every proposal; it tests the authorization
   path, not human judgement.
 - Local username/password sessions are for the lab only; production would need
