@@ -295,3 +295,10 @@ def test_split_by_an_escalated_primary_has_its_own_path() -> None:
     )  # fmt: skip
     result = grade(B_F14, _f14(api, [executed(RESTART, "act_1"), executed(ROLLBACK, "act_2")]))
     assert [f["split_path"] for f in result.faults] == ["own_group", "G4b_primary_escalated"]
+
+
+def test_run_metadata_reports_the_grading_version() -> None:
+    from fault_lab.benchmark.__main__ import BENCHMARK_VERSION
+    from fault_lab.benchmark.grading import GRADING_VERSION
+
+    assert BENCHMARK_VERSION == GRADING_VERSION == "2.2"

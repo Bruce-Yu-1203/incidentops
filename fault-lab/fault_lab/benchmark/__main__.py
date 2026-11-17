@@ -21,12 +21,13 @@ from pathlib import Path
 import httpx
 
 from fault_lab.benchmark.clients import IncidentOpsApi, LabFaults, Prometheus
+from fault_lab.benchmark.grading import GRADING_VERSION
 from fault_lab.benchmark.report import write_report
 from fault_lab.benchmark.runner import TrialRunner
 from fault_lab.scenarios import all_scenarios, load_scenario
 from fault_lab.scripts.labctl import LabEndpoints
 
-BENCHMARK_VERSION = "2.1"  # 2.1: stricter grading and secondary metrics
+BENCHMARK_VERSION = GRADING_VERSION  # 2.2: groups and multi-fault cases (ADR-032)
 
 
 def _run(args: argparse.Namespace) -> int:
