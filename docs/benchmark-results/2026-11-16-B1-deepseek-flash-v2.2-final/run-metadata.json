@@ -1,0 +1,78 @@
+{
+  "benchmark_version": "2.2",
+  "cases": [
+    "B-F01",
+    "B-F02",
+    "B-F03",
+    "B-F04",
+    "B-F05",
+    "B-F06",
+    "B-F07",
+    "B-F08",
+    "B-F09",
+    "B-F10",
+    "B-F11",
+    "B-F12",
+    "B-F13",
+    "B-F14",
+    "B-N01",
+    "B-N03",
+    "B-N04"
+  ],
+  "merged": true,
+  "model_id": "deepseek-flash",
+  "note": "Merged result: not a single v15 run. See analysis.md.",
+  "order_seed": 2026,
+  "run_id": "merged-20261116-final",
+  "scenario_versions": {
+    "B-F01": 1,
+    "B-F02": 1,
+    "B-F03": 1,
+    "B-F04": 1,
+    "B-F05": 1,
+    "B-F06": 1,
+    "B-F07": 1,
+    "B-F08": 1,
+    "B-F09": 1,
+    "B-F10": 1,
+    "B-F11": 1,
+    "B-F12": 1,
+    "B-F13": 1,
+    "B-F14": 1,
+    "B-N01": 1,
+    "B-N03": 1,
+    "B-N04": 1
+  },
+  "sources": {
+    "20261116T080000Z-B1_DEEPSEEK": {
+      "cases": [
+        "B-F02",
+        "B-F03",
+        "B-F04",
+        "B-F05",
+        "B-F07",
+        "B-F08",
+        "B-F10",
+        "B-F14",
+        "B-N03",
+        "B-N04"
+      ],
+      "prompt_version": "investigation-v14"
+    },
+    "20261116T213417Z-B1_DEEPSEEK": {
+      "cases": [
+        "B-F01",
+        "B-F06",
+        "B-F09",
+        "B-F11",
+        "B-F12",
+        "B-F13",
+        "B-N01"
+      ],
+      "prompt_version": "investigation-v15"
+    }
+  },
+  "started_at": "2026-11-16T08:00:01.250158+00:00",
+  "trials_per_case": 5,
+  "variant": "B1_DEEPSEEK (merged final result)"
+}
